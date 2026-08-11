@@ -55,11 +55,18 @@ FM_SELFTEST="${FM_SELFTEST:-0}"
 export FM_NO_MODIFY_PATH="${FM_NO_MODIFY_PATH:-0}"
 export NONINTERACTIVE="${NONINTERACTIVE:-0}"
 
-# Resolve this script's own directory, following symlinks. Empty when the script
+# Resolve this script's own directory, following symlinks. Fails when the script
 # arrived over a pipe, which is how the curl path is detected.
+#
+# The test is whether BASH_SOURCE[0] names a file that exists, not whether it is
+# non-empty. Bash 3.2 leaves it empty for a script read from stdin, but bash 5
+# sets it to a non-path placeholder — so an emptiness test passes there, the
+# script resolves itself from the working directory, and the fetch, the checksum
+# gate, and the clone are all silently skipped on the exact platform this
+# provisions. CI on bash 5 is what caught it.
 fm_script_dir() {
   local source="${BASH_SOURCE[0]:-}" dir
-  [ -n "$source" ] || return 1
+  [ -n "$source" ] && [ -f "$source" ] || return 1
   while [ -L "$source" ]; do
     dir="$(cd -P "$(dirname "$source")" && pwd)"
     source="$(readlink "$source")"

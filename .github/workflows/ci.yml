@@ -55,14 +55,26 @@ jobs:
 
       - name: Pipe install.sh into bash, with lib.sh checksum-verified
         run: |
+          repo="$PWD"
           sha="$(sha256sum lib.sh | cut -d' ' -f1)"
-          cat install.sh | env \
+          # Run from somewhere that holds none of this repo, so a script that
+          # resolved itself from the working directory instead of taking the
+          # pipe path cannot accidentally find lib.sh and appear to work.
+          cd /tmp
+          out="$(cat "$repo/install.sh" | env \
             FM_SELFTEST=1 \
             FM_NO_MODIFY_PATH=1 \
-            FM_RAW_BASE="file://$PWD" \
+            FM_RAW_BASE="file://$repo" \
             FM_GIT_URL=/tmp/fm-setup-src \
             FM_LIB_SHA256="$sha" \
-            bash
+            bash 2>&1)"
+          echo "$out"
+          # The self-test passing is not enough: it passes either way. What
+          # proves the pipe path ran is that it fetched and cloned.
+          case "$out" in
+            *"checkout ready"*) ;;
+            *) echo "the pipe path did not bootstrap a checkout"; exit 1 ;;
+          esac
           test -d "$FM_SETUP_DIR/.git"
 
       - name: A moved tag is caught by the pinned commit

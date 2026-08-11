@@ -16,12 +16,19 @@ set -euo pipefail
 FM_REPO="${FM_REPO:-first-motive/fm-setup}"
 FM_TAG="${FM_TAG:-v0.1.1}"
 FM_RAW_BASE="${FM_RAW_BASE:-https://raw.githubusercontent.com/${FM_REPO}/${FM_TAG}}"
+# Where install.sh puts the checkout, named in the error a piped run.sh prints.
+FM_SETUP_DIR_HINT="${FM_SETUP_DIR:-$HOME/.first-motive/fm-setup}"
 
 # Resolve this script's own directory, following symlinks, so scripts/run/<verb>
-# is found regardless of the caller's working directory.
+# is found regardless of the caller's working directory. Fails when this script
+# arrived over a pipe.
+#
+# BASH_SOURCE[0] has to name a file that exists: bash 3.2 leaves it empty for a
+# script read from stdin, bash 5 sets a non-path placeholder, and falling back
+# to `pwd` on either would run whatever happens to sit in the caller's directory.
 fm_script_dir() {
   local source="${BASH_SOURCE[0]:-}" dir
-  [ -n "$source" ] || { pwd; return; }
+  [ -n "$source" ] && [ -f "$source" ] || return 1
   while [ -L "$source" ]; do
     dir="$(cd -P "$(dirname "$source")" && pwd)"
     source="$(readlink "$source")"
@@ -108,7 +115,12 @@ main() {
 
   local verb="$1"; shift
   local here script
-  here="$(fm_script_dir)"
+  if ! here="$(fm_script_dir)"; then
+    # A verb is a script in the checkout, so there is nothing to dispatch to
+    # when run.sh itself arrived over a pipe.
+    fm_err "run.sh needs a checkout — provision first with install.sh, then run it from $FM_SETUP_DIR_HINT"
+    return 1
+  fi
   script="$here/scripts/run/$verb.sh"
 
   if [ ! -f "$script" ]; then
