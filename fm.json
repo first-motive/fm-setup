@@ -4,6 +4,10 @@
     "setup-check": {
       "script": "scripts/run/check.sh",
       "help": "report this machine's provisioning state, change nothing"
+    },
+    "setup-add-user": {
+      "script": "scripts/run/add-user.sh",
+      "help": "create an account in the fm group, without sudo"
     }
   }
 }

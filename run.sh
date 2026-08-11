@@ -64,11 +64,16 @@ fm_load_lib() {
   rm -f "$tmp"
 }
 
-# Reattach an interactive terminal after a curl pipe has consumed stdin. With no
-# tty, as in CI, this is a no-op.
+# Reattach an interactive terminal after a curl pipe has consumed stdin.
+#
+# /dev/tty existing is not the same as /dev/tty being usable: in CI, in a cron
+# job, and under a harness there is no controlling terminal, and opening it
+# fails. Testing the open on a spare descriptor makes that case a no-op instead
+# of killing the run before the verb starts.
 reattach_tty() {
-  if [ -e /dev/tty ]; then
-    exec </dev/tty
+  [ -t 0 ] && return 0
+  if { exec 3</dev/tty; } 2>/dev/null; then
+    exec 0<&3 3<&-
   fi
 }
 

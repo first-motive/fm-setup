@@ -63,6 +63,8 @@ scripts/
 ├─ manifest.sh          step registries + package arrays — data, no logic
 ├─ steps/               one file per provisioning step, runnable standalone
 └─ run/                 person-typed verbs, each declared in fm.json
+
+templates/              files a step deploys onto the machine
 ```
 
 Roles share `scripts/steps/` rather than owning a directory each, so a step both
@@ -87,6 +89,20 @@ Each step sources `lib.sh` and `scripts/manifest.sh`, defines `do_check`,
 
 Adding one is two edits: write `scripts/steps/<NN>-<name>.sh`, then register it
 in the role's array in `scripts/manifest.sh` as `id|file|default`.
+
+## People
+
+The repo holds no roster. The account that provisions a machine is its
+administrator and the only one with sudo; everyone else is added afterwards into
+the shared `fm` group, with no ability to change the host.
+
+```bash
+./run.sh add-user matt        # account + fm group + /data access, no sudo
+sudo deluser --remove-home matt
+```
+
+New accounts have no password and log in over Tailscale SSH. The machine's
+`CLAUDE.md` reaches them through `/etc/skel`.
 
 ## Selecting Steps
 

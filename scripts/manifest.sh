@@ -33,6 +33,8 @@ WORKSTATION_STEPS=(
   "ros2|40-ros2.sh|on"
   "dds-tuning|50-dds-tuning.sh|on"
   "tailscale|60-tailscale.sh|on"
+  "users|70-users.sh|on"
+  "agent-ruleset|80-agent-ruleset.sh|on"
 )
 
 # Ubuntu 22.04 on the Jetson Orin Nano: the capture rig.
@@ -127,6 +129,31 @@ FM_ROS_APT_JETSON=(
   python3-rosdep
   python3-colcon-common-extensions
   python3-vcstool
+)
+
+# --- People and data -------------------------------------------------------
+
+# Everyone who works on the machine is in this group, and /data is group-owned
+# by it. Services run as their own system user, not as a person.
+FM_GROUP=fm
+
+# No roster lives here. Who works on a machine changes far more often than how
+# the machine is built, and a name in a committed file is stale the day someone
+# joins or leaves.
+#
+# The administrator is whoever provisions the machine — the account behind the
+# sudo that ran install.sh — and is the only account granted sudo. Everyone else
+# is added afterwards, with `./run.sh add-user <name>`, into the fm group and
+# nothing more.
+
+# Shared storage. Recordings and dataset releases are irreplaceable and belong
+# here rather than in a home directory, where a user removal would take them.
+FM_DATA_DIR=/data
+FM_DATA_SUBDIRS=(
+  recordings
+  dataset-releases
+  runs
+  models
 )
 
 # --- Networking ------------------------------------------------------------

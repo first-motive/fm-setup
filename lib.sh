@@ -121,6 +121,24 @@ fm_verify_checksum() {
   fi
 }
 
+# --- Accounts --------------------------------------------------------------
+
+# fm_group_members GROUP — echo every member of GROUP, one per line, sorted.
+#
+# /etc/group lists secondary members only. Anyone whose *primary* group is GROUP
+# is just as much a member and appears nowhere in that field, so the passwd
+# table is read for a matching gid as well. Reading only /etc/group silently
+# misses those accounts.
+fm_group_members() {
+  local group="$1" gid
+  gid="$(getent group "$group" 2>/dev/null | cut -d: -f3)"
+  [ -n "$gid" ] || return 0
+  {
+    getent group "$group" | cut -d: -f4 | tr ',' '\n'
+    getent passwd | awk -F: -v gid="$gid" '$4 == gid { print $1 }'
+  } | grep -v '^$' | sort -u
+}
+
 # --- File edits ------------------------------------------------------------
 
 # fm_ensure_line FILE LINE — append LINE to FILE once. Creates FILE if absent.
