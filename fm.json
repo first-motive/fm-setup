@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "commands": {
+    "setup-check": {
+      "script": "scripts/run/check.sh",
+      "help": "report this machine's provisioning state, change nothing"
+    }
+  }
+}

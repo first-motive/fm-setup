@@ -1,0 +1,32 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: Lint every script
+        run: shellcheck install.sh run.sh lib.sh scripts/manifest.sh scripts/run/*.sh scripts/steps/*.sh
+
+  selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Proves the front door survives the curl-pipe path and that every manifest
+      # entry resolves to a real step file. Provisions nothing.
+      - name: install.sh self-test
+        run: FM_SELFTEST=1 FM_NO_MODIFY_PATH=1 bash install.sh
+      # The curl-pipe path fetches lib.sh from a published tag, so it can only be
+      # exercised once this repo has one. Add that job with the first release.
+      - name: manifest declares every verb
+        run: |
+          for s in scripts/run/*.sh; do
+            grep -q "\"$s\"" fm.json || { echo "undeclared verb: $s"; exit 1; }
+          done
