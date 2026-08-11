@@ -14,8 +14,8 @@
 set -euo pipefail
 
 FM_REPO="${FM_REPO:-first-motive/fm-setup}"
-FM_TAG="${FM_TAG:-main}"
-FM_RAW_BASE="https://raw.githubusercontent.com/${FM_REPO}/${FM_TAG}"
+FM_TAG="${FM_TAG:-v0.1.1}"
+FM_RAW_BASE="${FM_RAW_BASE:-https://raw.githubusercontent.com/${FM_REPO}/${FM_TAG}}"
 
 # Resolve this script's own directory, following symlinks, so scripts/run/<verb>
 # is found regardless of the caller's working directory.

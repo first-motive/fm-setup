@@ -28,19 +28,60 @@ On a machine that already has the repo:
 On a fresh machine, pin the URL to a release tag:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/first-motive/fm-setup/v0.1.0/install.sh | bash -s -- --workstation
+curl -fsSL https://raw.githubusercontent.com/first-motive/fm-setup/v0.1.1/install.sh | bash -s -- --workstation
 ```
 
 To read it first:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/first-motive/fm-setup/v0.1.0/install.sh -o install.sh
+curl -fsSL https://raw.githubusercontent.com/first-motive/fm-setup/v0.1.1/install.sh -o install.sh
 less install.sh && bash install.sh --workstation
 ```
 
 The curl path clones this repo to `~/.first-motive/fm-setup` and hands over to
 the checkout, because the manifest and the steps live in the repo — and a
 provisioned machine needs them on disk to re-check itself later.
+
+### What The Curl Path Trusts
+
+Piping a script into a shell means the script decides what to verify, so it can
+never meaningfully verify itself. Being precise about that matters more than a
+command that looks secure:
+
+| fetched | verified by |
+| --- | --- |
+| `install.sh` | nothing — it is already running by the time anything could check it |
+| `lib.sh` | `FM_LIB_SHA256`, before it is sourced |
+| the checkout (every step script) | `FM_SETUP_SHA`, after the clone |
+
+Both gates are off unless you set them. For a machine you are sitting at, TLS
+and this repo are the trust anchor and that is usually enough. For one that
+provisions unattended, pin all three by fetching from a commit rather than a
+tag — a tag is a name and can be moved by anyone who can push; a commit sha is
+the content and cannot:
+
+```bash
+TAG=v0.1.1
+SHA=<commit sha for that tag>
+LIB=<lib.sh sha256 for that tag>
+
+curl -fsSL "https://raw.githubusercontent.com/first-motive/fm-setup/$SHA/install.sh" \
+  | env FM_TAG="$TAG" FM_SETUP_SHA="$SHA" FM_LIB_SHA256="$LIB" \
+        bash -s -- --workstation
+```
+
+Fetching `install.sh` by sha makes the first file immutable too, which is the
+part no checksum inside the script can cover. A mismatch on either gate aborts
+before the machine is touched.
+
+Every release publishes both values on its
+[releases page](https://github.com/first-motive/fm-setup/releases). Derive them
+from a clone instead if you would rather not trust a web page:
+
+```bash
+git rev-parse "$TAG^{commit}"
+git show "$TAG:lib.sh" | shasum -a 256
+```
 
 ## The Rule
 
@@ -119,7 +160,9 @@ New accounts have no password and log in over Tailscale SSH. The machine's
 | --- | --- |
 | `FM_SETUP_DIR` | where the curl path clones this repo (default `~/.first-motive/fm-setup`) |
 | `FM_LIB_SHA256` | expected sha256 of a fetched `lib.sh`; a mismatch aborts the install |
-| `FM_TAG` | ref the curl path fetches and clones (default `main`; pin a release tag) |
+| `FM_SETUP_SHA` | commit the bootstrapped checkout must be at; a mismatch aborts before provisioning |
+| `FM_TAG` | release tag the curl path fetches and clones (default: the current release) |
+| `FM_RAW_BASE` | where the curl path fetches `lib.sh` from; overridden in CI to test the pipe against a local checkout |
 | `NONINTERACTIVE` | never prompt; security-sensitive steps auto-decline |
 | `FM_NO_MODIFY_PATH` | skip shell-profile edits — set this in CI |
 | `FM_SELFTEST` | run the CI self-test and provision nothing |

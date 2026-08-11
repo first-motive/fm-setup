@@ -11,18 +11,23 @@
 #   ./install.sh --workstation --list     list the role's steps
 #   ./install.sh uninstall --jetson       reverse what is reversible
 #
-# Bootstrap a fresh machine (pin the URL to a release tag, never a branch):
+# Bootstrap a fresh machine (a release tag, never a branch):
 #
-#   curl -fsSL https://raw.githubusercontent.com/first-motive/fm-setup/v0.1.0/install.sh | bash -s -- --workstation
+#   curl -fsSL https://raw.githubusercontent.com/first-motive/fm-setup/v0.1.1/install.sh | bash -s -- --workstation
 #
-# Inspect before running:
+# Inspect before running — the honest path, because a piped script verifies
+# everything except itself:
 #
-#   curl -fsSL https://raw.githubusercontent.com/first-motive/fm-setup/v0.1.0/install.sh -o install.sh
+#   curl -fsSL https://raw.githubusercontent.com/first-motive/fm-setup/v0.1.1/install.sh -o install.sh
 #   less install.sh && bash install.sh --workstation
+#
+# For an unattended machine, fetch by commit rather than by tag. A tag is a name
+# and can be moved; a commit sha cannot. See the README for the current values.
 #
 # Env overrides:
 #   FM_SETUP_DIR        where the curl path clones this repo  (default: $HOME/.first-motive/fm-setup)
 #   FM_LIB_SHA256       expected sha256 of a fetched lib.sh   (set it for unattended installs)
+#   FM_SETUP_SHA        commit the checkout must be at        (verifies every step script)
 #   FM_NO_MODIFY_PATH   skip shell-profile edits              (set to 1 in CI)
 #   FM_SELFTEST         CI self-test, provisions nothing      (set to 1 in CI)
 #   NONINTERACTIVE      never prompt; security-sensitive steps auto-decline
@@ -33,8 +38,13 @@
 set -euo pipefail
 
 FM_REPO="${FM_REPO:-first-motive/fm-setup}"
-FM_TAG="${FM_TAG:-main}"
-FM_RAW_BASE="https://raw.githubusercontent.com/${FM_REPO}/${FM_TAG}"
+# A release tag, not a branch: what provisioned a machine has to stay nameable
+# months later. Bump this in the same commit that cuts a new tag, so the script
+# a tag ships fetches its own lib.sh rather than a newer one.
+FM_TAG="${FM_TAG:-v0.1.1}"
+# Overridable so the curl-pipe path can be exercised against a local checkout —
+# CI points it at a file:// URL and tests the real code path without a network.
+FM_RAW_BASE="${FM_RAW_BASE:-https://raw.githubusercontent.com/${FM_REPO}/${FM_TAG}}"
 FM_GIT_URL="${FM_GIT_URL:-https://github.com/${FM_REPO}.git}"
 
 FM_SETUP_DIR="${FM_SETUP_DIR:-$HOME/.first-motive/fm-setup}"
@@ -148,6 +158,24 @@ fm_bootstrap_checkout() {
     mkdir -p "$(dirname "$FM_SETUP_DIR")"
     git clone --quiet --branch "$FM_TAG" "$FM_GIT_URL" "$FM_SETUP_DIR"
   fi
+
+  # A tag is a name, and a name can be moved by anyone who can push. A commit is
+  # its content. Pin FM_SETUP_SHA and the checkout is verified against something
+  # nobody can rewrite — which covers every step script at once, not just the
+  # one file the checksum gate sees.
+  if [ -n "${FM_SETUP_SHA:-}" ]; then
+    local head
+    head="$(git -C "$FM_SETUP_DIR" rev-parse HEAD)"
+    if [ "$head" != "$FM_SETUP_SHA" ]; then
+      fm_err "checkout is not the pinned commit"
+      fm_err "  expected $FM_SETUP_SHA"
+      fm_err "  actual   $head"
+      fm_err "refusing to provision from it — the tag may have been moved"
+      return 1
+    fi
+    fm_ok "checkout verified at $FM_SETUP_SHA"
+  fi
+
   fm_ok "checkout ready at $FM_SETUP_DIR"
 }
 
