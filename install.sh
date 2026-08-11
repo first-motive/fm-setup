@@ -13,12 +13,12 @@
 #
 # Bootstrap a fresh machine (a release tag, never a branch):
 #
-#   curl -fsSL https://raw.githubusercontent.com/first-motive/fm-setup/v0.1.2/install.sh | bash -s -- --workstation
+#   curl -fsSL https://raw.githubusercontent.com/first-motive/fm-setup/v0.1.3/install.sh | bash -s -- --workstation
 #
 # Inspect before running — the honest path, because a piped script verifies
 # everything except itself:
 #
-#   curl -fsSL https://raw.githubusercontent.com/first-motive/fm-setup/v0.1.2/install.sh -o install.sh
+#   curl -fsSL https://raw.githubusercontent.com/first-motive/fm-setup/v0.1.3/install.sh -o install.sh
 #   less install.sh && bash install.sh --workstation
 #
 # For an unattended machine, fetch by commit rather than by tag. A tag is a name
@@ -41,7 +41,7 @@ FM_REPO="${FM_REPO:-first-motive/fm-setup}"
 # A release tag, not a branch: what provisioned a machine has to stay nameable
 # months later. Bump this in the same commit that cuts a new tag, so the script
 # a tag ships fetches its own lib.sh rather than a newer one.
-FM_TAG="${FM_TAG:-v0.1.2}"
+FM_TAG="${FM_TAG:-v0.1.3}"
 # Overridable so the curl-pipe path can be exercised against a local checkout —
 # CI points it at a file:// URL and tests the real code path without a network.
 FM_RAW_BASE="${FM_RAW_BASE:-https://raw.githubusercontent.com/${FM_REPO}/${FM_TAG}}"
