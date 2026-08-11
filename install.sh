@@ -155,6 +155,7 @@ fm_bootstrap_checkout() {
     fm_err "git is required to bootstrap; install it with 'sudo apt-get install -y git'"
     return 1
   }
+  local cloned_now=0
   if [ -d "$FM_SETUP_DIR/.git" ]; then
     fm_log "updating checkout at $FM_SETUP_DIR"
     git -C "$FM_SETUP_DIR" fetch --quiet --tags origin
@@ -164,6 +165,7 @@ fm_bootstrap_checkout() {
     fm_log "cloning $FM_REPO into $FM_SETUP_DIR"
     mkdir -p "$(dirname "$FM_SETUP_DIR")"
     git clone --quiet --branch "$FM_TAG" "$FM_GIT_URL" "$FM_SETUP_DIR"
+    cloned_now=1
   fi
 
   # A tag is a name, and a name can be moved by anyone who can push. A commit is
@@ -178,6 +180,16 @@ fm_bootstrap_checkout() {
       fm_err "  expected $FM_SETUP_SHA"
       fm_err "  actual   $head"
       fm_err "refusing to provision from it — the tag may have been moved"
+      # Leaving it behind would put an unverified tree exactly where the next
+      # run looks for a checkout to update and trust. Only what this run cloned
+      # is removed: a checkout that was already there is the operator's, and
+      # deleting their work to report an error would be the worse failure.
+      if [ "$cloned_now" = "1" ]; then
+        rm -rf "$FM_SETUP_DIR"
+        fm_info "removed the unverified checkout at $FM_SETUP_DIR"
+      else
+        fm_warn "the pre-existing checkout at $FM_SETUP_DIR is left as it was — inspect it before reusing it"
+      fi
       return 1
     fi
     fm_ok "checkout verified at $FM_SETUP_SHA"

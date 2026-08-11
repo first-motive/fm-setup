@@ -95,6 +95,12 @@ jobs:
             echo "a checkout at the wrong commit did not abort the install"
             exit 1
           fi
+          # Aborting is not enough: an unverified tree left at this path is what
+          # the next run would find and trust.
+          if [ -e "$FM_SETUP_DIR" ]; then
+            echo "the unverified checkout was left behind at $FM_SETUP_DIR"
+            exit 1
+          fi
 
       - name: The real commit passes the same gate
         run: |
