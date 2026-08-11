@@ -38,8 +38,25 @@ WORKSTATION_STEPS=(
 )
 
 # Ubuntu 22.04 on the Jetson Orin Nano: the capture rig.
+#
+# Canonical's Ubuntu Server image, not the JetPack SDK: 22.04 is what Humble
+# supports natively, and every sensor on the rig is USB or Ethernet, so nothing
+# here depends on NVIDIA's multimedia stack.
+#
+# No GPU steps. The driver and the container toolkit are the workstation's
+# concern; the Jetson records, it does not train.
+#
+# No users or agent-ruleset either. The rig is a single-purpose appliance
+# reached over the tailnet, not a box people work on, so it needs no roster and
+# no shared /data. Add both here the day someone develops on it directly.
 JETSON_STEPS=(
   "system-update|00-system-update.sh|on"
+  "base-deps|10-base-deps.sh|on"
+  "docker|30-docker.sh|on"
+  "ros2|40-ros2.sh|on"
+  "udev-rules|45-udev-rules.sh|on"
+  "dds-tuning|50-dds-tuning.sh|on"
+  "tailscale|60-tailscale.sh|on"
 )
 
 # --- Base packages ---------------------------------------------------------

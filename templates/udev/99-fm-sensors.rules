@@ -1,0 +1,25 @@
+# Managed by fm-setup — scripts/steps/45-udev-rules.sh
+#
+# Capture-rig sensors that arrive over USB. Each rule grants the plugdev group
+# access to the device and gives it a stable name under /dev, so a launch file
+# names a sensor rather than whichever ttyUSB number it enumerated as this boot.
+#
+# After a change: sudo udevadm control --reload-rules && sudo udevadm trigger
+
+# Tactile gloves — CH340 USB-serial bridge. The vendor/product pair is the
+# bridge's, not the glove's, so every CH340 on the machine matches. If a second
+# CH340 device ever shares the bus, narrow this with ATTRS{serial}.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", MODE="0660", GROUP="plugdev", SYMLINK+="fm-tactile"
+
+# Intel RealSense depth cameras. librealsense opens them as raw USB devices, so
+# the grant is on the usb subsystem rather than on a tty.
+#
+# The match is on vendor 8086 alone, which is every Intel USB device rather than
+# only a RealSense. On this rig that is the cameras and nothing else, and the
+# alternative — enumerating D400 product ids — goes stale each time a model is
+# added. Narrow it with ATTRS{idProduct} if this file is ever reused on hardware
+# with other Intel peripherals.
+SUBSYSTEM=="usb", ATTRS{idVendor}=="8086", MODE="0660", GROUP="plugdev"
+
+# The video nodes RealSense exposes for colour and depth streams.
+KERNEL=="video[0-9]*", SUBSYSTEM=="video4linux", ATTRS{idVendor}=="8086", MODE="0660", GROUP="plugdev"
