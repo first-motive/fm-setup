@@ -298,6 +298,10 @@ fm_run_steps() {
   local entry id file default
   local entries=()
 
+  # Steps a role shares read this to pick the role's variant — the ROS distro,
+  # for one, differs between the 26.04 workstation and the 22.04 Jetson.
+  export FM_ROLE="$role"
+
   while IFS= read -r entry; do
     entries+=("$entry")
   done < <(fm_steps_for "$role")
