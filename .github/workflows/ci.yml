@@ -19,14 +19,101 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # Proves the front door survives the curl-pipe path and that every manifest
-      # entry resolves to a real step file. Provisions nothing.
+      # Proves every manifest entry resolves to a real step file, and that a dry
+      # run walks both roles. Provisions nothing.
       - name: install.sh self-test
         run: FM_SELFTEST=1 FM_NO_MODIFY_PATH=1 bash install.sh
-      # The curl-pipe path fetches lib.sh from a published tag, so it can only be
-      # exercised once this repo has one. Add that job with the first release.
       - name: manifest declares every verb
         run: |
           for s in scripts/run/*.sh; do
             grep -q "\"$s\"" fm.json || { echo "undeclared verb: $s"; exit 1; }
           done
+
+  # The path a fresh machine actually takes: install.sh arrives over a pipe with
+  # no file on disk, fetches lib.sh, verifies it, clones the repo, and hands over
+  # to the checkout. It is the one path a plain `bash install.sh` never covers,
+  # and the one where a mistake reaches a machine before anyone can read it.
+  #
+  # Hermetic: the fetch and the clone both point at this checkout, so the job
+  # tests the code on the branch rather than whatever the last release shipped.
+  curl-pipe:
+    runs-on: ubuntu-latest
+    env:
+      # Shaped like a release tag, so the moving-ref warning stays quiet and the
+      # job exercises the same branch the real thing would.
+      FM_TAG: v0.0.0-ci
+      FM_SETUP_DIR: /tmp/fm-setup
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Stand in for the published release
+        run: |
+          git config --global user.email ci@first-motive.invalid
+          git config --global user.name ci
+          git clone --quiet . /tmp/fm-setup-src
+          git -C /tmp/fm-setup-src checkout -q -B "$FM_TAG"
+
+      - name: Pipe install.sh into bash, with lib.sh checksum-verified
+        run: |
+          sha="$(sha256sum lib.sh | cut -d' ' -f1)"
+          cat install.sh | env \
+            FM_SELFTEST=1 \
+            FM_NO_MODIFY_PATH=1 \
+            FM_RAW_BASE="file://$PWD" \
+            FM_GIT_URL=/tmp/fm-setup-src \
+            FM_LIB_SHA256="$sha" \
+            bash
+          test -d "$FM_SETUP_DIR/.git"
+
+      - name: A moved tag is caught by the pinned commit
+        run: |
+          rm -rf "$FM_SETUP_DIR"
+          set +e
+          cat install.sh | env \
+            FM_SELFTEST=1 \
+            FM_NO_MODIFY_PATH=1 \
+            FM_RAW_BASE="file://$PWD" \
+            FM_GIT_URL=/tmp/fm-setup-src \
+            FM_LIB_SHA256="$(sha256sum lib.sh | cut -d' ' -f1)" \
+            FM_SETUP_SHA=1111111111111111111111111111111111111111 \
+            bash
+          code=$?
+          set -e
+          if [ "$code" -eq 0 ]; then
+            echo "a checkout at the wrong commit did not abort the install"
+            exit 1
+          fi
+
+      - name: The real commit passes the same gate
+        run: |
+          rm -rf "$FM_SETUP_DIR"
+          cat install.sh | env \
+            FM_SELFTEST=1 \
+            FM_NO_MODIFY_PATH=1 \
+            FM_RAW_BASE="file://$PWD" \
+            FM_GIT_URL=/tmp/fm-setup-src \
+            FM_LIB_SHA256="$(sha256sum lib.sh | cut -d' ' -f1)" \
+            FM_SETUP_SHA="$(git rev-parse HEAD)" \
+            bash
+
+      - name: A tampered lib.sh aborts before anything is provisioned
+        run: |
+          rm -rf "$FM_SETUP_DIR"
+          set +e
+          cat install.sh | env \
+            FM_SELFTEST=1 \
+            FM_NO_MODIFY_PATH=1 \
+            FM_RAW_BASE="file://$PWD" \
+            FM_GIT_URL=/tmp/fm-setup-src \
+            FM_LIB_SHA256=0000000000000000000000000000000000000000000000000000000000000000 \
+            bash
+          code=$?
+          set -e
+          if [ "$code" -eq 0 ]; then
+            echo "a checksum mismatch did not abort the install"
+            exit 1
+          fi
+          if [ -e "$FM_SETUP_DIR" ]; then
+            echo "the install cloned despite a checksum mismatch"
+            exit 1
+          fi
