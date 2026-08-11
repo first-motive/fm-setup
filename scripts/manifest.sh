@@ -35,6 +35,7 @@ WORKSTATION_STEPS=(
   "tailscale|60-tailscale.sh|on"
   "users|70-users.sh|on"
   "agent-ruleset|80-agent-ruleset.sh|on"
+  "isaac-sim|90-isaac-sim.sh|on"
 )
 
 # Ubuntu 22.04 on the Jetson Orin Nano: the capture rig.
@@ -172,6 +173,34 @@ FM_DATA_SUBDIRS=(
   runs
   models
 )
+
+# --- Isaac Sim -------------------------------------------------------------
+
+# Containerised because NVIDIA ships native Isaac Sim for 22.04 and 24.04 only,
+# and the workstation runs 26.04. Pinned to a tag: a moving `latest` would
+# change what a sim run means between two days.
+FM_ISAAC_IMAGE=nvcr.io/nvidia/isaac-sim:4.5.0
+
+# Isaac Sim rebuilds its shader and asset caches from cold on every start unless
+# they live on the host. Entries are "host-subdir|container-path"; the host side
+# hangs off FM_ISAAC_CACHE_DIR.
+FM_ISAAC_CACHE_DIR="$HOME/.cache/isaac-sim"
+FM_ISAAC_CACHE_MAP=(
+  "kit|/isaac-sim/kit/cache"
+  "ov|/root/.cache/ov"
+  "pip|/root/.cache/pip"
+  "glcache|/root/.cache/nvidia/GLCache"
+  "computecache|/root/.nv/ComputeCache"
+  "logs|/root/.nvidia-omniverse/logs"
+  "data|/root/.local/share/ov/data"
+  "documents|/root/Documents"
+)
+
+# The image refuses to start without both. Setting them here rather than in the
+# launch wrapper keeps the acceptance visible in the manifest, where it is
+# reviewed, instead of buried in a docker run line.
+FM_ISAAC_ACCEPT_EULA=Y
+FM_ISAAC_PRIVACY_CONSENT=Y
 
 # --- Networking ------------------------------------------------------------
 
