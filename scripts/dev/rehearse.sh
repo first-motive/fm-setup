@@ -74,6 +74,10 @@ rehearse() {
     -e FM_NO_MODIFY_PATH=1 \
     "$image" bash -c '
       set -euo pipefail
+      # Refuse to install the shim anywhere but a container: it replaces sudo
+      # with a no-op, which on a real machine would be a working privilege
+      # escalation left on disk.
+      [ -e /.dockerenv ] || { echo "not in a container — refusing to shim sudo" >&2; exit 1; }
       printf "#!/bin/sh\nexec env \"\$@\"\n" > /usr/local/bin/sudo
       chmod +x /usr/local/bin/sudo
       apt-get update -qq >/dev/null 2>&1
@@ -93,6 +97,16 @@ main() {
       *) fm_err "unknown argument: $1"; usage; return 1 ;;
     esac
   done
+
+  # $steps is interpolated into a `bash -c` string that runs in the container,
+  # so an unchecked value is command injection: `--steps 'x; rm -rf /'` would
+  # run inside the container as root. Step ids are lowercase words, digits, and
+  # hyphens, separated by commas — nothing else has any business here.
+  case "$steps" in
+    ""|*[!a-z0-9,-]*)
+      fm_err "invalid --steps value: '$steps' (expected comma-separated step ids)"
+      return 1 ;;
+  esac
 
   fm_has_docker || { fm_err "docker is not reachable — start it and retry"; return 1; }
 
