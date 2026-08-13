@@ -83,6 +83,49 @@ git rev-parse "$TAG^{commit}"
 git show "$TAG:lib.sh" | shasum -a 256
 ```
 
+## Flashing The Jetson
+
+The jetson role starts before the OS exists. The `flash` verb writes Canonical's
+Ubuntu 22.04 Server image for Jetson Orin to an SD card and replaces the image's
+cloud-init seed before the write, so the appliance's first boot needs no
+monitor, keyboard, or wizard:
+
+```bash
+fm flash --device /dev/disk4                    # or: ./run.sh flash --device …
+fm flash --device /dev/disk4 --wifi "rig-lan:psk" --gh-token github_pat_…
+```
+
+![bring-up](docs/diagrams/bringup.svg)
+
+The card boots as `fm@fm-jetson` — SSH keys injected, password login locked —
+and provisions itself: this repo's jetson role, then fm_ros2's recorder service.
+The recorder's overlays are private, so that second layer runs unattended only
+when `--gh-token` (a read-only fine-grained PAT) was baked at flash time;
+without one, first boot stops after the machine layer and leaves the remaining
+one-liner in `~/NEXT-STEP.md` on the appliance.
+
+| flag | effect |
+| --- | --- |
+| `--device` | target disk, whole device; internal disks are refused |
+| `--hostname`, `--user` | identity (defaults `fm-jetson`, `fm` — the fleet finds the rig by them) |
+| `--ssh-key` | public key to authorize (default: every `~/.ssh/*.pub`) |
+| `--wifi ssid:psk` | join wifi on boot; Ethernet needs nothing |
+| `--tailscale-authkey` | join the tailnet on first boot — use an ephemeral key |
+| `--gh-token` | org access for the recorder's private overlays |
+| `--no-provision` | identity only, no first-boot installs |
+| `--dry-run` | print the plan, touch nothing |
+| `-y`, `--yes` | skip the erase confirmation |
+
+Prerequisites: the board's QSPI must carry NVIDIA's r36.x UEFI firmware — any
+Orin that has booted JetPack 6 qualifies. On macOS the seed swap needs a
+container runtime (OrbStack or Docker), because the image's rootfs is ext4.
+balenaCLI is used to write and validate the card when present; plain `dd`
+otherwise.
+
+Secrets passed at flash time sit in plain text in the card's seed until first
+boot consumes them: hand the card straight to the Jetson, and prefer ephemeral,
+least-scope credentials.
+
 ## The Rule
 
 No system-level change outside a step in this repo.
@@ -106,6 +149,7 @@ scripts/
 ├─ run/                 person-typed verbs, each declared in fm.json
 └─ dev/                 developer tooling — not part of provisioning
 
+docs/diagrams/          d2 sources + rendered svg sidecars
 templates/              files a step deploys onto the machine
 ```
 
