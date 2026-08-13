@@ -1,0 +1,46 @@
+...@styles
+
+direction: right
+
+mac: "" {
+  grid-rows: 2
+  class: block
+  r: Mac { class: role }
+  a: "fm flash --device /dev/diskN" { class: art }
+}
+
+card: "" {
+  grid-rows: 3
+  class: block
+  r: SD Card { class: role }
+  p: "Ubuntu 22.04 Server (tegra)" { class: pkg }
+  a: "cloud-init seed: fm@fm-jetson" { class: art }
+}
+
+boot: First Boot — Unattended {
+  class: zoom
+  ci: "" {
+    grid-rows: 2
+    class: block
+    r: Machine Layer { class: role }
+    a: "fm-setup --jetson" { class: art }
+  }
+  ws: "" {
+    grid-rows: 2
+    class: block
+    r: Workspace Layer { class: role }
+    a: "fm_ros2 --recorder --service" { class: art }
+  }
+  ci -> ws: gh token baked
+}
+
+rig: "" {
+  grid-rows: 2
+  class: block
+  r: Capture Rig { class: role }
+  a: "recording on boot" { class: art }
+}
+
+mac -> card: flash + seed
+card -> boot: power on
+boot -> rig
