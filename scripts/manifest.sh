@@ -184,6 +184,14 @@ FM_DATA_SUBDIRS=(
   models
 )
 
+# What `./run.sh backup` copies to external storage before a wipe: the things
+# that cannot be re-made. `models` is absent on purpose — weights are downloads,
+# and treating them as precious turns a backup nobody runs into the plan.
+FM_BACKUP_SOURCES=(
+  recordings
+  dataset-releases
+  runs
+)
 
 # --- Isaac Sim -------------------------------------------------------------
 

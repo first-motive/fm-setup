@@ -12,6 +12,10 @@
     "isaac-sim": {
       "script": "scripts/run/isaac-sim.sh",
       "help": "launch the Isaac Sim container, headless by default"
+    },
+    "setup-backup": {
+      "script": "scripts/run/backup.sh",
+      "help": "copy /data's irreplaceables to external storage, with a verified manifest"
     }
   }
 }

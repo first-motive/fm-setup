@@ -103,7 +103,8 @@ fm.json                 verbs mounted onto the fm CLI
 scripts/
 ├─ manifest.sh          step registries + package arrays — data, no logic
 ├─ steps/               one file per provisioning step, runnable standalone
-└─ run/                 person-typed verbs, each declared in fm.json
+├─ run/                 person-typed verbs, each declared in fm.json
+└─ dev/                 developer tooling — not part of provisioning
 
 templates/              files a step deploys onto the machine
 ```
@@ -144,6 +145,41 @@ sudo deluser --remove-home matt
 
 New accounts have no password and log in over Tailscale SSH. The machine's
 `CLAUDE.md` reaches them through `/etc/skel`.
+
+## Backups
+
+Before a wipe, copy what cannot be re-made and prove the copy is good:
+
+```bash
+./run.sh backup /mnt/ssd              # copy + checksum manifest + read-back verify
+./run.sh backup --verify /mnt/ssd     # re-verify later, or after transport
+./run.sh backup --restore /mnt/ssd    # copy back to /data, group reapplied
+```
+
+Recordings, dataset releases, and run evidence are copied. Model weights and
+caches are not — they are downloads, and treating them as precious turns a
+backup nobody runs into the plan.
+
+The manifest is plain `sha256sum -c` format at the backup root, readable without
+anything from this repo. The copy path verifies before reporting success, and
+`--restore` verifies before writing, so a corrupt backup can never overwrite the
+only other copy.
+
+## Rehearsing A Role
+
+Provisioning is the one thing this repo cannot test on the machine that writes
+it. `scripts/dev/rehearse.sh` runs a role's package steps inside a container of
+its target release:
+
+```bash
+./scripts/dev/rehearse.sh             # both roles
+./scripts/dev/rehearse.sh jetson      # 22.04 aarch64
+```
+
+A container is not a machine — no systemd, no devices, no GPU — but it is a real
+apt tree of the real release, which is enough to catch the failures that
+actually happen: a repo that 404s, a package renamed between releases, a step
+whose control flow does not survive to the end.
 
 ## Selecting Steps
 
