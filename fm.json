@@ -16,6 +16,10 @@
     "setup-backup": {
       "script": "scripts/run/backup.sh",
       "help": "copy /data's irreplaceables to external storage, with a verified manifest"
+    },
+    "lidar-net": {
+      "script": "scripts/run/lidar-net.sh",
+      "help": "dedicated netplan interface for the Livox MID-360"
     }
   }
 }

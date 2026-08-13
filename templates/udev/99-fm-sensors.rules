@@ -6,10 +6,11 @@
 #
 # After a change: sudo udevadm control --reload-rules && sudo udevadm trigger
 
-# Tactile gloves — CH340 USB-serial bridge. The vendor/product pair is the
-# bridge's, not the glove's, so every CH340 on the machine matches. If a second
-# CH340 device ever shares the bus, narrow this with ATTRS{serial}.
-SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", MODE="0660", GROUP="plugdev", SYMLINK+="fm-tactile"
+# Tactile gloves — CH340 USB-serial bridge. Permission grant only: the stable
+# name (/dev/fm-tactile-left, pinned to a physical port) is owned by fm_ros2's
+# install-tactile-service.sh, which knows which glove is which. Naming it here
+# too would give one device two symlinks and two owners.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", MODE="0660", GROUP="plugdev"
 
 # Intel RealSense depth cameras. librealsense opens them as raw USB devices, so
 # the grant is on the usb subsystem rather than on a tty.

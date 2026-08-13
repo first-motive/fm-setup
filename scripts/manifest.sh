@@ -226,3 +226,8 @@ FM_ISAAC_PRIVACY_CONSENT=Y
 # CycloneDDS asks for a 128 MB socket receive buffer and treats a shortfall as
 # fatal. 134217728 = 128 MiB.
 FM_DDS_RMEM_MAX=134217728
+
+# The Livox MID-360 ships at a fixed address and expects the host on the same
+# /24. Used by ./run.sh lidar-net, which puts them on a dedicated interface.
+FM_LIDAR_IP=192.168.1.131
+FM_LIDAR_HOST_IP=192.168.1.10
