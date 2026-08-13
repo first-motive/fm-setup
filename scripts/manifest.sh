@@ -291,3 +291,30 @@ FM_DDS_RMEM_MAX=134217728
 # /24. Used by ./run.sh lidar-net, which puts them on a dedicated interface.
 FM_LIDAR_IP=192.168.1.131
 FM_LIDAR_HOST_IP=192.168.1.10
+
+# --- Jetson SD card --------------------------------------------------------
+
+# Canonical's preinstalled Ubuntu Server image for Jetson Orin — the OS the
+# jetson role provisions on top of. Flashed by ./run.sh flash, which also seeds
+# cloud-init so the appliance boots configured. Pinned by sha256: an upstream
+# image refresh must break loudly here, not change what a flash means silently.
+FM_JETSON_IMAGE_URL="https://cdimage.ubuntu.com/releases/jammy/release/nvidia-tegra/ubuntu-22.04-preinstalled-server-arm64+tegra-jetson.img.xz"
+FM_JETSON_IMAGE_SHA256=27c54b9f3a23b4c8a6a8490cc41281061b359fea031c44ebdf7932316331f68a
+
+# Rootfs partition start, in 512-byte sectors, of the exact image above. The
+# image ships its cloud-init seed baked into the ext4 rootfs (datasource
+# NoCloud, seed dir wins over any FAT drop-in), so ./run.sh flash loop-mounts
+# the rootfs at this offset to replace the seed before writing the card. A
+# constant of the pinned image: re-derive with `fdisk -l` on an image bump.
+FM_JETSON_ROOTFS_OFFSET=104448
+
+# Appliance identity. The recorder fleet finds the rig at fm-jetson.local, and
+# fm_ros2's sync timer ships recordings from this hostname, so it is a contract,
+# not a default to taste.
+FM_JETSON_HOSTNAME=fm-jetson
+FM_JETSON_USER=fm
+
+# First-boot provisioning: the two install layers cloud-init chains after the
+# card's first boot. Machine layer first, workspace layer second.
+FM_SETUP_INSTALL_URL="https://raw.githubusercontent.com/first-motive/fm-setup/main/install.sh"
+FM_ROS2_INSTALL_URL="https://raw.githubusercontent.com/first-motive/fm-ros2/main/install.sh"

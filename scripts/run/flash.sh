@@ -1,0 +1,488 @@
+#!/usr/bin/env bash
+#
+# flash — build a provisioned Jetson SD card, from the machine with the SD slot.
+#
+#   ./run.sh flash --device /dev/disk4                       # macOS
+#   ./run.sh flash --device /dev/sdb --wifi "rig-lan:secret" # Linux
+#
+# Writes Canonical's Ubuntu Server image for Jetson Orin (pinned in
+# scripts/manifest.sh) with the cloud-init seed replaced before the write, so
+# the first boot needs no monitor, keyboard, or wizard: hostname, appliance
+# user, SSH keys, and optional wifi are decided before power-on, and a
+# first-boot script chains fm-setup's jetson role and (with --gh-token)
+# fm_ros2's recorder install. The card comes out of this script ready to
+# record.
+#
+# Why the seed is replaced in the image, not dropped on the card: this image
+# bakes its NoCloud seed into the ext4 rootfs (/var/lib/cloud/seed/nocloud —
+# the ubuntu/ubuntu first-login wizard), and a baked seed beats any file laid
+# on the FAT partition. So the flow is: clone the cached image (copy-on-write
+# where the filesystem offers it), loop-mount the rootfs at the pinned offset,
+# swap the seed, then flash the clone. On macOS the ext4 mount happens inside
+# a privileged container (OrbStack/Docker); on Linux it is a plain loop mount.
+#
+# Engine: balena CLI when present (validates after write), otherwise dd. The
+# target must be a whole, external disk — internal disks are refused outright.
+#
+# Firmware prerequisite, documented not automated: the board's QSPI must carry
+# NVIDIA's r36.x UEFI firmware. Any Orin that has booted JetPack 6 qualifies.
+
+set -euo pipefail
+
+_here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+FM_ROOT="$(cd "$_here/../.." && pwd)"
+# shellcheck source=../../lib.sh disable=SC1091
+. "$FM_ROOT/lib.sh"
+# shellcheck source=../manifest.sh disable=SC1091
+. "$FM_ROOT/scripts/manifest.sh"
+
+CACHE_DIR="${FM_FLASH_CACHE:-$HOME/.cache/fm-setup}"
+IMAGE_XZ="$CACHE_DIR/$(basename "$FM_JETSON_IMAGE_URL")"
+IMAGE_RAW="${IMAGE_XZ%.xz}"
+WORK_IMG=""
+SEED_DIR=""
+
+DEVICE=""
+NEW_HOSTNAME="$FM_JETSON_HOSTNAME"
+NEW_USER="$FM_JETSON_USER"
+WIFI_SSID=""
+WIFI_PSK=""
+TS_AUTHKEY=""
+GH_TOKEN=""
+SSH_KEY_FILE=""
+SSH_KEYS=""
+PROVISION=1
+DRY_RUN=0
+ASSUME_YES=0
+
+usage() {
+  cat <<EOF
+flash — build a provisioned Jetson SD card
+
+Usage: ./run.sh flash --device <disk> [options]
+
+  --device <disk>          target disk, whole device (macOS /dev/diskN,
+                           Linux /dev/sdX). Internal disks are refused.
+  --hostname <name>        appliance hostname (default: $FM_JETSON_HOSTNAME)
+  --user <name>            appliance user (default: $FM_JETSON_USER)
+  --ssh-key <file>         public key to authorize (default: every ~/.ssh/*.pub)
+  --wifi <ssid:psk>        join this network on boot (Ethernet needs nothing)
+  --tailscale-authkey <k>  join the tailnet on first boot (use an ephemeral key)
+  --gh-token <token>       read-only fine-grained PAT for the private overlays;
+                           with it, the recorder service installs unattended
+  --no-provision           identity only — skip the first-boot install chain
+  --dry-run                print the plan, touch nothing
+  -y, --yes                skip the erase confirmation
+
+macOS needs a container runtime (OrbStack or Docker) for the seed swap — the
+rootfs is ext4. Linux needs only sudo.
+
+Every secret passed here lands in the card's seed in plain text until first
+boot consumes it. Hand the card straight to the Jetson, and prefer
+ephemeral/least-scope credentials.
+
+First boot takes 15-30 min on the provisioning chain. Watch it:
+  ssh $FM_JETSON_USER@$FM_JETSON_HOSTNAME.local tail -f /var/log/fm-first-boot.log
+EOF
+}
+
+# --- Small helpers ----------------------------------------------------------
+
+# Quote a value for YAML: double-quoted, with backslash, quote, and newline
+# escaping — a newline smuggled into an ssid/psk must not become YAML structure.
+yaml_quote() {
+  local s="$1"
+  s="${s//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  s="${s//$'\n'/\\n}"
+  s="${s//$'\r'/\\r}"
+  printf '"%s"' "$s"
+}
+
+require_sane_name() {
+  local what="$1" value="$2"
+  case "$value" in
+    *[!a-z0-9-]*|""|-*)
+      fm_err "invalid $what: '$value' (lowercase letters, digits, hyphens)"
+      return 1 ;;
+  esac
+}
+
+cleanup() {
+  # The clone and the staged seed both carry secrets — never leave them behind.
+  if [ -n "$WORK_IMG" ]; then rm -f "$WORK_IMG"; fi
+  if [ -n "$SEED_DIR" ]; then rm -rf "$SEED_DIR"; fi
+}
+trap cleanup EXIT
+
+# --- Image ------------------------------------------------------------------
+
+fetch_image() {
+  mkdir -p "$CACHE_DIR"
+  if [ ! -f "$IMAGE_XZ" ] || ! fm_verify_checksum "$IMAGE_XZ" "$FM_JETSON_IMAGE_SHA256" 2>/dev/null; then
+    fm_log "downloading $(basename "$FM_JETSON_IMAGE_URL")"
+    curl -fSL --proto '=https' -C - -o "$IMAGE_XZ" "$FM_JETSON_IMAGE_URL"
+    fm_verify_checksum "$IMAGE_XZ" "$FM_JETSON_IMAGE_SHA256"
+    rm -f "$IMAGE_RAW" # a fresh download invalidates the cached decompression
+  fi
+  fm_ok "image verified against the pinned sha256"
+  if [ ! -f "$IMAGE_RAW" ]; then
+    fm_log "decompressing (cached for the next flash)"
+    fm_require_cmd xz
+    xz -dk "$IMAGE_XZ"
+  fi
+}
+
+# Clone the cached image for this card. On APFS the clone is copy-on-write and
+# instant; elsewhere it is a plain copy.
+clone_image() {
+  WORK_IMG="$CACHE_DIR/.flash-$$.img"
+  fm_log "staging a working copy of the image"
+  cp -c "$IMAGE_RAW" "$WORK_IMG" 2>/dev/null || cp "$IMAGE_RAW" "$WORK_IMG"
+}
+
+# --- Target disk ------------------------------------------------------------
+
+# Refuse anything that is not a whole, external disk. A typo here erases a
+# drive, so every check fails closed.
+validate_device_macos() {
+  local info
+  info="$(diskutil info "$DEVICE" 2>/dev/null)" || {
+    fm_err "no such disk: $DEVICE"; fm_info "list disks with: diskutil list external"; return 1
+  }
+  printf '%s\n' "$info" | grep -q '^ *Whole: *Yes' || {
+    fm_err "$DEVICE is a partition — pass the whole disk (e.g. /dev/disk4)"; return 1
+  }
+  printf '%s\n' "$info" | grep -Eq '^ *Device Location: *External|^ *Internal: *No' || {
+    fm_err "$DEVICE looks internal — refusing"; return 1
+  }
+  fm_info "target: $(printf '%s\n' "$info" | grep -E '^ *Device / Media Name:|^ *Disk Size:' | sed 's/^ *//' | tr '\n' ' ')"
+}
+
+validate_device_linux() {
+  [ -b "$DEVICE" ] || { fm_err "no such block device: $DEVICE"; return 1; }
+  local type rm
+  type="$(lsblk -ndo TYPE "$DEVICE")" || return 1
+  rm="$(lsblk -ndo RM "$DEVICE")" || return 1
+  [ "$type" = "disk" ] || { fm_err "$DEVICE is not a whole disk"; return 1; }
+  [ "$rm" = "1" ] || { fm_err "$DEVICE is not removable — refusing"; return 1; }
+  fm_info "target: $(lsblk -ndo NAME,SIZE,MODEL "$DEVICE")"
+}
+
+confirm_erase() {
+  fm_warn "everything on $DEVICE will be erased"
+  if [ "$ASSUME_YES" = 1 ]; then
+    return 0
+  fi
+  fm_confirm "erase $DEVICE and write the Jetson image?" || {
+    fm_err "aborted"; return 1
+  }
+}
+
+# --- Seed content -----------------------------------------------------------
+
+collect_ssh_keys() {
+  local keys=""
+  if [ -n "$SSH_KEY_FILE" ]; then
+    [ -f "$SSH_KEY_FILE" ] || { fm_err "no such key file: $SSH_KEY_FILE"; return 1; }
+    keys="$(cat "$SSH_KEY_FILE")"
+  else
+    local f
+    for f in "$HOME"/.ssh/*.pub; do
+      [ -f "$f" ] || continue
+      keys="${keys}$(cat "$f")"$'\n'
+    done
+  fi
+  [ -n "$keys" ] || {
+    fm_err "no SSH public key found (~/.ssh/*.pub) — pass --ssh-key"
+    fm_info "the card locks password login, so a key is the only door in"
+    return 1
+  }
+  printf '%s' "$keys"
+}
+
+build_network_config() {
+  cat <<EOF
+# Seeded by fm-setup (./run.sh flash). Ethernet always; wifi when creds given.
+version: 2
+ethernets:
+  all-eth:
+    match: {name: "e*"}
+    dhcp4: true
+    optional: true
+EOF
+  if [ -n "$WIFI_SSID" ]; then
+    cat <<EOF
+wifis:
+  all-wl:
+    match: {name: "wl*"}
+    dhcp4: true
+    optional: true
+    access-points:
+      $(yaml_quote "$WIFI_SSID"):
+        password: $(yaml_quote "$WIFI_PSK")
+EOF
+  fi
+}
+
+# The first-boot script cloud-init writes to the appliance and runs once.
+# Failures do not abort it — a rig with a half-finished install and a live SSH
+# door beats one that stopped before it was reachable.
+build_first_boot_script() {
+  cat <<EOF
+#!/usr/bin/env bash
+set -uo pipefail
+exec >>/var/log/fm-first-boot.log 2>&1
+echo "== fm first boot: \$(date) =="
+export NONINTERACTIVE=1
+EOF
+  if [ -n "$GH_TOKEN" ]; then
+    cat <<EOF
+install -o "$NEW_USER" -g "$NEW_USER" -m 0600 /dev/null "/home/$NEW_USER/.git-credentials"
+printf 'https://x-access-token:%s@github.com\n' '$GH_TOKEN' >"/home/$NEW_USER/.git-credentials"
+sudo -u "$NEW_USER" -H git config --global credential.helper store
+EOF
+  fi
+  cat <<EOF
+echo "-- machine layer: fm-setup --jetson"
+sudo -u "$NEW_USER" -H bash -c 'curl -fsSL --proto "=https" $FM_SETUP_INSTALL_URL | bash -s -- --jetson -y'
+EOF
+  if [ -n "$TS_AUTHKEY" ]; then
+    cat <<EOF
+echo "-- tailscale join"
+tailscale up --ssh --authkey '$TS_AUTHKEY' || echo "tailscale join failed; run 'sudo tailscale up --ssh' by hand"
+EOF
+  fi
+  if [ -n "$GH_TOKEN" ]; then
+    cat <<EOF
+echo "-- workspace layer: fm_ros2 --recorder --service"
+sudo -u "$NEW_USER" -H bash -c 'mkdir -p ~/jetson && cd ~/jetson && curl -fsSL --proto "=https" $FM_ROS2_INSTALL_URL | bash -s -- --recorder --service'
+EOF
+  else
+    cat <<EOF
+cat >"/home/$NEW_USER/NEXT-STEP.md" <<'NOTE'
+Machine layer is provisioned. The recorder needs first-motive org access:
+  gh auth login    # or place an SSH key
+  mkdir -p ~/jetson && cd ~/jetson
+  curl -fsSL --proto "=https" $FM_ROS2_INSTALL_URL | bash -s -- --recorder --service
+NOTE
+chown "$NEW_USER:$NEW_USER" "/home/$NEW_USER/NEXT-STEP.md"
+echo "-- no --gh-token: recorder install deferred (see ~/NEXT-STEP.md)"
+EOF
+  fi
+  cat <<EOF
+echo "== fm first boot done: \$(date) =="
+EOF
+}
+
+build_user_data() {
+  cat <<EOF
+#cloud-config
+# Seeded by fm-setup (./run.sh flash). One appliance, no wizard.
+hostname: $NEW_HOSTNAME
+manage_etc_hosts: true
+ssh_pwauth: false
+package_update: true
+packages: [curl, git]
+users:
+  - name: $NEW_USER
+    gecos: First Motive appliance
+    groups: [adm, sudo, dialout, video, plugdev]
+    shell: /bin/bash
+    lock_passwd: true
+    # Appliance owner on a single-purpose box; the install chain and the
+    # auto-updater both need root without a console to type a password into.
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    ssh_authorized_keys:
+EOF
+  local line
+  while IFS= read -r line; do
+    [ -n "$line" ] && printf '      - %s\n' "$line"
+  done <<<"$SSH_KEYS"
+  if [ "$PROVISION" = 1 ]; then
+    cat <<EOF
+write_files:
+  - path: /usr/local/sbin/fm-first-boot.sh
+    permissions: "0700"
+    content: |
+EOF
+    build_first_boot_script | sed 's/^/      /'
+    cat <<EOF
+runcmd:
+  - [bash, /usr/local/sbin/fm-first-boot.sh]
+EOF
+  fi
+}
+
+# Stage the three seed files, secrets included, under a 0700 dir the EXIT trap
+# removes.
+stage_seed() {
+  SEED_DIR="$(mktemp -d "$CACHE_DIR/.seed.XXXXXX")"
+  chmod 700 "$SEED_DIR"
+  build_user_data >"$SEED_DIR/user-data"
+  build_network_config >"$SEED_DIR/network-config"
+  cat >"$SEED_DIR/meta-data" <<EOF
+dsmode: local
+instance_id: $NEW_HOSTNAME
+EOF
+}
+
+# --- Seed injection ---------------------------------------------------------
+
+# Replace the baked NoCloud seed inside the working image's ext4 rootfs.
+inject_seed_linux() {
+  local mnt
+  mnt="$(mktemp -d)"
+  sudo mount -o loop,offset=$((FM_JETSON_ROOTFS_OFFSET * 512)) "$WORK_IMG" "$mnt"
+  sudo install -m 0644 "$SEED_DIR/user-data" "$SEED_DIR/meta-data" "$SEED_DIR/network-config" \
+    "$mnt/var/lib/cloud/seed/nocloud/"
+  sudo umount "$mnt"
+  rmdir "$mnt"
+}
+
+inject_seed_macos() {
+  fm_has_docker || {
+    fm_err "the seed swap needs a container runtime on macOS (the rootfs is ext4)"
+    fm_info "install OrbStack (brew install --cask orbstack) and retry"
+    return 1
+  }
+  # One bind mount covers both: the working image and the staged seed live in
+  # CACHE_DIR, and a directory bind is the shape every runtime supports.
+  docker run --rm --privileged -v "$CACHE_DIR:/work" ubuntu:24.04 bash -euc "
+    mkdir -p /mnt/root
+    mount -o loop,offset=\$(( $FM_JETSON_ROOTFS_OFFSET * 512 )) '/work/$(basename "$WORK_IMG")' /mnt/root
+    install -m 0644 '/work/$(basename "$SEED_DIR")/user-data' \
+      '/work/$(basename "$SEED_DIR")/meta-data' \
+      '/work/$(basename "$SEED_DIR")/network-config' \
+      /mnt/root/var/lib/cloud/seed/nocloud/
+    umount /mnt/root
+  "
+}
+
+inject_seed() {
+  fm_log "replacing the image's cloud-init seed"
+  case "$(fm_detect_os)" in
+    macos) inject_seed_macos ;;
+    linux) inject_seed_linux ;;
+  esac
+  fm_ok "seed carries $NEW_USER@$NEW_HOSTNAME"
+}
+
+# --- Flash engines ----------------------------------------------------------
+
+flash_balena() {
+  local balena_bin
+  balena_bin="$(command -v balena)"
+  fm_log "flashing with balena ($balena_bin)"
+  sudo "$balena_bin" local flash "$WORK_IMG" --drive "$DEVICE" --yes
+}
+
+flash_dd() {
+  local raw="$DEVICE"
+  fm_log "flashing with dd"
+  if [ "$(fm_detect_os)" = "macos" ]; then
+    raw="/dev/r${DEVICE#/dev/}"
+    diskutil unmountDisk force "$DEVICE" >/dev/null
+    sudo dd if="$WORK_IMG" of="$raw" bs=16m
+  else
+    sudo umount "${DEVICE}"?* 2>/dev/null || true
+    sudo dd if="$WORK_IMG" of="$raw" bs=16M oflag=direct status=progress
+  fi
+  sync
+}
+
+flash_image() {
+  if fm_has_cmd balena; then
+    flash_balena
+    return 0
+  fi
+  if [ "$(fm_detect_os)" = "macos" ] && fm_has_cmd brew; then
+    if [ "$ASSUME_YES" = 1 ] || fm_confirm "install balena-cli (validates the write)?"; then
+      brew install balena-cli >/dev/null && { flash_balena; return 0; }
+      fm_warn "balena-cli install failed — falling back to dd"
+    fi
+  fi
+  flash_dd
+}
+
+eject_card() {
+  if [ "$(fm_detect_os)" = "macos" ]; then
+    diskutil eject "$DEVICE" >/dev/null 2>&1 || true
+  fi
+}
+
+# --- Plan -------------------------------------------------------------------
+
+print_plan() {
+  fm_banner
+  fm_log "flash plan"
+  fm_info "image     $(basename "$FM_JETSON_IMAGE_URL")"
+  fm_info "device    ${DEVICE:-<required>}"
+  fm_info "identity  $NEW_USER@$NEW_HOSTNAME (password login locked, SSH keys injected)"
+  fm_info "wifi      ${WIFI_SSID:-none (Ethernet)}"
+  if [ -n "$TS_AUTHKEY" ]; then
+    fm_info "tailscale authkey provided"
+  else
+    fm_info "tailscale manual (sudo tailscale up --ssh)"
+  fi
+  if [ "$PROVISION" = 1 ]; then
+    fm_info "boot      fm-setup --jetson${GH_TOKEN:+, then fm_ros2 --recorder --service}"
+    [ -n "$GH_TOKEN" ] || fm_info "          (no --gh-token: recorder deferred to ~/NEXT-STEP.md)"
+  else
+    fm_info "boot      identity only (--no-provision)"
+  fi
+}
+
+main() {
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --device)            DEVICE="${2:?--device needs a value}"; shift 2 ;;
+      --hostname)          NEW_HOSTNAME="${2:?}"; shift 2 ;;
+      --user)              NEW_USER="${2:?}"; shift 2 ;;
+      --ssh-key)           SSH_KEY_FILE="${2:?}"; shift 2 ;;
+      --wifi)
+        case "${2:-}" in *:*) ;; *) fm_err "--wifi wants ssid:psk"; return 1 ;; esac
+        WIFI_SSID="${2%%:*}"; WIFI_PSK="${2#*:}"; shift 2 ;;
+      --tailscale-authkey) TS_AUTHKEY="${2:?}"; shift 2 ;;
+      --gh-token)          GH_TOKEN="${2:?}"; shift 2 ;;
+      --no-provision)      PROVISION=0; shift ;;
+      --dry-run)           DRY_RUN=1; shift ;;
+      -y|--yes)            ASSUME_YES=1; shift ;;
+      -h|--help)           usage; return 0 ;;
+      *) fm_err "unknown option: $1"; usage; return 1 ;;
+    esac
+  done
+
+  require_sane_name hostname "$NEW_HOSTNAME"
+  require_sane_name username "$NEW_USER"
+  case "$GH_TOKEN" in *[!A-Za-z0-9_-]*) fm_err "--gh-token looks malformed"; return 1 ;; esac
+
+  print_plan
+  if [ "$DRY_RUN" = 1 ]; then
+    fm_ok "dry run — nothing written"
+    return 0
+  fi
+
+  [ -n "$DEVICE" ] || { fm_err "--device is required"; usage; return 1; }
+  case "$(fm_detect_os)" in
+    macos) validate_device_macos ;;
+    linux) validate_device_linux ;;
+  esac
+
+  # Keys are the only door into the appliance — fail before the disk is erased.
+  SSH_KEYS="$(collect_ssh_keys)"
+
+  fetch_image
+  clone_image
+  stage_seed
+  inject_seed
+  confirm_erase
+  flash_image
+  eject_card
+
+  fm_ok "insert the card and power the Jetson on"
+  fm_info "first boot provisions unattended; follow it with:"
+  fm_info "  ssh $NEW_USER@$NEW_HOSTNAME.local tail -f /var/log/fm-first-boot.log"
+}
+
+main "$@"

@@ -20,6 +20,10 @@
     "lidar-net": {
       "script": "scripts/run/lidar-net.sh",
       "help": "dedicated netplan interface for the Livox MID-360"
+    },
+    "flash": {
+      "script": "scripts/run/flash.sh",
+      "help": "build a provisioned Jetson SD card, boot-ready"
     }
   }
 }
