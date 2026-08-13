@@ -124,12 +124,22 @@ FM_ROS_DISTRO_JETSON=humble
 # Version of the ros2-apt-source package that installs ROS's apt entry and its
 # current signing key. Pinned rather than resolved to "latest" so two machines
 # provisioned months apart get the same source definition.
-FM_ROS_APT_SOURCE_VERSION=1.1.0
+#
+# 1.2.0 is the first release carrying a resolute (26.04) asset. 1.1.0 stops at
+# noble, so the workstation would have 404'd mid-provision on a release that
+# looked fine because the Jetson's jammy asset does exist.
+FM_ROS_APT_SOURCE_VERSION=1.2.0
 
-# sha256 of that .deb, checked before dpkg sees it. The value is per codename,
-# so it stays empty until we pin one per release; set it for a machine that
-# provisions unattended.
-FM_ROS_APT_SOURCE_SHA256=""
+# sha256 per codename, checked before dpkg sees the download. The .deb differs
+# per codename, so one scalar could only ever match one role — entries are
+# "codename|sha256".
+#
+# Regenerate after a version bump:
+#   curl -fsSL https://github.com/ros-infrastructure/ros-apt-source/releases/download/<v>/ros2-apt-source_<v>.<codename>_all.deb | shasum -a 256
+FM_ROS_APT_SOURCE_SHA256_MAP=(
+  "jammy|767884cf4ed03116b9d64438930a832ed854147ae435279a7924dfdf60f94433"
+  "resolute|a275b9b819874e745a928e83e39c429fa4d607159285c4ef3ebcf75afa732ee3"
+)
 
 # The workstation is a compute box that people also develop on: the desktop
 # variant for rviz and the demos, the build tooling for colcon workspaces, and
@@ -173,6 +183,7 @@ FM_DATA_SUBDIRS=(
   runs
   models
 )
+
 
 # --- Isaac Sim -------------------------------------------------------------
 

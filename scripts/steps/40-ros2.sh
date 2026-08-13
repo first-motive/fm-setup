@@ -63,22 +63,48 @@ add_repo() {
   fm_log "adding the ROS 2 apt source ($FM_ROS_APT_SOURCE_VERSION, $codename)"
 
   deb="$(mktemp --suffix=.deb)"
-  # The trap fires on the failure paths too. Without it an aborted install
-  # leaves a .deb behind under a name an attacker on the box can predict.
-  trap 'rm -f "$deb"' RETURN
+
+  # Cleanup is explicit rather than a `trap … RETURN`. A RETURN trap is not
+  # scoped to the function that sets it: it stays armed and fires again when the
+  # *caller* returns, where $deb no longer exists, and under `set -u` that
+  # aborts the run after the step has already succeeded. Container rehearsal on
+  # jammy found it; the symptom was provisioning stopping dead after ROS with
+  # every later step skipped.
+  local rc=0
+  _add_repo_inner "$codename" "$deb" || rc=$?
+  rm -f "$deb"
+  [ "$rc" -eq 0 ] || return "$rc"
+
+  sudo apt-get update
+}
+
+# Fetch, verify, and install the apt source package. Split out so add_repo owns
+# the temp file's whole life: one place creates it, one place removes it.
+_add_repo_inner() {
+  local codename="$1" deb="$2" entry want=""
+
   curl -fsSL -o "$deb" \
     "https://github.com/ros-infrastructure/ros-apt-source/releases/download/${FM_ROS_APT_SOURCE_VERSION}/ros2-apt-source_${FM_ROS_APT_SOURCE_VERSION}.${codename}_all.deb"
 
   # apt verifies the package's own signature on install, and the version is
-  # pinned rather than resolved to "latest". Set FM_ROS_APT_SOURCE_SHA256 in the
-  # manifest to also reject a tampered download before it reaches dpkg.
-  if [ -n "${FM_ROS_APT_SOURCE_SHA256:-}" ]; then
-    fm_verify_checksum "$deb" "$FM_ROS_APT_SOURCE_SHA256" || return 1
+  # pinned rather than resolved to "latest". The manifest also carries a sha256
+  # per codename, so a tampered download is rejected before it reaches dpkg.
+  for entry in ${FM_ROS_APT_SOURCE_SHA256_MAP[@]+"${FM_ROS_APT_SOURCE_SHA256_MAP[@]}"}; do
+    if [ "${entry%%|*}" = "$codename" ]; then
+      want="${entry#*|}"
+      break
+    fi
+  done
+  if [ -n "$want" ]; then
+    fm_verify_checksum "$deb" "$want" || return 1
     fm_ok "apt source checksum verified"
+  else
+    # Not fatal: a codename nobody has pinned yet still installs, and apt still
+    # checks the package signature. Silence would be the problem.
+    fm_warn "no apt source checksum pinned for '$codename' — add one to the manifest"
   fi
 
   sudo apt-get install -y "$deb"
-  sudo apt-get update
 }
 
 do_install() {
