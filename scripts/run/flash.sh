@@ -69,7 +69,8 @@ Usage: ./run.sh flash --device <disk> [options]
   --user <name>            appliance user (default: $FM_JETSON_USER)
   --ssh-key <file>         public key to authorize (default: every ~/.ssh/*.pub)
   --wifi <ssid:psk>        join this network on boot (Ethernet needs nothing)
-  --tailscale-authkey <k>  join the tailnet on first boot (use an ephemeral key)
+  --tailscale-authkey <k>  join the tailnet on first boot (use an ephemeral key).
+                           Prefer FM_TS_AUTHKEY, for the reason below.
   --gh-token <token>       read-only fine-grained PAT for the private overlays;
                            with it, the recorder service installs unattended.
                            Prefer FM_GH_TOKEN (below) — an argument is visible
@@ -81,10 +82,11 @@ Usage: ./run.sh flash --device <disk> [options]
 macOS needs a container runtime (OrbStack or Docker) for the seed swap — the
 rootfs is ext4. Linux needs only sudo.
 
-Read the token from the environment instead of the command line, so it reaches
+Read a secret from the environment instead of the command line, so it reaches
 neither shell history nor the process table:
 
   read -rs FM_GH_TOKEN && export FM_GH_TOKEN
+  read -rs FM_TS_AUTHKEY && export FM_TS_AUTHKEY
   ./run.sh flash --device <disk> -y
 
 Every secret passed here lands in the card's seed in plain text until first
