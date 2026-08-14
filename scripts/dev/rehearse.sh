@@ -37,7 +37,7 @@ REHEARSALS=(
 # Steps whose failure inside a container would mean nothing: docker needs a
 # daemon, tailscale and udev need the host, isaac-sim needs a GPU, users and
 # agent-ruleset need real accounts.
-DEFAULT_STEPS="base-deps,ros2"
+DEFAULT_STEPS="base-deps,fm-cli,ros2"
 
 usage() {
   cat <<'EOF'

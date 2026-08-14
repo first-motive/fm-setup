@@ -27,6 +27,7 @@
 WORKSTATION_STEPS=(
   "system-update|00-system-update.sh|on"
   "base-deps|10-base-deps.sh|on"
+  "fm-cli|15-fm-cli.sh|on"
   "nvidia|20-nvidia.sh|on"
   "docker|30-docker.sh|on"
   "nvidia-container|35-nvidia-container-toolkit.sh|on"
@@ -53,6 +54,7 @@ WORKSTATION_STEPS=(
 JETSON_STEPS=(
   "system-update|00-system-update.sh|on"
   "base-deps|10-base-deps.sh|on"
+  "fm-cli|15-fm-cli.sh|on"
   "docker|30-docker.sh|on"
   "ros2|40-ros2.sh|on"
   "udev-rules|45-udev-rules.sh|on"
@@ -169,6 +171,27 @@ FM_ROS_APT_JETSON=(
   python3-colcon-common-extensions
   python3-vcstool
 )
+
+# --- fm CLI ----------------------------------------------------------------
+
+# The cross-repo CLI (fm list/status/doctor/update/setup). A machine that hosts
+# several fm_ros2 checkouts is exactly where `fm status` beats remembering which
+# directory is which, so it belongs on both roles.
+#
+# Installed as an isolated uv tool from a pinned git tag, which is what
+# fm-tools' own install.sh does. Pinned here rather than tracking latest: two
+# machines provisioned months apart should get the same CLI.
+FM_TOOLS_REPO=first-motive/fm-tools
+FM_TOOLS_VERSION=v0.4.1
+
+# uv installs the tool. It is not in Ubuntu's archive, so it comes from Astral's
+# installer, pinned to a version rather than "latest" for the same reason.
+#
+# Trust boundary, stated plainly because the installer is a piped script: TLS
+# and Astral are the anchor. The download is checksummed only if a sha is
+# pinned below — leave it empty and the step warns rather than pretends.
+FM_UV_VERSION=0.9.29
+FM_UV_INSTALLER_SHA256=
 
 # --- People and data -------------------------------------------------------
 
