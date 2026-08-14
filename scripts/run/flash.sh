@@ -283,7 +283,12 @@ hostname: $NEW_HOSTNAME
 manage_etc_hosts: true
 ssh_pwauth: false
 package_update: true
-packages: [curl, git]
+# avahi-daemon earns its place: the image resolves hosts through "files dns"
+# only, so without it $NEW_HOSTNAME.local answers nowhere and the appliance is
+# reachable by IP alone — on a rig that is handed over screenless, that is the
+# difference between working and lost. Installed before runcmd, so the
+# provisioning chain is already followable over .local.
+packages: [curl, git, avahi-daemon, libnss-mdns]
 users:
   - name: $NEW_USER
     gecos: First Motive appliance
@@ -483,6 +488,8 @@ main() {
   fm_ok "insert the card and power the Jetson on"
   fm_info "first boot provisions unattended; follow it with:"
   fm_info "  ssh $NEW_USER@$NEW_HOSTNAME.local tail -f /var/log/fm-first-boot.log"
+  fm_info "give it a few minutes: .local answers only once cloud-init has"
+  fm_info "installed avahi. Before that, find it with: arp -a | grep -i nvidia"
 }
 
 main "$@"
