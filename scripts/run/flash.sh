@@ -47,8 +47,10 @@ NEW_HOSTNAME="$FM_JETSON_HOSTNAME"
 NEW_USER="$FM_JETSON_USER"
 WIFI_SSID=""
 WIFI_PSK=""
-TS_AUTHKEY=""
-GH_TOKEN=""
+# Secrets default from the environment, which keeps them out of shell history
+# and out of the process table. A flag still overrides, for a scripted caller.
+TS_AUTHKEY="${FM_TS_AUTHKEY:-}"
+GH_TOKEN="${FM_GH_TOKEN:-}"
 SSH_KEY_FILE=""
 SSH_KEYS=""
 PROVISION=1
@@ -69,13 +71,21 @@ Usage: ./run.sh flash --device <disk> [options]
   --wifi <ssid:psk>        join this network on boot (Ethernet needs nothing)
   --tailscale-authkey <k>  join the tailnet on first boot (use an ephemeral key)
   --gh-token <token>       read-only fine-grained PAT for the private overlays;
-                           with it, the recorder service installs unattended
+                           with it, the recorder service installs unattended.
+                           Prefer FM_GH_TOKEN (below) — an argument is visible
+                           in the process table and in shell history.
   --no-provision           identity only — skip the first-boot install chain
   --dry-run                print the plan, touch nothing
   -y, --yes                skip the erase confirmation
 
 macOS needs a container runtime (OrbStack or Docker) for the seed swap — the
 rootfs is ext4. Linux needs only sudo.
+
+Read the token from the environment instead of the command line, so it reaches
+neither shell history nor the process table:
+
+  read -rs FM_GH_TOKEN && export FM_GH_TOKEN
+  ./run.sh flash --device <disk> -y
 
 Every secret passed here lands in the card's seed in plain text until first
 boot consumes it. Hand the card straight to the Jetson, and prefer
@@ -393,17 +403,21 @@ raw_device() {
 }
 
 flash_dd() {
-  local raw
+  local raw rc=0
   raw="$(raw_device)"
   fm_log "flashing with dd"
+  # dd's status is captured rather than left to errexit: this function is called
+  # from an `if`, which disables errexit for its whole body, and a trailing sync
+  # would otherwise mask a failed write behind its own success.
   if [ "$(fm_detect_os)" = "macos" ]; then
     diskutil unmountDisk force "$DEVICE" >/dev/null
-    sudo dd if="$WORK_IMG" of="$raw" bs=16m status=progress
+    sudo dd if="$WORK_IMG" of="$raw" bs=16m status=progress || rc=$?
   else
     sudo umount "${DEVICE}"?* 2>/dev/null || true
-    sudo dd if="$WORK_IMG" of="$raw" bs=16M oflag=direct status=progress
+    sudo dd if="$WORK_IMG" of="$raw" bs=16M oflag=direct status=progress || rc=$?
   fi
   sync
+  return "$rc"
 }
 
 # Read the card back and compare it to what was written. dd reports a short
@@ -457,7 +471,8 @@ flash_image() {
   fi
   if ! flash_dd; then
     fm_err "the write failed part-way — the card is not bootable"
-    fm_info "re-seat the reader and run this again"
+    fm_info "a card that drops off the bus twice is failing, not glitching:"
+    fm_info "try another reader, another port, and skip any hub"
     return 1
   fi
   verify_card
