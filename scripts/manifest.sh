@@ -184,10 +184,15 @@ FM_ROS_APT_WORKSTATION=(
   python3-vcstool
 )
 
+# The rig gets the Foxglove bridge for the same reason the workstation does: it
+# is how a screenless appliance is inspected from a laptop, and fm_ros2's
+# recorder service launches it on boot as part of the default viewer profile.
+# Without it the whole service exits, not just the viewer.
 FM_ROS_APT_JETSON=(
   ros-humble-ros-base
   ros-humble-rmw-fastrtps-cpp
   ros-humble-rmw-cyclonedds-cpp
+  ros-humble-foxglove-bridge
   python3-rosdep
   python3-colcon-common-extensions
   python3-vcstool
