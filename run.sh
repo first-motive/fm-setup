@@ -14,7 +14,7 @@
 set -euo pipefail
 
 FM_REPO="${FM_REPO:-first-motive/fm-setup}"
-FM_TAG="${FM_TAG:-v0.1.5}"
+FM_TAG="${FM_TAG:-v0.1.6}"
 FM_RAW_BASE="${FM_RAW_BASE:-https://raw.githubusercontent.com/${FM_REPO}/${FM_TAG}}"
 # Where install.sh puts the checkout, named in the error a piped run.sh prints.
 FM_SETUP_DIR_HINT="${FM_SETUP_DIR:-$HOME/.first-motive/fm-setup}"
