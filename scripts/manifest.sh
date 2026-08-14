@@ -62,6 +62,18 @@ JETSON_STEPS=(
   "tailscale|60-tailscale.sh|on"
 )
 
+# --- Target OS -------------------------------------------------------------
+
+# The Ubuntu release each role is built for, checked before any step runs.
+#
+# Role detection keys off a Tegra marker alone, so every non-Jetson Linux box
+# resolves to `workstation` whatever Ubuntu it is running. Without this pair the
+# 22.04 machine waiting to be re-imaged provisions as a workstation, adds the ROS
+# apt source successfully, and then dies on `ros-lyrical-*` packages that do not
+# exist for jammy — leaving a half-provisioned host rather than a refusal.
+FM_OS_CODENAME_WORKSTATION=resolute
+FM_OS_CODENAME_JETSON=jammy
+
 # --- Base packages ---------------------------------------------------------
 
 # Apt packages every later step assumes are present.

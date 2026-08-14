@@ -283,6 +283,76 @@ fm_steps_for() {
   esac
 }
 
+# fm_role_codename ROLE — echo the Ubuntu codename the role is built for.
+# Same shape as fm_steps_for: the role→manifest mapping stays in one place.
+fm_role_codename() {
+  local role="$1"
+  case "$role" in
+    workstation) printf '%s\n' "${FM_OS_CODENAME_WORKSTATION:-}" ;;
+    jetson)      printf '%s\n' "${FM_OS_CODENAME_JETSON:-}" ;;
+    *) fm_err "unknown role: $role (use workstation|jetson)"; return 1 ;;
+  esac
+}
+# fm_require_role_os ROLE [STRICT] — refuse a role the running OS cannot satisfy.
+#
+# Role detection sees a Tegra marker and nothing else, so any non-Jetson Linux
+# box calls itself a workstation regardless of its Ubuntu. Provisioning then gets
+# far enough to add an apt source before failing on packages that do not exist
+# for this release, which leaves a half-built machine and a confusing error.
+#
+# STRICT=1 (an install or uninstall) aborts. Anything else — a --check — warns
+# and carries on, because reading the state of a machine you are about to
+# re-image is a reasonable thing to do.
+#
+# FM_ALLOW_OS_MISMATCH=1 overrides it. Container rehearsal needs no override, as
+# each role is rehearsed on its own distro image.
+fm_require_role_os() {
+  local role="$1" strict="${2:-0}" want have
+  want="$(fm_role_codename "$role")" || return 1
+  have="$(fm_os_codename)"
+
+  # A missing value is not a pass. About to change the machine, an unanswerable
+  # check is a reason to stop: both of these end in apt failing a few steps later
+  # anyway, and stopping here says why.
+  if [ -z "$want" ]; then
+    if [ "$strict" = "1" ]; then
+      fm_err "no target OS pinned for role '$role' — add FM_OS_CODENAME_* to the manifest"
+      return 1
+    fi
+    fm_warn "no target OS pinned for role '$role' — add one to the manifest"
+    return 0
+  fi
+
+  # Empty means this host is not Ubuntu at all: another Linux with no
+  # VERSION_CODENAME, or not Linux. Every step here installs Ubuntu packages.
+  if [ -z "$have" ]; then
+    if [ "$strict" = "1" ]; then
+      fm_err "this host is not an Ubuntu release fm-setup can provision"
+      fm_err "  role '$role' targets Ubuntu $want; no VERSION_CODENAME was readable here"
+      fm_err "  set FM_ALLOW_OS_MISMATCH=1 to override"
+      return 1
+    fi
+    fm_warn "no Ubuntu codename readable here — cannot check '$role' against $want"
+    return 0
+  fi
+
+  [ "$have" = "$want" ] && return 0
+
+  if [ "${FM_ALLOW_OS_MISMATCH:-0}" = "1" ]; then
+    fm_warn "role '$role' targets $want, this host is $have — continuing (FM_ALLOW_OS_MISMATCH=1)"
+    return 0
+  fi
+  if [ "$strict" != "1" ]; then
+    fm_warn "role '$role' targets $want, this host is $have — reporting anyway"
+    return 0
+  fi
+
+  fm_err "role '$role' targets Ubuntu $want, but this host is $have"
+  fm_err "  provisioning would add an apt source and then fail on packages built for $want"
+  fm_err "  re-image first, pick the other role, or set FM_ALLOW_OS_MISMATCH=1 to override"
+  return 1
+}
+
 # fm_warn_unknown_ids ROLE — warn about a --only / --skip id the role does not
 # have. A typo would otherwise skip the whole run in silence, which reads exactly
 # like a successful no-op.

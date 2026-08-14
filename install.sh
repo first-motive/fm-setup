@@ -31,6 +31,7 @@
 #   FM_NO_MODIFY_PATH   skip shell-profile edits              (set to 1 in CI)
 #   FM_SELFTEST         CI self-test, provisions nothing      (set to 1 in CI)
 #   NONINTERACTIVE      never prompt; security-sensitive steps auto-decline
+#   FM_ALLOW_OS_MISMATCH  provision a role on an Ubuntu it does not target
 #
 # The body is wrapped in main() and called on the last line, so a truncated
 # `curl | bash` leaves an incomplete function that never runs.
@@ -137,7 +138,8 @@ Options:
   -y, --yes         non-interactive; prompts auto-decline (CI mode)
   -h, --help        show this help
 
-Env: FM_SETUP_DIR, FM_NO_MODIFY_PATH, FM_SELFTEST, NONINTERACTIVE
+Env: FM_SETUP_DIR, FM_NO_MODIFY_PATH, FM_SELFTEST, NONINTERACTIVE,
+     FM_ALLOW_OS_MISMATCH
      (see the header comment)
 EOF
 }
@@ -267,6 +269,14 @@ main() {
 
   local mode="$cmd"
   [ -n "$mode_flag" ] && mode="$mode_flag"
+
+  # After --list, which is documentation and works on any host, and before any
+  # step runs. Strict only when this run would actually change the machine: a
+  # --check reports state and a --dry-run prints a plan, and both are reasonable
+  # things to do on a box that is waiting to be re-imaged.
+  local strict=0
+  case "$mode" in install|uninstall) [ "$dry" = "1" ] || strict=1 ;; esac
+  fm_require_role_os "$role" "$strict" || return 1
 
   fm_log "fm-setup — $role [$mode]"
   fm_info "checkout: $here"
