@@ -144,9 +144,19 @@ FM_ROS_APT_SOURCE_SHA256_MAP=(
 # The workstation is a compute box that people also develop on: the desktop
 # variant for rviz and the demos, the build tooling for colcon workspaces, and
 # the Foxglove bridge for inspecting a live graph from a laptop.
+#
+# The Cyclone RMW is here for fm_ros2's zenoh comms profile, which sets
+# RMW_IMPLEMENTATION=rmw_cyclonedds_cpp (scripts/env/comms-zenoh.sh). Installing
+# it changes nothing by itself — FastDDS stays the default RMW — but without it
+# that profile takes every ROS node down with "failed to load rmw
+# implementation", and it fails at node start rather than at provision time,
+# which is the worst place to find out. Both roles carry it so a rig and the
+# workstation can meet on the same middleware; the package name follows the
+# role's distro like everything else in these lists.
 FM_ROS_APT_WORKSTATION=(
   ros-lyrical-desktop
   ros-lyrical-foxglove-bridge
+  ros-lyrical-rmw-cyclonedds-cpp
   python3-rosdep
   python3-colcon-common-extensions
   python3-vcstool
@@ -154,6 +164,7 @@ FM_ROS_APT_WORKSTATION=(
 
 FM_ROS_APT_JETSON=(
   ros-humble-ros-base
+  ros-humble-rmw-cyclonedds-cpp
   python3-rosdep
   python3-colcon-common-extensions
   python3-vcstool
