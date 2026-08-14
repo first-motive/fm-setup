@@ -165,8 +165,15 @@ validate_device_macos() {
   printf '%s\n' "$info" | grep -q '^ *Whole: *Yes' || {
     fm_err "$DEVICE is a partition — pass the whole disk (e.g. /dev/disk4)"; return 1
   }
-  printf '%s\n' "$info" | grep -Eq '^ *Device Location: *External|^ *Internal: *No' || {
-    fm_err "$DEVICE looks internal — refusing"; return 1
+  # Removable or external, never both required: a Mac's built-in SD reader sits
+  # on an internal bus and still holds a card anyone may write, while an
+  # external enclosure may report its disk as fixed. Only a disk that is
+  # internal *and* fixed is the machine's own, and that is what this refuses.
+  printf '%s\n' "$info" | grep -Eq '^ *Removable Media: *Removable|^ *Device Location: *External' || {
+    fm_err "$DEVICE is a fixed internal disk — refusing"
+    fm_info "list candidates with: diskutil list external physical"
+    fm_info "a card in the built-in reader appears under: diskutil list"
+    return 1
   }
   fm_info "target: $(printf '%s\n' "$info" | grep -E '^ *Device / Media Name:|^ *Disk Size:' | sed 's/^ *//' | tr '\n' ' ')"
 }
