@@ -198,6 +198,21 @@ FM_ROS_APT_JETSON=(
   python3-vcstool
 )
 
+# RMW implementations a provisioned host must be able to start a node under.
+#
+# This is the requirement; the apt lists above are one way of meeting it. Stated
+# separately because the failure it guards against is a package missing from
+# those lists, which installs cleanly and reports nothing — apt is satisfied by
+# any one RMW provider, so the shortfall only appears when a node starts and
+# exits with "failed to load shared library 'librmw_<name>.so'".
+#
+# fm_ros2 pins FastDDS in its dds-lan profile and Cyclone in its zenoh profile,
+# so both must load on either role. scripts/dev/rehearse.sh asserts it.
+FM_ROS_RMW_REQUIRED=(
+  rmw_fastrtps_cpp
+  rmw_cyclonedds_cpp
+)
+
 # --- fm CLI ----------------------------------------------------------------
 
 # The cross-repo CLI (fm list/status/doctor/update/setup). A machine that hosts

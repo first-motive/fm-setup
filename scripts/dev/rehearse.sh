@@ -25,13 +25,18 @@ _here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="$(cd "$_here/../.." && pwd)"
 # shellcheck source=../../lib.sh disable=SC1091
 . "$FM_ROOT/lib.sh"
+# shellcheck source=../manifest.sh disable=SC1091
+. "$FM_ROOT/scripts/manifest.sh"
 
-# role|image|platform. Both run native on Apple silicon; amd64 would emulate,
-# and the packages under test are arch-independent in every way that matters
-# here.
+# role|image|platform. The default runs native on Apple silicon, where this is
+# usually driven from; FM_REHEARSE_PLATFORM overrides it so CI runs native on an
+# amd64 runner instead of emulating. The packages under test are
+# arch-independent in every way that matters here, and emulation turns a
+# two-minute job into a twenty-minute one.
+FM_REHEARSE_PLATFORM="${FM_REHEARSE_PLATFORM:-linux/arm64}"
 REHEARSALS=(
-  "jetson|ubuntu:22.04|linux/arm64"
-  "workstation|ubuntu:26.04|linux/arm64"
+  "jetson|ubuntu:22.04|$FM_REHEARSE_PLATFORM"
+  "workstation|ubuntu:26.04|$FM_REHEARSE_PLATFORM"
 )
 
 # Steps whose failure inside a container would mean nothing: docker needs a
@@ -72,6 +77,7 @@ rehearse() {
     -e DEBIAN_FRONTEND=noninteractive \
     -e NONINTERACTIVE=1 \
     -e FM_NO_MODIFY_PATH=1 \
+    -e FM_RMW_REQUIRED="${FM_ROS_RMW_REQUIRED[*]}" \
     "$image" bash -c '
       set -euo pipefail
       # Refuse to install the shim anywhere but a container: it replaces sudo
@@ -82,6 +88,7 @@ rehearse() {
       chmod +x /usr/local/bin/sudo
       apt-get update -qq >/dev/null 2>&1
       bash /fm-setup/install.sh --'"$role"' --only '"$steps"' -y
+      bash /fm-setup/scripts/internal/verify-rmw.sh
     '
 }
 

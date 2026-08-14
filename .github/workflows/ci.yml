@@ -13,7 +13,7 @@ jobs:
       - name: Install shellcheck
         run: sudo apt-get update && sudo apt-get install -y shellcheck
       - name: Lint every script
-        run: shellcheck install.sh run.sh lib.sh scripts/manifest.sh scripts/run/*.sh scripts/steps/*.sh
+        run: shellcheck install.sh run.sh lib.sh scripts/manifest.sh scripts/*/*.sh
 
   selftest:
     runs-on: ubuntu-latest
@@ -28,6 +28,29 @@ jobs:
           for s in scripts/run/*.sh; do
             grep -q "\"$s\"" fm.json || { echo "undeclared verb: $s"; exit 1; }
           done
+
+  # Provision the jetson role for real, in a container of its target release.
+  #
+  # The self-test above proves the manifest is well-formed; this proves it is
+  # sufficient. Those differ: a package missing from a role's list installs
+  # nothing and reports success, so the shortfall only surfaces when a node
+  # starts on a provisioned appliance. Two such gaps reached a rig before this
+  # job existed, both in the jetson list, because the workstation was the only
+  # role anyone had provisioned from scratch.
+  #
+  # Jetson only: it is the role that ships as an appliance, where a failure is
+  # found by someone standing next to a board rather than at a terminal.
+  # amd64 rather than the local default of arm64 — the runner is amd64, the
+  # packages under test are arch-independent here, and emulating costs ten
+  # times the wall clock.
+  rehearse:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rehearse the jetson role
+        env:
+          FM_REHEARSE_PLATFORM: linux/amd64
+        run: ./scripts/dev/rehearse.sh jetson
 
   # The path a fresh machine actually takes: install.sh arrives over a pipe with
   # no file on disk, fetches lib.sh, verifies it, clones the repo, and hands over

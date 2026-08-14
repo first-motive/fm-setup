@@ -161,6 +161,7 @@ scripts/
 ├─ manifest.sh          step registries + package arrays — data, no logic
 ├─ steps/               one file per provisioning step, runnable standalone
 ├─ run/                 person-typed verbs, each declared in fm.json
+├─ internal/            called by another script, never typed
 └─ dev/                 developer tooling — not part of provisioning
 
 docs/diagrams/          d2 sources + rendered svg sidecars
@@ -239,6 +240,16 @@ apt tree of the real release, which is enough to catch the failures that
 actually happen: a repo that 404s, a package renamed between releases, a step
 whose control flow does not survive to the end.
 
+Each run finishes by starting a node under every RMW in `FM_ROS_RMW_REQUIRED`.
+That check exists because apt is satisfied by any one RMW provider: a role whose
+list names Cyclone but not FastDDS installs cleanly, reports nothing, and then
+takes every node down at start on a provisioned appliance. Asking for a package
+is not the same as asking for a working middleware, so the rehearsal asserts the
+second.
+
+CI runs the jetson role on every pull request. That role ships as an appliance,
+where a gap in its package list is found by someone standing next to a board.
+
 ## Selecting Steps
 
 ```bash
@@ -263,6 +274,7 @@ whose control flow does not survive to the end.
 | `FM_GH_TOKEN` | org token `./run.sh flash` bakes into a card, without it reaching history or the process table |
 | `FM_TS_AUTHKEY` | tailnet authkey for the same, on the same terms |
 | `FM_FLASH_CACHE` | where `./run.sh flash` keeps the downloaded image (default `~/.cache/fm-setup`) |
+| `FM_REHEARSE_PLATFORM` | container platform for `rehearse.sh` (default `linux/arm64`; CI sets `linux/amd64` to run native) |
 
 ## License
 

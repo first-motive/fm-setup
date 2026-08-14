@@ -70,7 +70,7 @@ Pick the narrowest prefix that fits. If a change spans two, split the commit.
 Run both before opening a PR:
 
 ```bash
-shellcheck install.sh run.sh lib.sh scripts/manifest.sh scripts/run/*.sh scripts/steps/*.sh
+shellcheck install.sh run.sh lib.sh scripts/manifest.sh scripts/*/*.sh
 FM_SELFTEST=1 bash install.sh
 ```
 
