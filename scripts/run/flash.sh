@@ -382,11 +382,21 @@ flash_balena() {
   sudo "$balena_bin" local flash "$WORK_IMG" --drive "$DEVICE" --yes
 }
 
+# Echo the raw/character device for DEVICE — far faster than the buffered node
+# on macOS, and the same path on Linux.
+raw_device() {
+  if [ "$(fm_detect_os)" = "macos" ]; then
+    printf '/dev/r%s\n' "${DEVICE#/dev/}"
+  else
+    printf '%s\n' "$DEVICE"
+  fi
+}
+
 flash_dd() {
-  local raw="$DEVICE"
+  local raw
+  raw="$(raw_device)"
   fm_log "flashing with dd"
   if [ "$(fm_detect_os)" = "macos" ]; then
-    raw="/dev/r${DEVICE#/dev/}"
     diskutil unmountDisk force "$DEVICE" >/dev/null
     sudo dd if="$WORK_IMG" of="$raw" bs=16m status=progress
   else
@@ -396,6 +406,44 @@ flash_dd() {
   sync
 }
 
+# Read the card back and compare it to what was written. dd reports a short
+# write on stderr and nothing else, so without this a card that dropped off the
+# bus mid-write still carries a valid-looking partition table over a filesystem
+# that is half one image and half another — it fails at boot, far from the
+# cause. balena verifies by default; the dd path has to do it explicitly.
+
+# sha256 of stdin. lib.sh's fm_verify_checksum covers files; a card is read as
+# a stream, so the same two-tool detection is repeated for the stream case.
+sha256_stream() {
+  if fm_has_cmd sha256sum; then
+    sha256sum | cut -d' ' -f1
+  elif fm_has_cmd shasum; then
+    shasum -a 256 | cut -d' ' -f1
+  else
+    fm_err "no sha256 tool found (sha256sum or shasum)"
+    return 1
+  fi
+}
+
+verify_card() {
+  local raw size actual expected
+  raw="$(raw_device)"
+  size="$(wc -c <"$WORK_IMG" | tr -d ' ')"
+  fm_log "verifying the card against the image"
+  expected="$(sha256_stream <"$WORK_IMG")"
+  # A short or failed read changes the hash, so the comparison below is the
+  # error check — the pipeline's own exit status adds nothing.
+  actual="$(sudo dd if="$raw" bs=16m 2>/dev/null | head -c "$size" | sha256_stream)"
+  if [ "$actual" != "$expected" ]; then
+    fm_err "the card does not match the image — it is not bootable"
+    fm_info "re-seat the reader and run this again; a dropped USB link mid-write"
+    fm_info "is the usual cause, and the card keeps a valid partition table"
+    fm_info "over a half-written filesystem, which boots into confusing failures"
+    return 1
+  fi
+  fm_ok "card matches the image"
+}
+
 # balena validates the write, so it is preferred — but only when its native
 # modules actually load (Homebrew's bottle ships broken on some node/arch
 # combinations). The probe exercises the flash subcommand, not just the binary,
@@ -403,11 +451,16 @@ flash_dd() {
 flash_image() {
   if fm_has_cmd balena && balena local flash --help >/dev/null 2>&1; then
     if flash_balena; then
-      return 0
+      return 0 # balena verified the write itself
     fi
     fm_warn "balena failed — falling back to dd"
   fi
-  flash_dd
+  if ! flash_dd; then
+    fm_err "the write failed part-way — the card is not bootable"
+    fm_info "re-seat the reader and run this again"
+    return 1
+  fi
+  verify_card
 }
 
 eject_card() {
