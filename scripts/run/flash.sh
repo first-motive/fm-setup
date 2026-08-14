@@ -125,7 +125,10 @@ cleanup() {
   if [ -n "$WORK_IMG" ]; then rm -f "$WORK_IMG"; fi
   if [ -n "$SEED_DIR" ]; then rm -rf "$SEED_DIR"; fi
 }
-trap cleanup EXIT
+# INT/TERM/HUP as well as EXIT: a closed terminal during the long write or the
+# equally long read-back would otherwise strand a 5 GB working image that
+# carries the baked token in plain text.
+trap cleanup EXIT INT TERM HUP
 
 # --- Image ------------------------------------------------------------------
 
