@@ -489,7 +489,11 @@ main() {
   fm_info "first boot provisions unattended; follow it with:"
   fm_info "  ssh $NEW_USER@$NEW_HOSTNAME.local tail -f /var/log/fm-first-boot.log"
   fm_info "give it a few minutes: .local answers only once cloud-init has"
-  fm_info "installed avahi. Before that, find it with: arp -a | grep -i nvidia"
+  fm_info "installed avahi. Before that, try the router's own DNS:"
+  fm_info "  ssh $NEW_USER@$NEW_HOSTNAME"
+  fm_info "or sweep the LAN for its lease, then read the address off the table:"
+  fm_info "  for i in \$(seq 1 254); do (ping -c1 -W300 <prefix>.\$i >/dev/null 2>&1 &); done"
+  fm_info "  arp -a | grep $NEW_HOSTNAME"
 }
 
 main "$@"
