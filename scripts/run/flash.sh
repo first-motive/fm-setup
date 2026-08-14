@@ -383,7 +383,7 @@ flash_dd() {
   if [ "$(fm_detect_os)" = "macos" ]; then
     raw="/dev/r${DEVICE#/dev/}"
     diskutil unmountDisk force "$DEVICE" >/dev/null
-    sudo dd if="$WORK_IMG" of="$raw" bs=16m
+    sudo dd if="$WORK_IMG" of="$raw" bs=16m status=progress
   else
     sudo umount "${DEVICE}"?* 2>/dev/null || true
     sudo dd if="$WORK_IMG" of="$raw" bs=16M oflag=direct status=progress
@@ -391,16 +391,16 @@ flash_dd() {
   sync
 }
 
+# balena validates the write, so it is preferred — but only when its native
+# modules actually load (Homebrew's bottle ships broken on some node/arch
+# combinations). The probe exercises the flash subcommand, not just the binary,
+# and any failure lands on dd, which needs nothing beyond the OS.
 flash_image() {
-  if fm_has_cmd balena; then
-    flash_balena
-    return 0
-  fi
-  if [ "$(fm_detect_os)" = "macos" ] && fm_has_cmd brew; then
-    if [ "$ASSUME_YES" = 1 ] || fm_confirm "install balena-cli (validates the write)?"; then
-      brew install balena-cli >/dev/null && { flash_balena; return 0; }
-      fm_warn "balena-cli install failed — falling back to dd"
+  if fm_has_cmd balena && balena local flash --help >/dev/null 2>&1; then
+    if flash_balena; then
+      return 0
     fi
+    fm_warn "balena failed — falling back to dd"
   fi
   flash_dd
 }
