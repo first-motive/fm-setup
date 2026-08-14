@@ -92,7 +92,10 @@ monitor, keyboard, or wizard:
 
 ```bash
 fm flash --device /dev/disk4                    # or: ./run.sh flash --device …
-fm flash --device /dev/disk4 --wifi "rig-lan:psk" --gh-token github_pat_…
+fm flash --device /dev/disk4 --wifi "rig-lan:psk"
+
+read -rs FM_GH_TOKEN && export FM_GH_TOKEN      # token, without leaking it
+fm flash --device /dev/disk4
 ```
 
 ![bring-up](docs/diagrams/bringup.svg)
@@ -122,9 +125,20 @@ container runtime (OrbStack or Docker), because the image's rootfs is ext4.
 balenaCLI is used to write and validate the card when present; plain `dd`
 otherwise.
 
-Secrets passed at flash time sit in plain text in the card's seed until first
+Pass the two secrets through the environment — `FM_GH_TOKEN` and
+`FM_TS_AUTHKEY` — rather than as flags. An argument is visible in the process
+table to every user on the machine and is recorded in shell history; `read -rs`
+into an exported variable is neither. The flags remain for a scripted caller
+that already holds the secret safely.
+
+Whichever way they arrive, both sit in plain text in the card's seed until first
 boot consumes them: hand the card straight to the Jetson, and prefer ephemeral,
 least-scope credentials.
+
+A write that fails part-way is reported, and the card is read back and compared
+to the image before the verb reports success — a reader that drops off the bus
+mid-write otherwise leaves a valid partition table over a half-written
+filesystem, which fails at boot, far from its cause.
 
 ## The Rule
 
@@ -246,6 +260,9 @@ whose control flow does not survive to the end.
 | `NONINTERACTIVE` | never prompt; security-sensitive steps auto-decline |
 | `FM_NO_MODIFY_PATH` | skip shell-profile edits — set this in CI |
 | `FM_SELFTEST` | run the CI self-test and provision nothing |
+| `FM_GH_TOKEN` | org token `./run.sh flash` bakes into a card, without it reaching history or the process table |
+| `FM_TS_AUTHKEY` | tailnet authkey for the same, on the same terms |
+| `FM_FLASH_CACHE` | where `./run.sh flash` keeps the downloaded image (default `~/.cache/fm-setup`) |
 
 ## License
 
