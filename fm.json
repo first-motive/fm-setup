@@ -1,6 +1,10 @@
 {
   "version": 1,
   "commands": {
+    "machine": {
+      "script": "scripts/run/machine.sh",
+      "help": "this host's identity card: init | show | doctor | reset"
+    },
     "setup-check": {
       "script": "scripts/run/check.sh",
       "help": "report this machine's provisioning state, change nothing"

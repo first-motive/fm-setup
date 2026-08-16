@@ -62,6 +62,72 @@ JETSON_STEPS=(
   "tailscale|60-tailscale.sh|on"
 )
 
+# --- Machine identity ------------------------------------------------------
+#
+# One file per machine says what that machine is, and everything host-shaped is
+# derived from it: the ROS namespace, the zenoh profile, the compose
+# environment, the systemd unit names, the workspace path. Before it, the same
+# facts were spread across .fm_ros2.json, .fm_tui.json, four /etc/fm-*.env
+# files, and a handful of constants in this manifest — which is why two machines
+# could disagree about themselves.
+#
+# The card is data, never logic. `./run.sh machine init` writes it, `./run.sh
+# machine doctor` validates it, and every reader treats it as read-only.
+
+# Where the card lives, per platform. Linux puts it in /etc because it describes
+# the host rather than the person logged into it, and services read it before
+# anyone logs in at all. macOS has no /etc a user may write, so it follows XDG.
+FM_MACHINE_FILE_LINUX=/etc/fm/machine.json
+FM_MACHINE_FILE_MACOS="${XDG_CONFIG_HOME:-$HOME/.config}/fm/machine.json"
+
+# Bumped when a field changes meaning or disappears. A reader that finds a
+# version it does not know must refuse the file rather than guess.
+FM_MACHINE_SCHEMA_VERSION=1
+
+# The card's contract, kept next to the writer that produces it. Validated by
+# `machine doctor`, and the file to read when a consumer in another repo needs
+# to know what it may rely on.
+FM_MACHINE_SCHEMA=templates/machine/machine.schema.json
+
+# Roles a card may declare. The two provisioning roles plus `mac`, which
+# fm-setup never provisions — a laptop still needs a name, a fleet, and a
+# workspace to point at.
+FM_MACHINE_ROLES=(workstation jetson mac)
+
+# Middleware profiles a card may declare. zenoh is the supported path; dds-lan
+# is the labelled escape hatch for hardware that has not been through the
+# transport migration.
+FM_MACHINE_TRANSPORTS=(zenoh dds-lan)
+
+# What a machine does in the stack, where that selects a comms bridge profile.
+#
+# Optional on the card, and deliberately so: a GPU workstation and a laptop run
+# no bridge, and requiring this would force one of these onto them. It exists
+# because `role` cannot answer the question — a recorder rig and a processor rig
+# are both `jetson`, which left FM_BRIDGE_PROFILE as the last per-host value
+# anyone still typed into an env file by hand.
+FM_MACHINE_WORKLOADS=(recorder processor robot)
+
+# Names are fm-<abbrev>-<nn>, so two recorders on one LAN are fm-rec-01 and
+# fm-rec-02 rather than one fm-jetson and a collision. The abbreviation follows
+# the role; entries are "role|abbrev".
+FM_MACHINE_NAME_ABBREV=(
+  "jetson|rec"
+  "workstation|ws"
+  "mac|mac"
+)
+
+# The fleet a machine joins when nobody says otherwise. Machines discover, sync,
+# and converge only within their own fleet, so a rig on a bench cannot be
+# adopted by production by accident.
+FM_MACHINE_FLEET_DEFAULT=prod
+
+# The single visible parent directory every First Motive checkout lives under.
+# One directory the owner can see and back up, rather than eight scattered
+# across a home directory — and the value readers take the workspace from, so
+# that no repo ever hardcodes ~/fm_ros2 again.
+FM_MACHINE_WORKSPACE_DEFAULT="$HOME/fm"
+
 # --- Target OS -------------------------------------------------------------
 
 # The Ubuntu release each role is built for, checked before any step runs.
@@ -323,10 +389,9 @@ FM_JETSON_IMAGE_SHA256=27c54b9f3a23b4c8a6a8490cc41281061b359fea031c44ebdf7932316
 # constant of the pinned image: re-derive with `fdisk -l` on an image bump.
 FM_JETSON_ROOTFS_OFFSET=104448
 
-# Appliance identity. The recorder fleet finds the rig at fm-jetson.local, and
-# fm_ros2's sync timer ships recordings from this hostname, so it is a contract,
-# not a default to taste.
-FM_JETSON_HOSTNAME=fm-jetson
+# Appliance identity is no longer a constant here. `./run.sh flash` derives the
+# name from the machine identity card below and bakes the card into the seed, so
+# the rig boots already knowing which recorder it is.
 FM_JETSON_USER=fm
 
 # First-boot provisioning: the two install layers cloud-init chains after the

@@ -22,3 +22,16 @@ check, or the next machine catches it — usually all three.
   interpreter the shell happens to have, which is why "works on my machine"
   reports are almost always this.
 <!-- fm-render:end agents-invariants -->
+
+## In This Repo
+
+fm-setup owns the machine identity card the second invariant refers to. Its
+contract is `templates/machine/machine.schema.json`, its writer is
+`scripts/run/machine.sh`, and its readers are the `fm_machine_*` helpers in
+`lib.sh`. A per-host value that is not on the card does not belong in a script
+here — put it on the card and derive it.
+
+Every field is required except `workload`, which is absent on a machine that
+runs no comms bridge. Read it with `fm_machine_get_opt` or `fm_machine_workload`,
+never `fm_machine_get`: the required-field reader fails loudly on a missing
+field, which is right for the others and wrong for this one.

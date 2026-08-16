@@ -110,7 +110,8 @@ one-liner in `~/NEXT-STEP.md` on the appliance.
 | flag | effect |
 | --- | --- |
 | `--device` | target disk, whole device; internal disks are refused |
-| `--hostname`, `--user` | identity (defaults `fm-jetson`, `fm` — the fleet finds the rig by them) |
+| `--name`, `--user` | identity (defaults `fm-rec-01`, `fm`); the name becomes the hostname, the mDNS name, and the ROS namespace |
+| `--fleet`, `--transport`, `--workload` | the rest of the seeded identity card (defaults `prod`, `zenoh`, `recorder`) |
 | `--ssh-key` | public key to authorize (default: every `~/.ssh/*.pub`) |
 | `--wifi ssid:psk` | join wifi on boot; Ethernet needs nothing |
 | `--tailscale-authkey` | join the tailnet on first boot — use an ephemeral key |
@@ -140,6 +141,91 @@ to the image before the verb reports success — a reader that drops off the bus
 mid-write otherwise leaves a valid partition table over a half-written
 filesystem, which fails at boot, far from its cause.
 
+## The Machine Identity Card
+
+One file per machine says what that machine is. Everything host-shaped is
+derived from it rather than typed a second time somewhere else.
+
+```
+/etc/fm/machine.json          Linux
+~/.config/fm/machine.json     macOS
+```
+
+```json
+{
+  "schema_version": 1,
+  "name": "fm-rec-01",
+  "role": "jetson",
+  "fleet": "prod",
+  "transport": "zenoh",
+  "workload": "recorder",
+  "workspace": "/home/fm/fm"
+}
+```
+
+```
+name ──┬─→ hostname
+       ├─→ mDNS + tailnet name
+       └─→ ROS namespace   fm-rec-01 → fm_rec_01   (derived, never typed)
+
+transport ─→ the middleware profile every process on the host sources
+workload  ─→ the comms bridge profile      (optional — see below)
+workspace ─→ where every First Motive checkout lives
+```
+
+The name is shaped `fm-<abbrev>-<nn>`, so a second recorder is `fm-rec-02` and
+two rigs can share a LAN. The singular `fm-jetson` this replaces could not
+express that, and the collision showed up as topics that silently went nowhere.
+
+```bash
+fm machine init --name fm-rec-01   # write the card, align the hostname
+fm machine show --json             # read it back, namespace included
+fm machine doctor                  # check it against the schema and this host
+fm machine reset                   # remove it
+```
+
+`init` is idempotent and repairs in place: fields you do not pass keep the value
+already on the card, and the hostname is re-aligned to the name on every run.
+`doctor` only reports — it never changes the machine, so it is safe on a host
+nobody wants touched today.
+
+`./run.sh flash` bakes the card into the cloud-init seed, so a rig boots already
+knowing which recorder it is. Pass `--name` when flashing the second card of a
+role.
+
+`workload` is the one optional field. It answers what a machine *does*, which
+`role` cannot: a recorder rig and a processor rig are both `jetson`, and that
+gap is why `FM_BRIDGE_PROFILE` was the last per-host value anyone still typed
+into an env file. It is optional because it is genuinely not universal — a GPU
+workstation and a laptop run no bridge, and requiring it would force a
+meaningless value onto them. Absent means this machine hosts no workload;
+`--workload none` clears it when a machine is repurposed.
+
+```bash
+fm machine init --name fm-rec-01 --workload recorder
+fm machine init --workload none              # repurposed; no bridge any more
+```
+
+A flashed card defaults to `recorder`, because a flashed card is a capture rig.
+`machine init` has no default, because it also runs on machines with no bridge
+at all.
+
+The contract lives in `templates/machine/machine.schema.json`, which is the file
+to read when a consumer in another repo needs to know what it may rely on. A
+reader that finds a `schema_version` it does not know must refuse the card
+rather than guess at it.
+
+The writer is tested, because four other repos read what it produces and none
+of them run this repo's CI:
+
+```bash
+./scripts/dev/test-machine.sh    # 57 cases, temp file, no root
+```
+
+A machine without a card is not broken. A laptop running the desktop app in
+client mode has no workspace and needs no card; only a host that provisions,
+records, or serves does.
+
 ## The Rule
 
 No system-level change outside a step in this repo.
@@ -166,6 +252,7 @@ scripts/
 
 docs/diagrams/          d2 sources + rendered svg sidecars
 templates/              files a step deploys onto the machine
+└─ machine/             the identity card's schema — the cross-repo contract
 ```
 
 Roles share `scripts/steps/` rather than owning a directory each, so a step both
