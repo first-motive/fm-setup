@@ -121,6 +121,139 @@ fm_verify_checksum() {
   fi
 }
 
+# --- Machine identity ------------------------------------------------------
+#
+# Readers of the identity card, for the steps and front doors that need to know
+# which machine they are on. The writer lives in scripts/run/machine.sh; nothing
+# here changes the card.
+#
+# Defaults are repeated inline rather than taken from the manifest alone,
+# because over the curl pipe lib.sh is eval'd before any manifest exists and a
+# step sourced standalone gets the same answer either way.
+
+# Echo the path to this machine's identity card, whether or not it exists.
+# FM_MACHINE_FILE overrides it, which is how a rehearsal container and a test
+# point at a card outside the real system paths.
+#
+# The override exists for tests and for container rehearsal, so a card written
+# under it is never written as root — see card_sudo in scripts/run/machine.sh.
+fm_machine_file() {
+  if [ -n "${FM_MACHINE_FILE:-}" ]; then
+    printf '%s\n' "$FM_MACHINE_FILE"
+    return 0
+  fi
+  case "$(uname -s)" in
+    Darwin) printf '%s\n' "${FM_MACHINE_FILE_MACOS:-${XDG_CONFIG_HOME:-$HOME/.config}/fm/machine.json}" ;;
+    *)      printf '%s\n' "${FM_MACHINE_FILE_LINUX:-/etc/fm/machine.json}" ;;
+  esac
+}
+
+# Return success when this machine has an identity card. A machine without one
+# is not broken: a laptop running the desktop app in client mode has no
+# workspace and needs no card, so callers ask before they read.
+fm_machine_exists() { [ -f "$(fm_machine_file)" ]; }
+
+# fm_machine_get FIELD — echo one field from the card.
+#
+# Fails when the card is missing, unparseable, or lacks the field, so a caller
+# that substitutes the output cannot silently proceed on an empty string.
+fm_machine_get() {
+  local field="$1" file value
+  file="$(fm_machine_file)"
+  [ -f "$file" ] || { fm_err "no machine identity card at $file — run 'fm machine init'"; return 1; }
+  fm_require_cmd jq || return 1
+  value="$(jq -er --arg f "$field" '.[$f] // empty' "$file" 2>/dev/null)" || {
+    fm_err "machine card has no '$field': $file"
+    return 1
+  }
+  printf '%s\n' "$value"
+}
+
+# fm_machine_namespace [NAME] — echo the ROS namespace derived from a machine
+# name, defaulting to this machine's.
+#
+# Derived, never typed. A namespace that is written down separately drifts from
+# the hostname the moment someone renames a rig, and the two disagreeing is
+# invisible until a topic lands nowhere. Hyphens become underscores because a
+# ROS name may not contain a hyphen: fm-rec-01 → fm_rec_01.
+fm_machine_namespace() {
+  local name="${1:-}"
+  [ -n "$name" ] || name="$(fm_machine_get name)" || return 1
+  printf '%s\n' "${name//-/_}"
+}
+
+# Field validators, here rather than in the writer, because two callers now
+# produce cards: `machine init` on a running host and `flash` into a cloud-init
+# seed. A second copy of these rules would let the two disagree about what a
+# valid card is, and the flash path is the one nobody can correct afterwards —
+# an unvalidated value reaches the rig baked into /etc/fm/machine.json.
+#
+# Each rejects loudly with the value it refused. They mirror
+# templates/machine/machine.schema.json; change the two together.
+
+fm_machine_valid_role() {
+  _fm_in_list "$1" ${FM_MACHINE_ROLES[@]+"${FM_MACHINE_ROLES[@]}"} ||
+    { fm_err "invalid role: '$1' (expected one of: ${FM_MACHINE_ROLES[*]})"; return 1; }
+}
+
+fm_machine_valid_transport() {
+  _fm_in_list "$1" ${FM_MACHINE_TRANSPORTS[@]+"${FM_MACHINE_TRANSPORTS[@]}"} ||
+    { fm_err "invalid transport: '$1' (expected one of: ${FM_MACHINE_TRANSPORTS[*]})"; return 1; }
+}
+
+fm_machine_valid_fleet() {
+  case "$1" in
+    *[!a-z0-9-]*|"") fm_err "invalid fleet: '$1' (lowercase letters, digits, hyphens)"; return 1 ;;
+    [!a-z]*)         fm_err "invalid fleet: '$1' (must start with a lowercase letter)"; return 1 ;;
+  esac
+}
+
+fm_machine_valid_workspace() {
+  case "$1" in
+    /*) ;;
+    *) fm_err "invalid workspace: '$1' (must be an absolute path)"; return 1 ;;
+  esac
+}
+
+# fm_machine_valid_name NAME [ROLE] — check the name's shape, and when a role is
+# given, that the name's abbreviation is that role's.
+#
+# The abbreviation is part of the name for a reason: a card claiming to be a
+# jetson while calling itself fm-ws-01 puts a recorder's topics under the
+# workstation's namespace, which is invisible until nothing subscribes.
+fm_machine_valid_name() {
+  local name="$1" role="${2:-}" abbrev part
+  # The abbreviation is extracted and checked for stray characters rather than
+  # matched with a single glob. A glob cannot express "one or more letters" —
+  # `fm-[a-z]*-[0-9][0-9]` lets the `*` swallow anything at all, so `fm-r1-01`
+  # would pass here and then fail the schema, which is exactly the kind of
+  # disagreement between the two copies of this contract that they must not have.
+  case "$name" in
+    fm-*-[0-9][0-9]) part="${name#fm-}"; part="${part%-*}" ;;
+    *) fm_err "invalid name: '$name' (expected fm-<abbrev>-<nn>, e.g. fm-rec-01)"; return 1 ;;
+  esac
+  case "$part" in
+    ""|*[!a-z]*) fm_err "invalid name: '$name' (the abbreviation must be lowercase letters only)"; return 1 ;;
+  esac
+  [ -n "$role" ] || return 0
+  abbrev="$(fm_machine_abbrev "$role")" || return 1
+  case "$name" in
+    "fm-$abbrev-"*) ;;
+    *) fm_err "name '$name' does not match role '$role' (expected fm-$abbrev-<nn>)"; return 1 ;;
+  esac
+}
+
+# fm_machine_abbrev ROLE — echo the name abbreviation a role uses (jetson→rec).
+fm_machine_abbrev() {
+  local role="$1" entry r a
+  for entry in ${FM_MACHINE_NAME_ABBREV[@]+"${FM_MACHINE_NAME_ABBREV[@]}"}; do
+    IFS='|' read -r r a <<<"$entry"
+    [ "$r" = "$role" ] && { printf '%s\n' "$a"; return 0; }
+  done
+  fm_err "no name abbreviation for role '$role' — add one to the manifest"
+  return 1
+}
+
 # --- Accounts --------------------------------------------------------------
 
 # fm_group_members GROUP — echo every member of GROUP, one per line, sorted.

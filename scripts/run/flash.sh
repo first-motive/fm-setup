@@ -43,7 +43,18 @@ WORK_IMG=""
 SEED_DIR=""
 
 DEVICE=""
-NEW_HOSTNAME="$FM_JETSON_HOSTNAME"
+# The card decides the hostname, not the other way round: a rig's name, its
+# mDNS name, and the stem of its ROS namespace are one fact, seeded here so the
+# appliance boots already knowing which recorder it is. 01 is a default that the
+# second rig of a role must override — two cards claiming fm-rec-01 collide on
+# the LAN exactly as the old singular fm-jetson did.
+MACHINE_NAME="fm-$(fm_machine_abbrev jetson)-01"
+MACHINE_FLEET="$FM_MACHINE_FLEET_DEFAULT"
+MACHINE_TRANSPORT="${FM_MACHINE_TRANSPORTS[0]}"
+# One visible parent directory for every checkout, resolved once --user is
+# known. Consumers read this out of the card rather than assuming a path.
+MACHINE_WORKSPACE=""
+NEW_HOSTNAME="$MACHINE_NAME"
 NEW_USER="$FM_JETSON_USER"
 WIFI_SSID=""
 WIFI_PSK=""
@@ -65,7 +76,11 @@ Usage: ./run.sh flash --device <disk> [options]
 
   --device <disk>          target disk, whole device (macOS /dev/diskN,
                            Linux /dev/sdX). Internal disks are refused.
-  --hostname <name>        appliance hostname (default: $FM_JETSON_HOSTNAME)
+  --name <fm-rec-nn>       machine name, which is also the hostname, the mDNS
+                           name, and the stem of the ROS namespace
+                           (default: $MACHINE_NAME — override on the second rig)
+  --fleet <name>           population this rig joins (default: $MACHINE_FLEET)
+  --transport <profile>    middleware profile (default: $MACHINE_TRANSPORT)
   --user <name>            appliance user (default: $FM_JETSON_USER)
   --ssh-key <file>         public key to authorize (default: every ~/.ssh/*.pub)
   --wifi <ssid:psk>        join this network on boot (Ethernet needs nothing)
@@ -94,7 +109,7 @@ boot consumes it. Hand the card straight to the Jetson, and prefer
 ephemeral/least-scope credentials.
 
 First boot takes 15-30 min on the provisioning chain. Watch it:
-  ssh $FM_JETSON_USER@$FM_JETSON_HOSTNAME.local tail -f /var/log/fm-first-boot.log
+  ssh $FM_JETSON_USER@$MACHINE_NAME.local tail -f /var/log/fm-first-boot.log
 EOF
 }
 
@@ -278,14 +293,14 @@ EOF
   if [ -n "$GH_TOKEN" ]; then
     cat <<EOF
 echo "-- workspace layer: fm_ros2 --recorder --service"
-sudo -u "$NEW_USER" -H bash -c 'mkdir -p ~/jetson && cd ~/jetson && curl -fsSL --proto "=https" $FM_ROS2_INSTALL_URL | bash -s -- --recorder --service'
+sudo -u "$NEW_USER" -H bash -c 'mkdir -p $MACHINE_WORKSPACE && cd $MACHINE_WORKSPACE && curl -fsSL --proto "=https" $FM_ROS2_INSTALL_URL | bash -s -- --recorder --service'
 EOF
   else
     cat <<EOF
 cat >"/home/$NEW_USER/NEXT-STEP.md" <<'NOTE'
 Machine layer is provisioned. The recorder needs first-motive org access:
   gh auth login    # or place an SSH key
-  mkdir -p ~/jetson && cd ~/jetson
+  mkdir -p $MACHINE_WORKSPACE && cd $MACHINE_WORKSPACE
   curl -fsSL --proto "=https" $FM_ROS2_INSTALL_URL | bash -s -- --recorder --service
 NOTE
 chown "$NEW_USER:$NEW_USER" "/home/$NEW_USER/NEXT-STEP.md"
@@ -326,9 +341,26 @@ EOF
   while IFS= read -r line; do
     [ -n "$line" ] && printf '      - %s\n' "$line"
   done <<<"$SSH_KEYS"
+  # The identity card is seeded whether or not the install chain runs. It is
+  # what the machine *is*, not part of provisioning it: a card-less rig cannot
+  # derive a namespace, does not know its own workspace, and cannot be told
+  # apart from the next rig off the same command.
+  cat <<EOF
+write_files:
+  - path: $FM_MACHINE_FILE_LINUX
+    permissions: "0644"
+    content: |
+      {
+        "schema_version": $FM_MACHINE_SCHEMA_VERSION,
+        "name": "$MACHINE_NAME",
+        "role": "jetson",
+        "fleet": "$MACHINE_FLEET",
+        "transport": "$MACHINE_TRANSPORT",
+        "workspace": "$MACHINE_WORKSPACE"
+      }
+EOF
   if [ "$PROVISION" = 1 ]; then
     cat <<EOF
-write_files:
   - path: /usr/local/sbin/fm-first-boot.sh
     permissions: "0700"
     content: |
@@ -504,6 +536,8 @@ print_plan() {
   fm_info "image     $(basename "$FM_JETSON_IMAGE_URL")"
   fm_info "device    ${DEVICE:-<required>}"
   fm_info "identity  $NEW_USER@$NEW_HOSTNAME (password login locked, SSH keys injected)"
+  fm_info "card      $MACHINE_NAME · fleet $MACHINE_FLEET · $MACHINE_TRANSPORT · ns $(fm_machine_namespace "$MACHINE_NAME")"
+  fm_info "workspace $MACHINE_WORKSPACE"
   fm_info "wifi      ${WIFI_SSID:-none (Ethernet)}"
   if [ -n "$TS_AUTHKEY" ]; then
     fm_info "tailscale authkey provided"
@@ -522,7 +556,9 @@ main() {
   while [ $# -gt 0 ]; do
     case "$1" in
       --device)            DEVICE="${2:?--device needs a value}"; shift 2 ;;
-      --hostname)          NEW_HOSTNAME="${2:?}"; shift 2 ;;
+      --name)              MACHINE_NAME="${2:?--name needs a value}"; NEW_HOSTNAME="$MACHINE_NAME"; shift 2 ;;
+      --fleet)             MACHINE_FLEET="${2:?--fleet needs a value}"; shift 2 ;;
+      --transport)         MACHINE_TRANSPORT="${2:?--transport needs a value}"; shift 2 ;;
       --user)              NEW_USER="${2:?}"; shift 2 ;;
       --ssh-key)           SSH_KEY_FILE="${2:?}"; shift 2 ;;
       --wifi)
@@ -540,7 +576,24 @@ main() {
 
   require_sane_name hostname "$NEW_HOSTNAME"
   require_sane_name username "$NEW_USER"
+  # The name is the card's primary key, so its shape is checked here rather
+  # than discovered on the rig hours later by a doctor run nobody is watching.
+  MACHINE_WORKSPACE="/home/$NEW_USER/fm"
+  # Every card field is checked here, against the same validators `machine init`
+  # uses, before any of them is written into the seed. This is the one card
+  # nobody can correct afterwards: an unvalidated value goes onto the SD card
+  # baked into /etc/fm/machine.json, and a value carrying a quote or a brace
+  # would land as malformed JSON on a rig that is already in someone's hands.
+  fm_machine_valid_name "$MACHINE_NAME" jetson
+  fm_machine_valid_fleet "$MACHINE_FLEET"
+  fm_machine_valid_transport "$MACHINE_TRANSPORT"
+  fm_machine_valid_workspace "$MACHINE_WORKSPACE"
+  # Both secrets are interpolated into the first-boot script, which runs as root
+  # on the appliance, so a value carrying a quote closes the string it sits in
+  # and the rest of it becomes commands. The card is already written by then and
+  # the rig is in someone's hands, so this is checked before anything is staged.
   case "$GH_TOKEN" in *[!A-Za-z0-9_-]*) fm_err "--gh-token looks malformed"; return 1 ;; esac
+  case "$TS_AUTHKEY" in *[!A-Za-z0-9_-]*) fm_err "--tailscale-authkey looks malformed"; return 1 ;; esac
 
   print_plan
   if [ "$DRY_RUN" = 1 ]; then

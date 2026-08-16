@@ -52,6 +52,19 @@ main() {
 
   fm_log "fm-setup — $role [check]"
   echo
+
+  # The identity card comes first because every step below is provisioning for
+  # a machine that the card is supposed to name. A host with no card, or one
+  # whose card disagrees with its hostname, is worth knowing about before
+  # reading a page of green ticks about the software on it.
+  if fm_machine_exists; then
+    fm_ok "machine $(fm_machine_get name) · $(fm_machine_get role) · fleet $(fm_machine_get fleet) · $(fm_machine_get transport)"
+    fm_info "workspace $(fm_machine_get workspace) · namespace $(fm_machine_namespace)"
+  else
+    fm_warn "no machine identity card at $(fm_machine_file) — run 'fm machine init'"
+  fi
+  echo
+
   fm_run_steps check "$role" "$FM_ROOT/scripts/steps"
 }
 

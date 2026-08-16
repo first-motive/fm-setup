@@ -22,3 +22,11 @@ check, or the next machine catches it — usually all three.
   interpreter the shell happens to have, which is why "works on my machine"
   reports are almost always this.
 <!-- fm-render:end agents-invariants -->
+
+## In This Repo
+
+fm-setup owns the machine identity card the second invariant refers to. Its
+contract is `templates/machine/machine.schema.json`, its writer is
+`scripts/run/machine.sh`, and its readers are the `fm_machine_*` helpers in
+`lib.sh`. A per-host value that is not on the card does not belong in a script
+here — put it on the card and derive it.
