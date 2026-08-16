@@ -27,6 +27,7 @@
 WORKSTATION_STEPS=(
   "system-update|00-system-update.sh|on"
   "base-deps|10-base-deps.sh|on"
+  "workspace|12-workspace.sh|on"
   "fm-cli|15-fm-cli.sh|on"
   "nvidia|20-nvidia.sh|on"
   "docker|30-docker.sh|on"
@@ -54,6 +55,7 @@ WORKSTATION_STEPS=(
 JETSON_STEPS=(
   "system-update|00-system-update.sh|on"
   "base-deps|10-base-deps.sh|on"
+  "workspace|12-workspace.sh|on"
   "fm-cli|15-fm-cli.sh|on"
   "docker|30-docker.sh|on"
   "ros2|40-ros2.sh|on"
@@ -127,6 +129,20 @@ FM_MACHINE_FLEET_DEFAULT=prod
 # across a home directory — and the value readers take the workspace from, so
 # that no repo ever hardcodes ~/fm_ros2 again.
 FM_MACHINE_WORKSPACE_DEFAULT="$HOME/fm"
+
+# This repo's own directory name inside that workspace.
+#
+# It has to be exactly what fm-tools' repo registry calls fm-setup's local_dir,
+# because that is how `fm doctor` and `fm status` find the checkout: they build
+# <workspace>/<local_dir> and look. A directory named anything else is a repo
+# doctor reports as "not cloned" on the very machine it provisioned.
+FM_SETUP_CHECKOUT_NAME=fm-setup
+
+# Where the curl bootstrap used to put the checkout, before the workspace was a
+# declared fact rather than a per-repo habit. Named so the workspace step can
+# recognise and adopt one instead of leaving a second copy of this repo on disk
+# for someone to edit by mistake; nothing writes here any more.
+FM_SETUP_LEGACY_DIR="$HOME/.first-motive/fm-setup"
 
 # --- Target OS -------------------------------------------------------------
 
@@ -396,5 +412,13 @@ FM_JETSON_USER=fm
 
 # First-boot provisioning: the two install layers cloud-init chains after the
 # card's first boot. Machine layer first, workspace layer second.
-FM_SETUP_INSTALL_URL="https://raw.githubusercontent.com/first-motive/fm-setup/main/install.sh"
+#
+# The machine layer is a base rather than a whole URL, because the ref that
+# completes it is this repo's release tag and that tag is written down in one
+# place only, install.sh — `flash` joins the two through fm_release_tag. This
+# line read `main` until now, which meant a rig flashed on a Tuesday provisioned
+# itself from whatever had merged that morning. An appliance nobody is standing
+# next to is the last place an unreleased commit should land, and the first
+# place it would go unnoticed.
+FM_SETUP_RAW_BASE="https://raw.githubusercontent.com/first-motive/fm-setup"
 FM_ROS2_INSTALL_URL="https://raw.githubusercontent.com/first-motive/fm-ros2/main/install.sh"

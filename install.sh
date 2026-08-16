@@ -25,7 +25,7 @@
 # and can be moved; a commit sha cannot. See the README for the current values.
 #
 # Env overrides:
-#   FM_SETUP_DIR        where the curl path clones this repo  (default: $HOME/.first-motive/fm-setup)
+#   FM_SETUP_DIR        where the curl path clones this repo  (default: the machine's workspace)
 #   FM_LIB_SHA256       expected sha256 of a fetched lib.sh   (set it for unattended installs)
 #   FM_SETUP_SHA        commit the checkout must be at        (verifies every step script)
 #   FM_NO_MODIFY_PATH   skip shell-profile edits              (set to 1 in CI)
@@ -42,13 +42,32 @@ FM_REPO="${FM_REPO:-first-motive/fm-setup}"
 # A release tag, not a branch: what provisioned a machine has to stay nameable
 # months later. Bump this in the same commit that cuts a new tag, so the script
 # a tag ships fetches its own lib.sh rather than a newer one.
+#
+# This assignment is the repo's single source for the release tag. run.sh and
+# the flash seed read it back through lib.sh's fm_release_tag, and the README's
+# copy-paste lines and this file's own header examples are rewritten from it by
+# `scripts/dev/release-tag.sh --set`, which CI re-checks on every pull request.
+# Bump it with that command rather than by hand: the value has to appear
+# literally here, because a piped install.sh has no checkout to read it from,
+# and it should appear literally nowhere else.
 FM_TAG="${FM_TAG:-v0.1.8}"
 # Overridable so the curl-pipe path can be exercised against a local checkout —
 # CI points it at a file:// URL and tests the real code path without a network.
 FM_RAW_BASE="${FM_RAW_BASE:-https://raw.githubusercontent.com/${FM_REPO}/${FM_TAG}}"
 FM_GIT_URL="${FM_GIT_URL:-https://github.com/${FM_REPO}.git}"
 
-FM_SETUP_DIR="${FM_SETUP_DIR:-$HOME/.first-motive/fm-setup}"
+# Deliberately not defaulted here. The default is the machine's workspace, which
+# only lib.sh can answer (it reads the identity card), and lib.sh is not loaded
+# until main() — over a curl pipe it has not even been downloaded yet. An
+# explicit FM_SETUP_DIR still wins, so this stays overridable from the
+# environment exactly as before.
+FM_SETUP_DIR="${FM_SETUP_DIR:-}"
+# Whether that path was chosen by the caller. It decides whether an old checkout
+# is adopted: relocating one is only ever right when the destination is this
+# machine's declared workspace, and never when a caller pointed the install at
+# some other directory for reasons of their own.
+FM_SETUP_DIR_EXPLICIT=0
+[ -z "$FM_SETUP_DIR" ] || FM_SETUP_DIR_EXPLICIT=1
 FM_SELFTEST="${FM_SELFTEST:-0}"
 
 # Exported so every step sees the same answer: steps that would touch a shell
@@ -144,6 +163,43 @@ Env: FM_SETUP_DIR, FM_NO_MODIFY_PATH, FM_SELFTEST, NONINTERACTIVE,
 EOF
 }
 
+# Move a checkout left at the pre-workspace location into FM_SETUP_DIR, leaving
+# a symlink behind.
+#
+# Machines provisioned before the workspace existed have this repo in
+# ~/.first-motive, which is outside the directory `fm doctor` looks in — so the
+# CLI reports fm-setup missing on a host that is running it. Re-cloning into the
+# workspace would leave two checkouts on one machine, and the stale one is the
+# one whose CLAUDE.md and shell history point people at it.
+#
+# The move is safe here and nowhere else: this runs from the copy that arrived
+# over the pipe, so no script inside the directory being moved is executing. The
+# symlink is what keeps a shell that was already sitting in the old path, and the
+# ~/.first-motive line in every machine's CLAUDE.md, working afterwards.
+fm_adopt_legacy_checkout() {
+  local legacy="${FM_SETUP_LEGACY_DIR:-$HOME/.first-motive/fm-setup}"
+  # Only into the workspace this machine declares. An explicit FM_SETUP_DIR is a
+  # caller asking for a checkout somewhere specific — CI's temp directory, a
+  # second copy being tested — and moving the machine's real checkout into it
+  # would be a destructive side effect of an option that promised none.
+  [ "$FM_SETUP_DIR_EXPLICIT" = "0" ] || return 0
+  [ "$legacy" != "$FM_SETUP_DIR" ] || return 0
+  [ -d "$legacy/.git" ] || return 0
+  # A symlink already pointing at the new home is a previous adoption, not a
+  # second checkout.
+  [ ! -L "$legacy" ] || return 0
+  if [ -e "$FM_SETUP_DIR" ]; then
+    fm_warn "a checkout exists at both $legacy and $FM_SETUP_DIR — leaving both alone"
+    fm_info "the workspace copy is the one the fm CLI reads; remove the other once you have checked it"
+    return 0
+  fi
+  fm_log "moving the checkout from $legacy into the workspace"
+  mkdir -p "$(dirname "$FM_SETUP_DIR")"
+  mv "$legacy" "$FM_SETUP_DIR"
+  ln -s "$FM_SETUP_DIR" "$legacy"
+  fm_ok "checkout now at $FM_SETUP_DIR ($legacy is a symlink to it)"
+}
+
 # The curl path has no checkout, so clone one and hand over to it. Everything
 # below the front door — the manifest, the steps — lives in the repo, and a
 # provisioned machine needs that checkout on disk anyway to re-run or re-check.
@@ -157,6 +213,7 @@ fm_bootstrap_checkout() {
     fm_err "git is required to bootstrap; install it with 'sudo apt-get install -y git'"
     return 1
   }
+  fm_adopt_legacy_checkout
   local cloned_now=0
   if [ -d "$FM_SETUP_DIR/.git" ]; then
     fm_log "updating checkout at $FM_SETUP_DIR"
@@ -224,6 +281,13 @@ fm_selftest() {
 main() {
   fm_load_lib
   fm_banner
+
+  # Resolved now rather than at the top of the file, because the answer comes
+  # from the machine's identity card and lib.sh is what reads it. One place
+  # decides where this repo lives, and every other reader — the fm CLI, the
+  # workspace step, a person following the README — derives the same path from
+  # the same card.
+  FM_SETUP_DIR="${FM_SETUP_DIR:-$(fm_setup_dir)}"
 
   local cmd="install" role="" mode_flag="" list=0 dry=0
   # Kept verbatim for the curl path, which re-execs the cloned copy with the

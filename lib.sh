@@ -121,6 +121,48 @@ fm_verify_checksum() {
   fi
 }
 
+# --- Release ---------------------------------------------------------------
+#
+# The release tag is written down exactly once, in install.sh, and every other
+# reader derives it from there.
+#
+# install.sh holds the literal because it is the one file that ever arrives
+# alone: fetched over a curl pipe with no checkout behind it, it has nothing
+# else on disk to read the value out of, so its default cannot be delegated to
+# a VERSION file or to this library. Everything else in the repo does have the
+# checkout, and a tag repeated in four files is a tag that is correct in three
+# of them the morning after a release — which is how the flash seed came to
+# provision appliances from `main` while the README still advertised v0.1.x.
+
+# fm_release_tag [ROOT] — echo the release tag this checkout is pinned to.
+#
+# ROOT defaults to FM_ROOT, which every step and verb already sets to the
+# repository root; callers outside that convention pass it explicitly. Fails
+# loudly rather than echoing a guess, because the two things this value is used
+# for — fetching code and baking a bootstrap URL into an appliance's first boot
+# — are both worse done wrong than not done.
+fm_release_tag() {
+  local root="${1:-${FM_ROOT:-}}" front tag
+  front="$root/install.sh"
+  if [ -z "$root" ] || [ ! -f "$front" ]; then
+    fm_err "cannot read the release tag: no install.sh at '${root:-<unset>}'"
+    return 1
+  fi
+  # Matched against the assignment's exact shape rather than any v-looking
+  # string in the file, so the header's example curl commands — which carry the
+  # same tag, and are rewritten from this one by scripts/dev/release-tag.sh —
+  # can never be what gets parsed.
+  # The single quotes are load-bearing: the pattern matches the literal text
+  # ${FM_TAG:-…} in install.sh, which must reach sed unexpanded.
+  # shellcheck disable=SC2016
+  tag="$(sed -n 's/^FM_TAG="\${FM_TAG:-\(v[^}]*\)}".*/\1/p' "$front" | head -1)"
+  [ -n "$tag" ] || {
+    fm_err "no FM_TAG assignment found in $front"
+    return 1
+  }
+  printf '%s\n' "$tag"
+}
+
 # --- Machine identity ------------------------------------------------------
 #
 # Readers of the identity card, for the steps and front doors that need to know
@@ -201,6 +243,41 @@ fm_machine_namespace() {
   local name="${1:-}"
   [ -n "$name" ] || name="$(fm_machine_get name)" || return 1
   printf '%s\n' "${name//-/_}"
+}
+
+# Echo the workspace directory every First Motive checkout on this machine lives
+# under: the card's `workspace` when the machine has a card, the manifest default
+# otherwise.
+#
+# Falling back rather than failing, unlike fm_machine_get, because this is the
+# answer to "where do checkouts go" and the loudest caller is a provisioning run
+# that has to put a checkout somewhere before `machine init` has ever run. The
+# fallback and the card's default are the same value, so the answer only differs
+# on a machine that deliberately chose another workspace — and that machine has a
+# card by definition.
+#
+# jq is checked rather than assumed: this is read during the curl bootstrap, on a
+# host where base-deps has not installed jq yet.
+fm_machine_workspace() {
+  local ws=""
+  if fm_machine_exists && fm_has_cmd jq; then
+    ws="$(fm_machine_get workspace 2>/dev/null || true)"
+  fi
+  [ -n "$ws" ] || ws="${FM_MACHINE_WORKSPACE_DEFAULT:-$HOME/fm}"
+  printf '%s\n' "$ws"
+}
+
+# Echo where this repo's own checkout belongs on a provisioned machine.
+#
+# Under the card's workspace, beside every other First Motive checkout, and named
+# exactly `fm-setup`. The name is not cosmetic: fm-tools resolves every repo it
+# knows about as <workspace>/<local_dir>, so a checkout kept anywhere else is one
+# `fm doctor` reports as "fm-setup not cloned" on a machine this repo provisioned
+# itself — the false alarm that taught everyone to ignore a red line in doctor.
+# It lived in ~/.first-motive, outside the workspace entirely, which is exactly
+# that case.
+fm_setup_dir() {
+  printf '%s/%s\n' "$(fm_machine_workspace)" "${FM_SETUP_CHECKOUT_NAME:-fm-setup}"
 }
 
 # Field validators, here rather than in the writer, because two callers now

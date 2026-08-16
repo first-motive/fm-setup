@@ -13,12 +13,6 @@
 
 set -euo pipefail
 
-FM_REPO="${FM_REPO:-first-motive/fm-setup}"
-FM_TAG="${FM_TAG:-v0.1.8}"
-FM_RAW_BASE="${FM_RAW_BASE:-https://raw.githubusercontent.com/${FM_REPO}/${FM_TAG}}"
-# Where install.sh puts the checkout, named in the error a piped run.sh prints.
-FM_SETUP_DIR_HINT="${FM_SETUP_DIR:-$HOME/.first-motive/fm-setup}"
-
 # Resolve this script's own directory, following symlinks, so scripts/run/<verb>
 # is found regardless of the caller's working directory. Fails when this script
 # arrived over a pipe.
@@ -37,38 +31,23 @@ fm_script_dir() {
   cd -P "$(dirname "$source")" && pwd
 }
 
-# Load lib.sh from the checkout, or download it when this script came over a
-# pipe. Set FM_LIB_SHA256 to the checksum published with the release to gate the
-# download — see install.sh for why the fetch is not eval'd directly.
+# Load lib.sh from the checkout beside this script.
+#
+# There is deliberately no pipe path here, unlike install.sh. Every verb is a
+# script under scripts/run/, so a piped run.sh has nothing to dispatch to even
+# once lib.sh is in memory — the fetch only ever bought a prettier error
+# message, and it needed its own copy of the release tag to fetch from. That
+# copy was the second of the four places the tag was hand-synced, kept alive
+# solely for a message this function can print without it.
 fm_load_lib() {
-  local here lib tmp actual
-  if here="$(fm_script_dir)" && lib="$here/lib.sh" && [ -f "$lib" ]; then
-    # shellcheck source=lib.sh disable=SC1091
-    . "$lib"
-    return 0
-  fi
-
-  tmp="$(mktemp)"
-  curl -fsSL "$FM_RAW_BASE/lib.sh" -o "$tmp" || {
-    echo "failed to fetch lib.sh from $FM_RAW_BASE" >&2
-    rm -f "$tmp"
+  local here
+  here="$(fm_script_dir)" || here=""
+  if [ -z "$here" ] || [ ! -f "$here/lib.sh" ]; then
+    echo "run.sh needs a checkout — provision with install.sh first, then run it from there" >&2
     exit 1
-  }
-  if [ -n "${FM_LIB_SHA256:-}" ]; then
-    if command -v sha256sum >/dev/null 2>&1; then
-      actual="$(sha256sum "$tmp" | cut -d' ' -f1)"
-    else
-      actual="$(shasum -a 256 "$tmp" | cut -d' ' -f1)"
-    fi
-    if [ "$actual" != "$FM_LIB_SHA256" ]; then
-      echo "lib.sh checksum mismatch: expected $FM_LIB_SHA256, got $actual" >&2
-      rm -f "$tmp"
-      exit 1
-    fi
   fi
-  # shellcheck disable=SC1090
-  . "$tmp"
-  rm -f "$tmp"
+  # shellcheck source=lib.sh disable=SC1091
+  . "$here/lib.sh"
 }
 
 # Reattach an interactive terminal after a curl pipe has consumed stdin.
@@ -115,12 +94,8 @@ main() {
 
   local verb="$1"; shift
   local here script
-  if ! here="$(fm_script_dir)"; then
-    # A verb is a script in the checkout, so there is nothing to dispatch to
-    # when run.sh itself arrived over a pipe.
-    fm_err "run.sh needs a checkout — provision first with install.sh, then run it from $FM_SETUP_DIR_HINT"
-    return 1
-  fi
+  # fm_load_lib already refused a run without one, so this cannot fail here.
+  here="$(fm_script_dir)"
   script="$here/scripts/run/$verb.sh"
 
   if [ ! -f "$script" ]; then

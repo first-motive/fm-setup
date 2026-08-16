@@ -38,9 +38,17 @@ curl -fsSL https://raw.githubusercontent.com/first-motive/fm-setup/v0.1.8/instal
 less install.sh && bash install.sh --workstation
 ```
 
-The curl path clones this repo to `~/.first-motive/fm-setup` and hands over to
-the checkout, because the manifest and the steps live in the repo — and a
-provisioned machine needs them on disk to re-check itself later.
+The curl path clones this repo into the machine's workspace — `~/fm/fm-setup`
+unless the machine's identity card says otherwise — and hands over to the
+checkout, because the manifest and the steps live in the repo, and a provisioned
+machine needs them on disk to re-check itself later.
+
+The workspace is not an arbitrary choice of directory. It is the card's
+`workspace` field, the one visible parent every First Motive checkout shares,
+and it is where the `fm` CLI looks: a copy of this repo kept anywhere else is one
+`fm doctor` reports as *not cloned* on the machine that is running it. A checkout
+left at the old `~/.first-motive/fm-setup` is moved into the workspace on the
+next provisioning run, with a symlink left behind so existing paths still work.
 
 ### What The Curl Path Trusts
 
@@ -82,6 +90,52 @@ from a clone instead if you would rather not trust a web page:
 git rev-parse "$TAG^{commit}"
 git show "$TAG:lib.sh" | shasum -a 256
 ```
+
+### Cutting A Release
+
+The tag above appears in exactly one machine-readable place — `install.sh`'s
+`FM_TAG` — because `install.sh` is the only file that ever arrives on its own,
+piped into a shell with no checkout behind it to read a version from. `run.sh`
+and the flash seed derive it from there at runtime; the curl one-liners in this
+file and in `install.sh`'s header are text a human pastes, so they are generated
+from it instead and CI fails a pull request where they disagree.
+
+```bash
+scripts/dev/release-tag.sh              # what is pinned now
+scripts/dev/release-tag.sh --check      # what CI checks
+scripts/dev/release-tag.sh --set vX.Y.Z # bump, then commit and tag
+```
+
+### Converging An Appliance
+
+A Jetson in the field is not a machine anyone re-provisions by hand. `fm_ros2`'s
+`fm-update-<role>.timer` ticks every ~15 minutes on each rig, and fm-setup is
+one of the checkouts it converges. The entry point it calls is this repo's:
+
+```bash
+scripts/update.sh          # converge this host's role, non-interactively
+scripts/update.sh --check  # what a converge would find, change nothing
+```
+
+The role comes from the machine's identity card, so no caller has to know
+whether a given rig is a jetson or a workstation. `fm update` uses the same
+script after a clean pull.
+
+What that grants is worth stating plainly, because a timer that runs code as
+root on every rig unattended is a real risk surface:
+
+- **It follows tags, never a branch.** The timer only ever checks out a newer
+  `v*` release tag. A commit merged to `main` and left untagged moves no machine.
+- **It refuses to force anything.** A checkout with tracked modifications is
+  logged and skipped, never stashed or reset.
+- **It runs while nothing is in flight.** A rig mid-take is left alone and
+  retried on the next tick.
+- **It widens nothing.** The fleet already holds the git credentials and the
+  passwordless sudo this uses; no new secret, key, or inbound path is added.
+
+The consequence is that whoever can push a `v*` tag here decides what runs as
+root on every rig. That is why `.github/CODEOWNERS` names one reviewer, and why
+the tag is cut deliberately rather than on merge.
 
 ## Flashing The Jetson
 
@@ -350,7 +404,7 @@ where a gap in its package list is found by someone standing next to a board.
 
 | variable | effect |
 | --- | --- |
-| `FM_SETUP_DIR` | where the curl path clones this repo (default `~/.first-motive/fm-setup`) |
+| `FM_SETUP_DIR` | where the curl path clones this repo (default: `fm-setup` inside the card's workspace) |
 | `FM_LIB_SHA256` | expected sha256 of a fetched `lib.sh`; a mismatch aborts the install |
 | `FM_SETUP_SHA` | commit the bootstrapped checkout must be at; a mismatch aborts before provisioning |
 | `FM_TAG` | release tag the curl path fetches and clones (default: the current release) |

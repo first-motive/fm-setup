@@ -36,6 +36,13 @@ FM_ROOT="$(cd "$_here/../.." && pwd)"
 # shellcheck source=../manifest.sh disable=SC1091
 . "$FM_ROOT/scripts/manifest.sh"
 
+# The exact install.sh a flashed rig fetches on first boot: this repo's release
+# tag, resolved from the one place it is written down, joined to the raw base in
+# the manifest. Resolved here at flash time rather than left as a ref the rig
+# looks up later, so a card carries the release it was flashed from even if the
+# tag is moved afterwards.
+FM_SETUP_INSTALL_URL="$FM_SETUP_RAW_BASE/$(fm_release_tag "$FM_ROOT")/install.sh"
+
 CACHE_DIR="${FM_FLASH_CACHE:-$HOME/.cache/fm-setup}"
 IMAGE_XZ="$CACHE_DIR/$(basename "$FM_JETSON_IMAGE_URL")"
 IMAGE_RAW="${IMAGE_XZ%.xz}"
