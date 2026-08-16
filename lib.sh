@@ -144,10 +144,10 @@ fm_verify_checksum() {
 fm_release_tag() {
   local root="${1:-${FM_ROOT:-}}" front tag
   front="$root/install.sh"
-  [ -n "$root" ] && [ -f "$front" ] || {
+  if [ -z "$root" ] || [ ! -f "$front" ]; then
     fm_err "cannot read the release tag: no install.sh at '${root:-<unset>}'"
     return 1
-  }
+  fi
   # Matched against the assignment's exact shape rather than any v-looking
   # string in the file, so the header's example curl commands — which carry the
   # same tag, and are rewritten from this one by scripts/dev/release-tag.sh —
