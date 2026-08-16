@@ -62,6 +62,12 @@ FM_GIT_URL="${FM_GIT_URL:-https://github.com/${FM_REPO}.git}"
 # explicit FM_SETUP_DIR still wins, so this stays overridable from the
 # environment exactly as before.
 FM_SETUP_DIR="${FM_SETUP_DIR:-}"
+# Whether that path was chosen by the caller. It decides whether an old checkout
+# is adopted: relocating one is only ever right when the destination is this
+# machine's declared workspace, and never when a caller pointed the install at
+# some other directory for reasons of their own.
+FM_SETUP_DIR_EXPLICIT=0
+[ -z "$FM_SETUP_DIR" ] || FM_SETUP_DIR_EXPLICIT=1
 FM_SELFTEST="${FM_SELFTEST:-0}"
 
 # Exported so every step sees the same answer: steps that would touch a shell
@@ -172,6 +178,11 @@ EOF
 # ~/.first-motive line in every machine's CLAUDE.md, working afterwards.
 fm_adopt_legacy_checkout() {
   local legacy="${FM_SETUP_LEGACY_DIR:-$HOME/.first-motive/fm-setup}"
+  # Only into the workspace this machine declares. An explicit FM_SETUP_DIR is a
+  # caller asking for a checkout somewhere specific — CI's temp directory, a
+  # second copy being tested — and moving the machine's real checkout into it
+  # would be a destructive side effect of an option that promised none.
+  [ "$FM_SETUP_DIR_EXPLICIT" = "0" ] || return 0
   [ "$legacy" != "$FM_SETUP_DIR" ] || return 0
   [ -d "$legacy/.git" ] || return 0
   # A symlink already pointing at the new home is a previous adoption, not a
