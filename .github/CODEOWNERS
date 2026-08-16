@@ -1,0 +1,14 @@
+# CODEOWNERS — default reviewer for this repo.
+#
+# Governance model: owner-free-on-main.
+#   - The owner pushes to main directly (no PR required for the owner).
+#   - Everyone else branches, opens a PR, and the owner reviews and merges.
+# The owner listed below is the default reviewer and the only person who
+# merges others' PRs.
+#
+# This matters more here than in most First Motive repos: a tag cut from this
+# repo is what an appliance's update timer converges to, unattended, on every
+# rig. Whoever can merge to main can decide what runs as root on the fleet, so
+# the reviewer list stays as short as the other machine-layer repos'.
+
+* @ubunish
