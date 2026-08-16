@@ -106,6 +106,37 @@ scripts/dev/release-tag.sh --check      # what CI checks
 scripts/dev/release-tag.sh --set vX.Y.Z # bump, then commit and tag
 ```
 
+### Converging An Appliance
+
+A Jetson in the field is not a machine anyone re-provisions by hand. `fm_ros2`'s
+`fm-update-<role>.timer` ticks every ~15 minutes on each rig, and fm-setup is
+one of the checkouts it converges. The entry point it calls is this repo's:
+
+```bash
+scripts/update.sh          # converge this host's role, non-interactively
+scripts/update.sh --check  # what a converge would find, change nothing
+```
+
+The role comes from the machine's identity card, so no caller has to know
+whether a given rig is a jetson or a workstation. `fm update` uses the same
+script after a clean pull.
+
+What that grants is worth stating plainly, because a timer that runs code as
+root on every rig unattended is a real risk surface:
+
+- **It follows tags, never a branch.** The timer only ever checks out a newer
+  `v*` release tag. A commit merged to `main` and left untagged moves no machine.
+- **It refuses to force anything.** A checkout with tracked modifications is
+  logged and skipped, never stashed or reset.
+- **It runs while nothing is in flight.** A rig mid-take is left alone and
+  retried on the next tick.
+- **It widens nothing.** The fleet already holds the git credentials and the
+  passwordless sudo this uses; no new secret, key, or inbound path is added.
+
+The consequence is that whoever can push a `v*` tag here decides what runs as
+root on every rig. That is why `.github/CODEOWNERS` names one reviewer, and why
+the tag is cut deliberately rather than on merge.
+
 ## Flashing The Jetson
 
 The jetson role starts before the OS exists. The `flash` verb writes Canonical's
