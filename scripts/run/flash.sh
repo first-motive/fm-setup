@@ -51,6 +51,10 @@ DEVICE=""
 MACHINE_NAME="fm-$(fm_machine_abbrev jetson)-01"
 MACHINE_FLEET="$FM_MACHINE_FLEET_DEFAULT"
 MACHINE_TRANSPORT="${FM_MACHINE_TRANSPORTS[0]}"
+# A flashed card is a capture rig, which is what makes recorder the right
+# default here and no default at all in `machine init` — that verb runs on
+# workstations and laptops too, where there is no bridge to select.
+MACHINE_WORKLOAD=recorder
 # One visible parent directory for every checkout, resolved once --user is
 # known. Consumers read this out of the card rather than assuming a path.
 MACHINE_WORKSPACE=""
@@ -81,6 +85,7 @@ Usage: ./run.sh flash --device <disk> [options]
                            (default: $MACHINE_NAME — override on the second rig)
   --fleet <name>           population this rig joins (default: $MACHINE_FLEET)
   --transport <profile>    middleware profile (default: $MACHINE_TRANSPORT)
+  --workload <kind>        what the rig does (default: $MACHINE_WORKLOAD)
   --user <name>            appliance user (default: $FM_JETSON_USER)
   --ssh-key <file>         public key to authorize (default: every ~/.ssh/*.pub)
   --wifi <ssid:psk>        join this network on boot (Ethernet needs nothing)
@@ -127,6 +132,10 @@ yaml_quote() {
 }
 
 require_sane_name() {
+  # LC_ALL=C: a glob range follows the locale's collation, and under a UTF-8
+  # locale a-z also matches uppercase — which would let an uppercase hostname
+  # through onto a card that is baked into an SD card before anyone sees it.
+  local LC_ALL=C
   local what="$1" value="$2"
   case "$value" in
     *[!a-z0-9-]*|""|-*)
@@ -355,7 +364,8 @@ write_files:
         "name": "$MACHINE_NAME",
         "role": "jetson",
         "fleet": "$MACHINE_FLEET",
-        "transport": "$MACHINE_TRANSPORT",
+        "transport": "$MACHINE_TRANSPORT",${MACHINE_WORKLOAD:+
+        \"workload\": \"$MACHINE_WORKLOAD\",}
         "workspace": "$MACHINE_WORKSPACE"
       }
 EOF
@@ -536,7 +546,7 @@ print_plan() {
   fm_info "image     $(basename "$FM_JETSON_IMAGE_URL")"
   fm_info "device    ${DEVICE:-<required>}"
   fm_info "identity  $NEW_USER@$NEW_HOSTNAME (password login locked, SSH keys injected)"
-  fm_info "card      $MACHINE_NAME · fleet $MACHINE_FLEET · $MACHINE_TRANSPORT · ns $(fm_machine_namespace "$MACHINE_NAME")"
+  fm_info "card      $MACHINE_NAME · fleet $MACHINE_FLEET · $MACHINE_TRANSPORT · $MACHINE_WORKLOAD · ns $(fm_machine_namespace "$MACHINE_NAME")"
   fm_info "workspace $MACHINE_WORKSPACE"
   fm_info "wifi      ${WIFI_SSID:-none (Ethernet)}"
   if [ -n "$TS_AUTHKEY" ]; then
@@ -559,6 +569,7 @@ main() {
       --name)              MACHINE_NAME="${2:?--name needs a value}"; NEW_HOSTNAME="$MACHINE_NAME"; shift 2 ;;
       --fleet)             MACHINE_FLEET="${2:?--fleet needs a value}"; shift 2 ;;
       --transport)         MACHINE_TRANSPORT="${2:?--transport needs a value}"; shift 2 ;;
+      --workload)          MACHINE_WORKLOAD="${2:?--workload needs a value}"; shift 2 ;;
       --user)              NEW_USER="${2:?}"; shift 2 ;;
       --ssh-key)           SSH_KEY_FILE="${2:?}"; shift 2 ;;
       --wifi)
@@ -587,6 +598,8 @@ main() {
   fm_machine_valid_name "$MACHINE_NAME" jetson
   fm_machine_valid_fleet "$MACHINE_FLEET"
   fm_machine_valid_transport "$MACHINE_TRANSPORT"
+  MACHINE_WORKLOAD="$(fm_machine_workload_value "$MACHINE_WORKLOAD")"
+  fm_machine_valid_workload "$MACHINE_WORKLOAD"
   fm_machine_valid_workspace "$MACHINE_WORKSPACE"
   # Both secrets are interpolated into the first-boot script, which runs as root
   # on the appliance, so a value carrying a quote closes the string it sits in

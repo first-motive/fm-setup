@@ -39,6 +39,7 @@ NAME=""
 ROLE=""
 FLEET=""
 TRANSPORT=""
+WORKLOAD=""
 WORKSPACE=""
 AS_JSON=0
 DRY_RUN=0
@@ -61,6 +62,9 @@ Options:
   --role <role>           ${FM_MACHINE_ROLES[*]} (default: detected)
   --fleet <name>          population this machine joins (default: $FM_MACHINE_FLEET_DEFAULT)
   --transport <profile>   ${FM_MACHINE_TRANSPORTS[*]} (default: ${FM_MACHINE_TRANSPORTS[0]})
+  --workload <kind>       ${FM_MACHINE_WORKLOADS[*]} — what this machine does in
+                          the stack. Optional: a workstation or a laptop runs no
+                          bridge and needs none. --workload none clears it.
   --workspace <path>      parent directory for every checkout
                           (default: $FM_MACHINE_WORKSPACE_DEFAULT)
   --json                  machine-readable output
@@ -87,6 +91,7 @@ validate_role()      { fm_machine_valid_role "$1"; }
 validate_transport() { fm_machine_valid_transport "$1"; }
 validate_fleet()     { fm_machine_valid_fleet "$1"; }
 validate_workspace() { fm_machine_valid_workspace "$1"; }
+validate_workload()  { fm_machine_valid_workload "$1"; }
 
 # --- Defaults ---------------------------------------------------------------
 
@@ -125,8 +130,18 @@ resolve_fields() {
   [ -n "$TRANSPORT" ] || TRANSPORT="$([ -n "$existing" ] && fm_machine_get transport || printf '%s' "${FM_MACHINE_TRANSPORTS[0]}")"
   [ -n "$WORKSPACE" ] || WORKSPACE="$([ -n "$existing" ] && fm_machine_get workspace || printf '%s' "$FM_MACHINE_WORKSPACE_DEFAULT")"
 
+  # A value the caller passed wins, normalised so that `none` clears the field;
+  # otherwise an existing card's workload carries forward like every other field
+  # a repair run was not asked to change.
+  if [ -n "$WORKLOAD" ]; then
+    WORKLOAD="$(fm_machine_workload_value "$WORKLOAD")"
+  elif [ -n "$existing" ]; then
+    WORKLOAD="$(fm_machine_get_opt workload)"
+  fi
+
   validate_fleet "$FLEET" || return 1
   validate_transport "$TRANSPORT" || return 1
+  validate_workload "$WORKLOAD" || return 1
   validate_workspace "$WORKSPACE" || return 1
 }
 
@@ -137,8 +152,11 @@ card_json() {
     --arg role "$ROLE" \
     --arg fleet "$FLEET" \
     --arg transport "$TRANSPORT" \
+    --arg workload "$WORKLOAD" \
     --arg workspace "$WORKSPACE" \
-    '{schema_version: $schema_version, name: $name, role: $role, fleet: $fleet, transport: $transport, workspace: $workspace}'
+    '{schema_version: $schema_version, name: $name, role: $role, fleet: $fleet, transport: $transport}
+     + (if $workload == "" then {} else {workload: $workload} end)
+     + {workspace: $workspace}'
 }
 
 # --- Verbs ------------------------------------------------------------------
@@ -212,6 +230,7 @@ do_init() {
   fm_info "role       $ROLE"
   fm_info "fleet      $FLEET"
   fm_info "transport  $TRANSPORT"
+  fm_info "workload   ${WORKLOAD:-none}"
   fm_info "workspace  $WORKSPACE"
   fm_info "namespace  $(fm_machine_namespace "$NAME")  (derived, never typed)"
 
@@ -233,6 +252,7 @@ do_show() {
   fm_info "role       $(fm_machine_get role)"
   fm_info "fleet      $(fm_machine_get fleet)"
   fm_info "transport  $(fm_machine_get transport)"
+  fm_info "workload   $(fm_machine_workload || true)"
   fm_info "workspace  $(fm_machine_get workspace)"
   fm_info "namespace  $(fm_machine_namespace)"
 }
@@ -292,6 +312,19 @@ do_doctor() {
   value="$(jq -r '.transport // empty' "$file")"
   if validate_transport "$value" 2>/dev/null; then fm_ok "transport $value"; else fm_err "invalid transport: '$value'"; problems=$((problems + 1)); fi
 
+  # The one optional field, so absence is reported rather than counted. A rig
+  # with no workload is a rig whose bridge profile nothing can derive, which is
+  # worth seeing on a recorder and is entirely normal on a workstation.
+  value="$(jq -r '.workload // empty' "$file")"
+  if ! validate_workload "$value" 2>/dev/null; then
+    fm_err "invalid workload: '$value'"
+    problems=$((problems + 1))
+  elif [ -n "$value" ]; then
+    fm_ok "workload $value"
+  else
+    fm_info "workload   none — this machine hosts no bridge profile"
+  fi
+
   value="$(jq -r '.workspace // empty' "$file")"
   if ! validate_workspace "$value" 2>/dev/null; then
     fm_err "invalid workspace: '$value'"
@@ -344,6 +377,7 @@ main() {
       --role)      ROLE="${2:?--role needs a value}"; shift 2 ;;
       --fleet)     FLEET="${2:?--fleet needs a value}"; shift 2 ;;
       --transport) TRANSPORT="${2:?--transport needs a value}"; shift 2 ;;
+      --workload)  WORKLOAD="${2:?--workload needs a value (or 'none')}"; shift 2 ;;
       --workspace) WORKSPACE="${2:?--workspace needs a value}"; shift 2 ;;
       --json)      AS_JSON=1; shift ;;
       --dry-run)   DRY_RUN=1; shift ;;

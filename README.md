@@ -111,7 +111,7 @@ one-liner in `~/NEXT-STEP.md` on the appliance.
 | --- | --- |
 | `--device` | target disk, whole device; internal disks are refused |
 | `--name`, `--user` | identity (defaults `fm-rec-01`, `fm`); the name becomes the hostname, the mDNS name, and the ROS namespace |
-| `--fleet`, `--transport` | the rest of the seeded identity card (defaults `prod`, `zenoh`) |
+| `--fleet`, `--transport`, `--workload` | the rest of the seeded identity card (defaults `prod`, `zenoh`, `recorder`) |
 | `--ssh-key` | public key to authorize (default: every `~/.ssh/*.pub`) |
 | `--wifi ssid:psk` | join wifi on boot; Ethernet needs nothing |
 | `--tailscale-authkey` | join the tailnet on first boot — use an ephemeral key |
@@ -158,6 +158,7 @@ derived from it rather than typed a second time somewhere else.
   "role": "jetson",
   "fleet": "prod",
   "transport": "zenoh",
+  "workload": "recorder",
   "workspace": "/home/fm/fm"
 }
 ```
@@ -168,6 +169,7 @@ name ──┬─→ hostname
        └─→ ROS namespace   fm-rec-01 → fm_rec_01   (derived, never typed)
 
 transport ─→ the middleware profile every process on the host sources
+workload  ─→ the comms bridge profile      (optional — see below)
 workspace ─→ where every First Motive checkout lives
 ```
 
@@ -191,10 +193,34 @@ nobody wants touched today.
 knowing which recorder it is. Pass `--name` when flashing the second card of a
 role.
 
+`workload` is the one optional field. It answers what a machine *does*, which
+`role` cannot: a recorder rig and a processor rig are both `jetson`, and that
+gap is why `FM_BRIDGE_PROFILE` was the last per-host value anyone still typed
+into an env file. It is optional because it is genuinely not universal — a GPU
+workstation and a laptop run no bridge, and requiring it would force a
+meaningless value onto them. Absent means this machine hosts no workload;
+`--workload none` clears it when a machine is repurposed.
+
+```bash
+fm machine init --name fm-rec-01 --workload recorder
+fm machine init --workload none              # repurposed; no bridge any more
+```
+
+A flashed card defaults to `recorder`, because a flashed card is a capture rig.
+`machine init` has no default, because it also runs on machines with no bridge
+at all.
+
 The contract lives in `templates/machine/machine.schema.json`, which is the file
 to read when a consumer in another repo needs to know what it may rely on. A
 reader that finds a `schema_version` it does not know must refuse the card
 rather than guess at it.
+
+The writer is tested, because four other repos read what it produces and none
+of them run this repo's CI:
+
+```bash
+./scripts/dev/test-machine.sh    # 57 cases, temp file, no root
+```
 
 A machine without a card is not broken. A laptop running the desktop app in
 client mode has no workspace and needs no card; only a host that provisions,

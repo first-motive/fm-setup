@@ -169,6 +169,27 @@ fm_machine_get() {
   printf '%s\n' "$value"
 }
 
+# fm_machine_get_opt FIELD — echo an optional field, or nothing when it is absent.
+#
+# Separate from fm_machine_get rather than a flag on it, so that the common case
+# stays loud: every required field must fail when missing, and only a field the
+# schema marks optional may quietly return empty. A caller reaching for this on a
+# required field is saying something it does not mean.
+fm_machine_get_opt() {
+  local field="$1" file
+  file="$(fm_machine_file)"
+  [ -f "$file" ] || return 0
+  fm_has_cmd jq || return 0
+  jq -r --arg f "$field" '.[$f] // empty' "$file" 2>/dev/null || true
+}
+
+# fm_machine_workload — echo this machine's workload, empty when it has none.
+#
+# Empty is a real answer, not a failure: a workstation and a laptop run no
+# bridge. A caller that needs one must say so itself, because "which profile"
+# and "is there a profile at all" are different questions.
+fm_machine_workload() { fm_machine_get_opt workload; }
+
 # fm_machine_namespace [NAME] — echo the ROS namespace derived from a machine
 # name, defaulting to this machine's.
 #
@@ -202,6 +223,11 @@ fm_machine_valid_transport() {
 }
 
 fm_machine_valid_fleet() {
+  # LC_ALL=C, because a glob range is collation-dependent: under en_ZA.UTF-8 the
+  # range a-z also matches uppercase, so `*[!a-z0-9-]*` accepted "Prod" and wrote
+  # it to the card. The C locale gives the ASCII range the pattern is written to
+  # mean. bash 3.2 on macOS has no globasciiranges to lean on instead.
+  local LC_ALL=C
   case "$1" in
     *[!a-z0-9-]*|"") fm_err "invalid fleet: '$1' (lowercase letters, digits, hyphens)"; return 1 ;;
     [!a-z]*)         fm_err "invalid fleet: '$1' (must start with a lowercase letter)"; return 1 ;;
@@ -215,6 +241,30 @@ fm_machine_valid_workspace() {
   esac
 }
 
+# fm_machine_workload_value RAW — echo what a --workload flag value means.
+#
+# `none` is spelled out because an empty flag value cannot be told apart from a
+# flag nobody passed, and without a spelling for "clear it" a machine repurposed
+# from recorder to workstation would carry its old workload forever. Both
+# writers normalise through here, so `none` means the same thing at
+# `machine init` as it does at `flash`.
+fm_machine_workload_value() {
+  case "$1" in
+    none) printf '' ;;
+    *)    printf '%s' "$1" ;;
+  esac
+}
+
+# Empty passes: workload is the one optional field, and "this machine runs no
+# bridge" is a valid card rather than an omission to correct. Callers pass the
+# value after fm_machine_workload_value, which is why `none` is named in the
+# message — it is what a person types, and both writers accept it.
+fm_machine_valid_workload() {
+  [ -z "$1" ] && return 0
+  _fm_in_list "$1" ${FM_MACHINE_WORKLOADS[@]+"${FM_MACHINE_WORKLOADS[@]}"} ||
+    { fm_err "invalid workload: '$1' (expected one of: ${FM_MACHINE_WORKLOADS[*]}, or none)"; return 1; }
+}
+
 # fm_machine_valid_name NAME [ROLE] — check the name's shape, and when a role is
 # given, that the name's abbreviation is that role's.
 #
@@ -222,6 +272,9 @@ fm_machine_valid_workspace() {
 # jetson while calling itself fm-ws-01 puts a recorder's topics under the
 # workstation's namespace, which is invisible until nothing subscribes.
 fm_machine_valid_name() {
+  # LC_ALL=C for the same reason as fm_machine_valid_fleet: the ranges below are
+  # meant as ASCII, and a UTF-8 collation quietly widens them to match uppercase.
+  local LC_ALL=C
   local name="$1" role="${2:-}" abbrev part
   # The abbreviation is extracted and checked for stray characters rather than
   # matched with a single glob. A glob cannot express "one or more letters" —
