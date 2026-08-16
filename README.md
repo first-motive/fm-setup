@@ -38,9 +38,17 @@ curl -fsSL https://raw.githubusercontent.com/first-motive/fm-setup/v0.1.8/instal
 less install.sh && bash install.sh --workstation
 ```
 
-The curl path clones this repo to `~/.first-motive/fm-setup` and hands over to
-the checkout, because the manifest and the steps live in the repo — and a
-provisioned machine needs them on disk to re-check itself later.
+The curl path clones this repo into the machine's workspace — `~/fm/fm-setup`
+unless the machine's identity card says otherwise — and hands over to the
+checkout, because the manifest and the steps live in the repo, and a provisioned
+machine needs them on disk to re-check itself later.
+
+The workspace is not an arbitrary choice of directory. It is the card's
+`workspace` field, the one visible parent every First Motive checkout shares,
+and it is where the `fm` CLI looks: a copy of this repo kept anywhere else is one
+`fm doctor` reports as *not cloned* on the machine that is running it. A checkout
+left at the old `~/.first-motive/fm-setup` is moved into the workspace on the
+next provisioning run, with a symlink left behind so existing paths still work.
 
 ### What The Curl Path Trusts
 
@@ -365,7 +373,7 @@ where a gap in its package list is found by someone standing next to a board.
 
 | variable | effect |
 | --- | --- |
-| `FM_SETUP_DIR` | where the curl path clones this repo (default `~/.first-motive/fm-setup`) |
+| `FM_SETUP_DIR` | where the curl path clones this repo (default: `fm-setup` inside the card's workspace) |
 | `FM_LIB_SHA256` | expected sha256 of a fetched `lib.sh`; a mismatch aborts the install |
 | `FM_SETUP_SHA` | commit the bootstrapped checkout must be at; a mismatch aborts before provisioning |
 | `FM_TAG` | release tag the curl path fetches and clones (default: the current release) |

@@ -13,7 +13,7 @@ change applied by hand. If the work needs one, add a step to fm-setup, commit
 it, and run it:
 
 ```bash
-cd ~/.first-motive/fm-setup
+cd ~/fm/fm-setup              # the workspace named on this machine's identity card
 ./install.sh --check          # what state is this machine in?
 ./install.sh --only <step>    # apply one step
 ```
