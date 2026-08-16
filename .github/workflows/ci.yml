@@ -6,10 +6,15 @@ on:
   pull_request:
 
 jobs:
+  # Rendered files (AGENTS.md, .fm/) come from the render plane and carry a hash of
+  # their own body. This fails the PR when one was edited in place.
+  drift:
+    uses: first-motive/.github/.github/workflows/drift-check.yml@main
+
   shellcheck:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
       - name: Install shellcheck
         run: sudo apt-get update && sudo apt-get install -y shellcheck
       - name: Lint every script
@@ -18,7 +23,7 @@ jobs:
   selftest:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
       # Proves every manifest entry resolves to a real step file, and that a dry
       # run walks both roles. Provisions nothing.
       - name: install.sh self-test
@@ -46,7 +51,7 @@ jobs:
   rehearse:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
       - name: Rehearse the jetson role
         env:
           FM_REHEARSE_PLATFORM: linux/amd64
@@ -67,7 +72,7 @@ jobs:
       FM_TAG: v0.0.0-ci
       FM_SETUP_DIR: /tmp/fm-setup
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
       - name: Stand in for the published release
         run: |
