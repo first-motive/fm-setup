@@ -42,6 +42,14 @@ FM_REPO="${FM_REPO:-first-motive/fm-setup}"
 # A release tag, not a branch: what provisioned a machine has to stay nameable
 # months later. Bump this in the same commit that cuts a new tag, so the script
 # a tag ships fetches its own lib.sh rather than a newer one.
+#
+# This assignment is the repo's single source for the release tag. run.sh and
+# the flash seed read it back through lib.sh's fm_release_tag, and the README's
+# copy-paste lines and this file's own header examples are rewritten from it by
+# `scripts/dev/release-tag.sh --set`, which CI re-checks on every pull request.
+# Bump it with that command rather than by hand: the value has to appear
+# literally here, because a piped install.sh has no checkout to read it from,
+# and it should appear literally nowhere else.
 FM_TAG="${FM_TAG:-v0.1.8}"
 # Overridable so the curl-pipe path can be exercised against a local checkout —
 # CI points it at a file:// URL and tests the real code path without a network.

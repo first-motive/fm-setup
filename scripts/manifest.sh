@@ -396,5 +396,13 @@ FM_JETSON_USER=fm
 
 # First-boot provisioning: the two install layers cloud-init chains after the
 # card's first boot. Machine layer first, workspace layer second.
-FM_SETUP_INSTALL_URL="https://raw.githubusercontent.com/first-motive/fm-setup/main/install.sh"
+#
+# The machine layer is a base rather than a whole URL, because the ref that
+# completes it is this repo's release tag and that tag is written down in one
+# place only, install.sh — `flash` joins the two through fm_release_tag. This
+# line read `main` until now, which meant a rig flashed on a Tuesday provisioned
+# itself from whatever had merged that morning. An appliance nobody is standing
+# next to is the last place an unreleased commit should land, and the first
+# place it would go unnoticed.
+FM_SETUP_RAW_BASE="https://raw.githubusercontent.com/first-motive/fm-setup"
 FM_ROS2_INSTALL_URL="https://raw.githubusercontent.com/first-motive/fm-ros2/main/install.sh"

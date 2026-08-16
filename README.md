@@ -83,6 +83,21 @@ git rev-parse "$TAG^{commit}"
 git show "$TAG:lib.sh" | shasum -a 256
 ```
 
+### Cutting A Release
+
+The tag above appears in exactly one machine-readable place — `install.sh`'s
+`FM_TAG` — because `install.sh` is the only file that ever arrives on its own,
+piped into a shell with no checkout behind it to read a version from. `run.sh`
+and the flash seed derive it from there at runtime; the curl one-liners in this
+file and in `install.sh`'s header are text a human pastes, so they are generated
+from it instead and CI fails a pull request where they disagree.
+
+```bash
+scripts/dev/release-tag.sh              # what is pinned now
+scripts/dev/release-tag.sh --check      # what CI checks
+scripts/dev/release-tag.sh --set vX.Y.Z # bump, then commit and tag
+```
+
 ## Flashing The Jetson
 
 The jetson role starts before the OS exists. The `flash` verb writes Canonical's

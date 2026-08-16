@@ -33,6 +33,12 @@ jobs:
           for s in scripts/run/*.sh; do
             grep -q "\"$s\"" fm.json || { echo "undeclared verb: $s"; exit 1; }
           done
+      # install.sh's FM_TAG assignment is the only place the release tag is
+      # written down. The scripts that need it derive it at runtime and cannot
+      # drift; the curl one-liners a human pastes are plain text and can, so
+      # they are checked against the assignment instead.
+      - name: The release tag is single-sourced
+        run: ./scripts/dev/release-tag.sh --check
 
   # Provision the jetson role for real, in a container of its target release.
   #
