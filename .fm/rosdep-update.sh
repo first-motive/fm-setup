@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# fm-render: rosdep-update sha256:d86dea806e587927211b96115aa21b6cbef3b0af840b7b1dac8c6b5519c6dec9 — rendered by the First Motive render plane — edit the upstream source, not this file
+# fm-render: rosdep-update sha256:f2b0d67d3661b1905f5126099f9c35fea8b23a014665ea60d6b5abec881c85e1 — rendered by the First Motive render plane — edit the upstream source, not this file
 # `rosdep update`, made survivable.
 #
 #   ./rosdep-update.sh [distro]
@@ -43,10 +43,28 @@ main() {
   # ROS 1 gbpdistro sources: nothing here consumes them, and they are the source that
   # actually fails. Comment rather than delete, so a `cat` of the file still explains
   # itself to whoever looks next.
+  #
+  # The sources live in /etc and are root-owned. In CI this runs as root and the
+  # edit lands; on a rig it runs as the appliance user, where the first version of
+  # this discarded its own failure and left the source in place while reporting
+  # that it had dropped it. Escalate when escalation is available, and say so
+  # plainly when it is not — an unfixable condition reported is worth more than a
+  # fix that quietly did not happen.
   if [ -d "$SOURCES_DIR" ] && grep -rqs '^gbpdistro' "$SOURCES_DIR"; then
-    sed -i 's|^gbpdistro|# gbpdistro (ROS 1, unused here — see fm-tools#19) |' \
-      "$SOURCES_DIR"/*.list 2>/dev/null || true
-    echo "==> dropped the ROS 1 gbpdistro source (unused, and the one that rate limits)"
+    local sed_cmd=(sed -i 's|^gbpdistro|# gbpdistro (ROS 1, unused here — see fm-tools#19) |')
+    local ran=1
+    if [ "$(id -u)" -eq 0 ]; then
+      "${sed_cmd[@]}" "$SOURCES_DIR"/*.list || ran=0
+    elif command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+      sudo "${sed_cmd[@]}" "$SOURCES_DIR"/*.list || ran=0
+    else
+      ran=0
+    fi
+    if [ "$ran" -eq 1 ]; then
+      echo "==> dropped the ROS 1 gbpdistro source (unused, and the one that rate limits)"
+    else
+      echo "==> could not drop the ROS 1 gbpdistro source (needs root) — relying on retries"
+    fi
   fi
 
   local attempt
