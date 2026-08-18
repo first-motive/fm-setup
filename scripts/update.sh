@@ -57,6 +57,10 @@ role_flag() {
   local role=""
   if fm_machine_exists && fm_has_cmd jq; then
     role="$(fm_machine_get role 2>/dev/null || true)"
+    # A card that exists and cannot be read is a different situation from no card
+    # at all, and the silent fallback hid exactly that: a malformed card sent a
+    # Jetson down the workstation path with nothing said about why.
+    [ -n "$role" ] || fm_warn "machine card at $(fm_machine_file) is unreadable — falling back to hardware detection"
   fi
   [ -n "$role" ] || role="$(fm_detect_role)"
   case "$role" in

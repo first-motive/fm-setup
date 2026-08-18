@@ -73,7 +73,24 @@ fm_detect_arch() {
 # The --workstation / --jetson flags override this, so a wrong guess is never
 # load-bearing.
 fm_detect_role() {
-  if [ -f /etc/nv_tegra_release ] || grep -qi tegra /proc/device-tree/model 2>/dev/null; then
+  # Three markers, because no one of them is present on every Jetson image.
+  # /etc/nv_tegra_release ships with a JetPack rootfs and not with Canonical's
+  # Ubuntu Server for Tegra, which is what `flash` writes. The model string names
+  # the board, and boards are not obliged to say "tegra" in it — an Orin Nano
+  # reads "NVIDIA Jetson Orin Nano Engineering Reference Developer Kit Super".
+  # The compatible string is the SoC, which is where "tegra234" actually lives.
+  #
+  # Getting this wrong is not a mild misdetection: it resolves a rig to
+  # `workstation`, which targets a different Ubuntu and a different ROS distro.
+  # The OS guard refuses that pairing, so the failure is loud rather than
+  # destructive — but the rig does not provision at all until this is right.
+  # Overridable for the same reason FM_MACHINE_FILE is: this is the one function
+  # whose answer decides what a machine gets provisioned as, and a test that
+  # cannot fake a Jetson can only ever assert the answer on the host running it.
+  local dt="${FM_DEVICE_TREE:-/proc/device-tree}"
+  if [ -f /etc/nv_tegra_release ] \
+     || grep -qai tegra "$dt/compatible" 2>/dev/null \
+     || grep -qai 'tegra\|jetson' "$dt/model" 2>/dev/null; then
     printf 'jetson\n'
   else
     printf 'workstation\n'
@@ -194,6 +211,35 @@ fm_machine_file() {
 # is not broken: a laptop running the desktop app in client mode has no
 # workspace and needs no card, so callers ask before they read.
 fm_machine_exists() { [ -f "$(fm_machine_file)" ]; }
+
+# fm_machine_card_literal NAME ROLE FLEET TRANSPORT WORKLOAD WORKSPACE
+#
+# The identity card as JSON text, built without jq. WORKLOAD may be empty, in
+# which case the key is omitted — the same shape `machine init` produces.
+#
+# Two callers write cards. `machine init` runs on a provisioned host and builds
+# the document with `jq -n`, which cannot emit malformed JSON. `flash` runs on an
+# operator's laptop, writing the card into a cloud-init seed before the machine
+# it describes exists, and jq is not a dependency that path can assume. So flash
+# builds the same document by hand — and a hand-built JSON document is exactly
+# what drifted: a `\"` that survived a heredoc shipped a card no reader could
+# parse, which resolved a Jetson to `workstation` and stopped it provisioning.
+#
+# Building it here rather than inline in flash gives that path one emitter with a
+# test against it, and test-machine.sh asserts this agrees with the jq writer
+# field for field.
+fm_machine_card_literal() {
+  local name="$1" role="$2" fleet="$3" transport="$4" workload="$5" workspace="$6"
+  printf '{\n'
+  printf '  "schema_version": %s,\n' "$FM_MACHINE_SCHEMA_VERSION"
+  printf '  "name": "%s",\n' "$name"
+  printf '  "role": "%s",\n' "$role"
+  printf '  "fleet": "%s",\n' "$fleet"
+  printf '  "transport": "%s",\n' "$transport"
+  [ -n "$workload" ] && printf '  "workload": "%s",\n' "$workload"
+  printf '  "workspace": "%s"\n' "$workspace"
+  printf '}\n'
+}
 
 # fm_machine_get FIELD — echo one field from the card.
 #

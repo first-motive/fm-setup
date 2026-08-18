@@ -366,16 +366,14 @@ write_files:
   - path: $FM_MACHINE_FILE_LINUX
     permissions: "0644"
     content: |
-      {
-        "schema_version": $FM_MACHINE_SCHEMA_VERSION,
-        "name": "$MACHINE_NAME",
-        "role": "jetson",
-        "fleet": "$MACHINE_FLEET",
-        "transport": "$MACHINE_TRANSPORT",${MACHINE_WORKLOAD:+
-        \"workload\": \"$MACHINE_WORKLOAD\",}
-        "workspace": "$MACHINE_WORKSPACE"
-      }
 EOF
+  # The card comes from lib.sh's one emitter, indented into the YAML block the
+  # same way the first-boot script below is. It used to be written inline here,
+  # which is how a backslash meant for a heredoc ended up inside the JSON and
+  # shipped a card no reader could parse.
+  fm_machine_card_literal \
+    "$MACHINE_NAME" jetson "$MACHINE_FLEET" "$MACHINE_TRANSPORT" \
+    "$MACHINE_WORKLOAD" "$MACHINE_WORKSPACE" | sed 's/^/      /'
   if [ "$PROVISION" = 1 ]; then
     cat <<EOF
   - path: /usr/local/sbin/fm-first-boot.sh
