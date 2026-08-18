@@ -2,7 +2,7 @@
   "_fm_render": {
     "artifact": "render-lock",
     "origin": "rendered by the First Motive render plane \u2014 edit the upstream source, not this file",
-    "sha256": "cb5e6b47d1f70f78efe57f052d7111e61815ee5b72b18366cee37ff6ca2515bf"
+    "sha256": "bbd7ff69b8e694e1e30d8baa2f911ddfbf8f1db82a0e84bd5ebbca0c7dc8f796"
   },
   "artifacts": {
     "agents-invariants": {
@@ -43,6 +43,14 @@
         ".fm/render-check.py"
       ],
       "sha256": "d3b89f3d4b4027bc004832465bd2b0d4f2d59801a29b3624bdf8a0c2bd7e9e47",
+      "stamp": "hash"
+    },
+    "rosdep-update": {
+      "mode": "file",
+      "paths": [
+        ".fm/rosdep-update.sh"
+      ],
+      "sha256": "d86dea806e587927211b96115aa21b6cbef3b0af840b7b1dac8c6b5519c6dec9",
       "stamp": "hash"
     }
   },

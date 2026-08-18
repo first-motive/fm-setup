@@ -134,7 +134,17 @@ do_install() {
     fm_log "rosdep init"
     sudo rosdep init
   fi
-  rosdep update
+
+  # Not a bare `rosdep update`. It fetches its sources unauthenticated from
+  # raw.githubusercontent.com and exits non-zero if any one of them is throttled,
+  # including a ROS 1 Fuerte source nothing here consumes. Under `set -e` that
+  # aborts this step — and an abort here is not a failed build, it is a rig left
+  # provisioned up to ROS and no further, on a timer nobody is watching.
+  #
+  # The helper is rendered from the First Motive render plane, so the CI
+  # workflows and this step run the same code.
+  fm_log "rosdep update"
+  "$_here/../../.fm/rosdep-update.sh" "$(ros_distro)"
 
   # A login shell that does not source the distro leaves `ros2` missing and
   # every ROS command failing for a reason nobody guesses quickly.
