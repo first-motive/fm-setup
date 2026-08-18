@@ -43,6 +43,29 @@ FM_ROOT="$(cd "$_here/../.." && pwd)"
 # tag is moved afterwards.
 FM_SETUP_INSTALL_URL="$FM_SETUP_RAW_BASE/$(fm_release_tag "$FM_ROOT")/install.sh"
 
+# The workspace layer's ref, resolved the same way and at the same moment. This
+# repo's tag is read from its own install.sh; fm_ros2's has to be asked of the
+# remote, because there is no fm_ros2 checkout here to read it from. Newest v*
+# tag wins, git does the version sort.
+#
+# No tag is a real answer, not an error: a repo that has never been released has
+# nothing to pin to, and refusing to flash would be worse than saying so. That
+# path falls back to main and says which it took, because the difference is the
+# whole point of this line.
+fm_ros2_ref() {
+  local tag
+  tag="$(git ls-remote --refs --tags --sort=-v:refname "$FM_ROS2_REPO_URL" 'v*' 2>/dev/null \
+    | awk -F/ 'NR==1{print $NF}')"
+  if [ -n "$tag" ]; then
+    printf '%s\n' "$tag"
+  else
+    fm_warn "fm_ros2 has no v* tag — the workspace layer will install from main"
+    printf 'main\n'
+  fi
+}
+
+FM_ROS2_INSTALL_URL="$FM_ROS2_RAW_BASE/$(fm_ros2_ref)/install.sh"
+
 CACHE_DIR="${FM_FLASH_CACHE:-$HOME/.cache/fm-setup}"
 IMAGE_XZ="$CACHE_DIR/$(basename "$FM_JETSON_IMAGE_URL")"
 IMAGE_RAW="${IMAGE_XZ%.xz}"
@@ -561,6 +584,13 @@ print_plan() {
   fi
   if [ "$PROVISION" = 1 ]; then
     fm_info "boot      fm-setup --jetson${GH_TOKEN:+, then fm_ros2 --recorder --service}"
+    # The two refs this card will carry. Printed because "reproducible" is a
+    # claim about exactly these, and a plan that hides them cannot be checked
+    # against the release anyone thinks they are flashing.
+    local setup_ref ros2_ref
+    setup_ref="${FM_SETUP_INSTALL_URL#"$FM_SETUP_RAW_BASE"/}"; setup_ref="${setup_ref%/install.sh}"
+    ros2_ref="${FM_ROS2_INSTALL_URL#"$FM_ROS2_RAW_BASE"/}";   ros2_ref="${ros2_ref%/install.sh}"
+    fm_info "refs      fm-setup $setup_ref · fm_ros2 $ros2_ref"
     [ -n "$GH_TOKEN" ] || fm_info "          (no --gh-token: recorder deferred to ~/NEXT-STEP.md)"
   else
     fm_info "boot      identity only (--no-provision)"
