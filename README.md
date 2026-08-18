@@ -161,6 +161,12 @@ when `--gh-token` (a read-only fine-grained PAT) was baked at flash time;
 without one, first boot stops after the machine layer and leaves the remaining
 one-liner in `~/NEXT-STEP.md` on the appliance.
 
+Both layers are pinned to a release tag, resolved at flash time and baked into
+the card: this repo's from its own `install.sh`, fm_ros2's from the newest `v*`
+tag on its remote. A card therefore provisions the same way in a month as it
+does today, whatever has merged since. `flash --dry-run` prints both refs, since
+that claim is only worth anything if you can read which two it means.
+
 | flag | effect |
 | --- | --- |
 | `--device` | target disk, whole device; internal disks are refused |

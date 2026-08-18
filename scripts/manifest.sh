@@ -420,5 +420,11 @@ FM_JETSON_USER=fm
 # itself from whatever had merged that morning. An appliance nobody is standing
 # next to is the last place an unreleased commit should land, and the first
 # place it would go unnoticed.
+#
+# The workspace layer is a base for the same reason, resolved the same way. It
+# read `main` while the paragraph above was already written about the other half:
+# the argument applied to one of the two layers and not to its neighbour, so a
+# card pinned its machine layer and left the ROS stack floating.
 FM_SETUP_RAW_BASE="https://raw.githubusercontent.com/first-motive/fm-setup"
-FM_ROS2_INSTALL_URL="https://raw.githubusercontent.com/first-motive/fm-ros2/main/install.sh"
+FM_ROS2_RAW_BASE="https://raw.githubusercontent.com/first-motive/fm-ros2"
+FM_ROS2_REPO_URL="https://github.com/first-motive/fm-ros2.git"
