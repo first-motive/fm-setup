@@ -19,6 +19,15 @@ _here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 fm_require_linux
 
+# The account whose docker-group membership this step reports on and manages.
+#
+# $USER is set by a login shell and by systemd for a unit with User=, and by
+# neither a bare `docker run`, a cron entry, nor a plain `sh -c`. Under `set -u`
+# a missing $USER does not degrade the report — it aborts the step, and this
+# step is one of fourteen the appliance timer runs unattended. `id -un` answers
+# the same question without depending on the caller's environment.
+USER="${USER:-$(id -un)}"
+
 KEYRING=/etc/apt/keyrings/docker.asc
 SOURCES=/etc/apt/sources.list.d/docker.sources
 
