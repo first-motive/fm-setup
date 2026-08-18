@@ -27,7 +27,11 @@ in_group()     { id -nG "$1" 2>/dev/null | tr ' ' '\n' | grep -qx "$2"; }
 
 # Echo the admin account: whoever is behind the sudo that started this run.
 # FM_ADMIN_USER overrides it for a provisioning run driven from another account.
-admin_user() { printf '%s\n' "${FM_ADMIN_USER:-${SUDO_USER:-$USER}}"; }
+#
+# `id -un` closes the chain rather than $USER, which a login shell sets and an
+# unattended caller does not. Under `set -u` an unset $USER aborts this step
+# instead of degrading it, and the appliance timer runs this step unattended.
+admin_user() { printf '%s\n' "${FM_ADMIN_USER:-${SUDO_USER:-${USER:-$(id -un)}}}"; }
 
 do_check() {
   local admin members

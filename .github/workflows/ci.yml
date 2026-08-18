@@ -63,6 +63,24 @@ jobs:
           FM_REHEARSE_PLATFORM: linux/amd64
         run: ./scripts/dev/rehearse.sh jetson
 
+  # scripts/update.sh is what fm_ros2's appliance timer runs, as root, on every
+  # rig, the moment this repo's newest v* tag moves. Nothing used to run it: CI
+  # shellchecked it, and `rehearse` exercises install.sh --only base-deps,fm-cli,ros2
+  # — a different entry point and three of the fourteen steps.
+  #
+  # A tag cut is the one action here with no undo, so the path it triggers is the
+  # one that most needs a check. This runs the real entry point in a container,
+  # for both roles, carded and uncarded. `--check` is read-only, which is how it
+  # can cover all fourteen steps where a rehearsal can only afford three.
+  converge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - name: Rehearse the converge entry point
+        env:
+          FM_REHEARSE_PLATFORM: linux/amd64
+        run: ./scripts/dev/converge-check.sh
+
   # The identity card is a cross-repo contract: fm-tools resolves the workspace
   # root from it, fm-comms renders zenoh's config from it, fm_ros2 derives its
   # namespace from it, and fm-desktop chooses engineer or client mode on whether

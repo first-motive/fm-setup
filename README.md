@@ -381,6 +381,27 @@ apt tree of the real release, which is enough to catch the failures that
 actually happen: a repo that 404s, a package renamed between releases, a step
 whose control flow does not survive to the end.
 
+### Rehearsing The Converge
+
+`scripts/update.sh` is a different entry point, and a more dangerous one: it is
+what fm_ros2's appliance timer runs, as root, on every rig, the moment this
+repo's newest `v*` tag moves. `scripts/dev/converge-check.sh` runs that entry
+point in a container:
+
+```bash
+./scripts/dev/converge-check.sh             # both roles
+./scripts/dev/converge-check.sh jetson      # one role
+```
+
+Per role it proves the card decides the role, that a machine with no card still
+resolves one by detection, and that `install.sh --check` reports on every step.
+`--check` changes nothing, which is why this can cover all fourteen steps where
+a rehearsal can only afford three.
+
+Run it before cutting a release tag. A tag here is the one action in this repo
+with no undo — it reaches every rig unattended — so the path it triggers is the
+one that most needs to have been run somewhere first.
+
 Each run finishes by starting a node under every RMW in `FM_ROS_RMW_REQUIRED`.
 That check exists because apt is satisfied by any one RMW provider: a role whose
 list names Cyclone but not FastDDS installs cleanly, reports nothing, and then
@@ -415,7 +436,8 @@ where a gap in its package list is found by someone standing next to a board.
 | `FM_GH_TOKEN` | org token `./run.sh flash` bakes into a card, without it reaching history or the process table |
 | `FM_TS_AUTHKEY` | tailnet authkey for the same, on the same terms |
 | `FM_FLASH_CACHE` | where `./run.sh flash` keeps the downloaded image (default `~/.cache/fm-setup`) |
-| `FM_REHEARSE_PLATFORM` | container platform for `rehearse.sh` (default `linux/arm64`; CI sets `linux/amd64` to run native) |
+| `FM_REHEARSE_PLATFORM` | container platform for `rehearse.sh` and `converge-check.sh` (default `linux/arm64`; CI sets `linux/amd64` to run native) |
+| `FM_CONVERGE_IMAGE` | container image for `converge-check.sh` (default `ubuntu:22.04`) |
 
 ## License
 
