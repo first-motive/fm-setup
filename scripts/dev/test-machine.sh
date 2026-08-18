@@ -23,6 +23,10 @@ _here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="$(cd "$_here/../.." && pwd)"
 # shellcheck source=../../lib.sh disable=SC1091
 . "$FM_ROOT/lib.sh"
+# The card emitter reads the schema version from the manifest, as every writer
+# does. machine.sh sources it for itself, so only the in-process cases need this.
+# shellcheck source=../manifest.sh disable=SC1091
+. "$FM_ROOT/scripts/manifest.sh"
 
 MACHINE="$FM_ROOT/scripts/run/machine.sh"
 
@@ -196,6 +200,62 @@ card init --role jetson --name fm-rec-03 >/dev/null
 assert_eq "card exists before reset" "yes" "$(fm_machine_exists && echo yes || echo no)"
 card reset -y >/dev/null
 assert_eq "reset removes the card"   "no"  "$(fm_machine_exists && echo yes || echo no)"
+
+# --- The flashed card -------------------------------------------------------
+#
+# `flash` seeds a card before the machine exists, without jq. That writer shipped
+# a card no reader could parse: a `\"` meant for a heredoc landed inside the
+# JSON, `jq` refused the file, the role fell back to detection, and the rig
+# provisioned as nothing at all. These assert the emitter produces JSON, and that
+# it agrees with the jq writer rather than drifting beside it.
+
+literal="$(fm_machine_card_literal fm-rec-09 jetson canary zenoh recorder /home/fm/fm)"
+assert_eq "flashed card is valid JSON" "ok" \
+  "$(printf '%s' "$literal" | jq -e . >/dev/null 2>&1 && echo ok || echo INVALID)"
+assert_eq "flashed card carries the role" "jetson" \
+  "$(printf '%s' "$literal" | jq -r .role)"
+assert_eq "flashed card carries the workload" "recorder" \
+  "$(printf '%s' "$literal" | jq -r .workload)"
+
+bare="$(fm_machine_card_literal fm-rec-09 jetson canary zenoh "" /home/fm/fm)"
+assert_eq "flashed card is valid JSON with no workload" "ok" \
+  "$(printf '%s' "$bare" | jq -e . >/dev/null 2>&1 && echo ok || echo INVALID)"
+assert_eq "workload key omitted when empty" "false" \
+  "$(printf '%s' "$bare" | jq 'has("workload")')"
+
+# The two writers must describe one document. Compared as parsed JSON, so
+# whitespace and key order are not what is being asserted.
+card init --role jetson --name fm-rec-09 --fleet canary --transport zenoh \
+  --workload recorder --workspace /home/fm/fm >/dev/null
+assert_eq "both card writers agree" "same" \
+  "$([ "$(jq -S . "$FM_MACHINE_FILE")" = "$(printf '%s' "$literal" | jq -S .)" ] && echo same || echo DIFFERENT)"
+
+# --- Role detection ---------------------------------------------------------
+#
+# Wrong here is not a mild misdetection: a Jetson resolved as `workstation`
+# targets another Ubuntu and another ROS distro, and does not provision at all.
+# An Orin Nano says "tegra" in its compatible string and not in its model.
+
+dt="$TMP/dt" && mkdir -p "$dt"
+printf 'nvidia,p3768-0000+p3767-0005-super\0nvidia,tegra234\0' > "$dt/compatible"
+printf 'NVIDIA Jetson Orin Nano Engineering Reference Developer Kit Super\0' > "$dt/model"
+assert_eq "orin nano detects as jetson" "jetson" "$(FM_DEVICE_TREE="$dt" fm_detect_role)"
+
+dt2="$TMP/dt2" && mkdir -p "$dt2"
+printf 'nvidia,tegra234\0' > "$dt2/compatible"
+assert_eq "compatible alone is enough" "jetson" "$(FM_DEVICE_TREE="$dt2" fm_detect_role)"
+
+dt3="$TMP/dt3" && mkdir -p "$dt3"
+printf 'Some Jetson Board\0' > "$dt3/model"
+assert_eq "model alone is enough" "jetson" "$(FM_DEVICE_TREE="$dt3" fm_detect_role)"
+
+dt4="$TMP/dt4" && mkdir -p "$dt4"
+printf 'Dell Precision 7960 Tower\0' > "$dt4/model"
+printf 'dell,precision-7960\0' > "$dt4/compatible"
+assert_eq "a tower is not a jetson" "workstation" "$(FM_DEVICE_TREE="$dt4" fm_detect_role)"
+
+dt5="$TMP/dt5" && mkdir -p "$dt5"
+assert_eq "no device tree at all is a workstation" "workstation" "$(FM_DEVICE_TREE="$dt5" fm_detect_role)"
 
 # --- Result -----------------------------------------------------------------
 
