@@ -139,9 +139,17 @@ FM_MACHINE_WORKSPACE_DEFAULT="$HOME/fm"
 FM_SETUP_CHECKOUT_NAME=fm-setup
 
 # Where the curl bootstrap used to put the checkout, before the workspace was a
-# declared fact rather than a per-repo habit. Named so the workspace step can
-# recognise and adopt one instead of leaving a second copy of this repo on disk
-# for someone to edit by mistake; nothing writes here any more.
+# declared fact rather than a per-repo habit. Named so the bootstrap can adopt
+# one instead of leaving a second copy of this repo on disk for someone to edit
+# by mistake.
+#
+# Read-only by now: the bootstrap resolves the checkout through fm_setup_dir,
+# which is always <workspace>/fm-setup, and only ever moves a directory found
+# here into it. Two steps in the curl-pipe CI job hold both halves — that the
+# unpinned default lands in the workspace, and that a checkout already here is
+# adopted rather than duplicated — because the drift this comment used to
+# describe was a comment, a bootstrap, and a check each claiming something
+# different.
 FM_SETUP_LEGACY_DIR="$HOME/.first-motive/fm-setup"
 
 # --- Target OS -------------------------------------------------------------

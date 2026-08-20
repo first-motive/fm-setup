@@ -159,6 +159,59 @@ jobs:
           esac
           test -d "$FM_SETUP_DIR/.git"
 
+      # Every other step here pins FM_SETUP_DIR, which is the one thing a real
+      # curl-pipe never does. The bootstrap used to put the checkout in
+      # ~/.first-motive, outside the workspace the fm CLI reads, and 12-workspace
+      # then warned about it on every converge — a permanent warning on a
+      # correctly provisioned rig. Resolve the default, with nothing pinned, and
+      # hold it inside the workspace.
+      - name: With nothing pinned, the checkout lands in the workspace
+        run: |
+          home="$(mktemp -d)"
+          # Piped, not invoked by path: a script that can resolve its own
+          # checkout skips the bootstrap entirely, which is the code under test.
+          cd /tmp
+          cat "$GITHUB_WORKSPACE/install.sh" | env -u FM_SETUP_DIR HOME="$home" \
+            FM_SELFTEST=1 \
+            FM_NO_MODIFY_PATH=1 \
+            FM_TAG="$FM_TAG" \
+            FM_RAW_BASE="file://$GITHUB_WORKSPACE" \
+            FM_GIT_URL=/tmp/fm-setup-src \
+            FM_LIB_SHA256="$(sha256sum "$GITHUB_WORKSPACE/lib.sh" | cut -d' ' -f1)" \
+            bash
+          test -d "$home/fm/fm-setup/.git" || {
+            echo "the default checkout is not at \$HOME/fm/fm-setup:"
+            find "$home" -maxdepth 3 -name fm-setup
+            exit 1
+          }
+          # The legacy location is legacy: adopted when found, never created.
+          if [ -e "$home/.first-motive/fm-setup" ]; then
+            echo "the bootstrap wrote to the legacy directory"
+            exit 1
+          fi
+
+      # A checkout already at the legacy path is moved into the workspace, with a
+      # symlink left behind. That is the half of the contract that keeps an
+      # already-flashed rig working, so it is held here too.
+      - name: A legacy checkout is adopted, not duplicated
+        run: |
+          home="$(mktemp -d)"
+          mkdir -p "$home/.first-motive"
+          git clone --quiet /tmp/fm-setup-src "$home/.first-motive/fm-setup"
+          cd /tmp
+          cat "$GITHUB_WORKSPACE/install.sh" | env -u FM_SETUP_DIR HOME="$home" \
+            FM_SELFTEST=1 \
+            FM_NO_MODIFY_PATH=1 \
+            FM_TAG="$FM_TAG" \
+            FM_RAW_BASE="file://$GITHUB_WORKSPACE" \
+            FM_GIT_URL=/tmp/fm-setup-src \
+            FM_LIB_SHA256="$(sha256sum "$GITHUB_WORKSPACE/lib.sh" | cut -d' ' -f1)" \
+            bash
+          test -d "$home/fm/fm-setup/.git" || {
+            echo "the legacy checkout was not adopted into the workspace"; exit 1; }
+          test -L "$home/.first-motive/fm-setup" || {
+            echo "no symlink left at the legacy path"; exit 1; }
+
       - name: A moved tag is caught by the pinned commit
         run: |
           rm -rf "$FM_SETUP_DIR"
