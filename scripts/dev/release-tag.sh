@@ -98,7 +98,7 @@ do_set() { # new-tag
       fm_ok "$file -> $new"
     fi
   done
-  fm_info "commit this, then cut the tag: git tag $new && git push origin $new"
+  fm_info "commit this on a branch, merge the pull request, then: scripts/dev/cut-release.sh --apply"
 }
 
 main() {
