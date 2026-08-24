@@ -152,7 +152,7 @@ read -rs FM_GH_TOKEN && export FM_GH_TOKEN      # token, without leaking it
 fm flash --device /dev/disk4
 ```
 
-![bring-up](docs/diagrams/bringup.svg)
+![one-shot flash](docs/diagrams/one_shot_flash.svg)
 
 The card boots as `fm@fm-jetson` — SSH keys injected, password login locked —
 and provisions itself: this repo's jetson role, then fm_ros2's recorder service.
