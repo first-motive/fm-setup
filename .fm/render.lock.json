@@ -2,7 +2,7 @@
   "_fm_render": {
     "artifact": "render-lock",
     "origin": "rendered by the First Motive render plane \u2014 edit the upstream source, not this file",
-    "sha256": "f2fa862577bd8ec832ebe3751e04319914e5691b55a2d66ea1334aa9878ed658"
+    "sha256": "5de3b5aaf68d1bb8d91672520e71d0d562680b1fe77a6548ddccb048d5659b65"
   },
   "artifacts": {
     "agents-invariants": {
@@ -26,7 +26,7 @@
       "paths": [
         "docs/diagrams/render.sh"
       ],
-      "sha256": "b7cce2f4d9b4155c4fa5ca1eeff249eb76b8c4bfde53a652e77e7d25ff9bd9c4",
+      "sha256": "d3e26de6631f1c40ac0029659c407960d8818f4b1384b3f4cf2857f0c74c4c61",
       "stamp": "hash"
     },
     "d2-styles": {
