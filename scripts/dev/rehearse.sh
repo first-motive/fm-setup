@@ -87,6 +87,7 @@ rehearse() {
       printf "#!/bin/sh\nexec env \"\$@\"\n" > /usr/local/bin/sudo
       chmod +x /usr/local/bin/sudo
       apt-get update -qq >/dev/null 2>&1
+      bash /fm-setup/scripts/dev/seed-ros-source.sh '"$role"'
       bash /fm-setup/install.sh --'"$role"' --only '"$steps"' -y
       bash /fm-setup/scripts/internal/verify-rmw.sh
     '
