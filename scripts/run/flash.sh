@@ -150,17 +150,6 @@ EOF
 
 # --- Small helpers ----------------------------------------------------------
 
-# Quote a value for YAML: double-quoted, with backslash, quote, and newline
-# escaping — a newline smuggled into an ssid/psk must not become YAML structure.
-yaml_quote() {
-  local s="$1"
-  s="${s//\\/\\\\}"
-  s="${s//\"/\\\"}"
-  s="${s//$'\n'/\\n}"
-  s="${s//$'\r'/\\r}"
-  printf '"%s"' "$s"
-}
-
 require_sane_name() {
   # LC_ALL=C: a glob range follows the locale's collation, and under a UTF-8
   # locale a-z also matches uppercase — which would let an uppercase hostname
@@ -277,175 +266,42 @@ collect_ssh_keys() {
   printf '%s' "$keys"
 }
 
-build_network_config() {
-  cat <<EOF
-# Seeded by fm-setup (./run.sh flash). Ethernet always; wifi when creds given.
-version: 2
-ethernets:
-  all-eth:
-    match: {name: "e*"}
-    dhcp4: true
-    optional: true
-EOF
-  if [ -n "$WIFI_SSID" ]; then
-    cat <<EOF
-wifis:
-  all-wl:
-    match: {name: "wl*"}
-    dhcp4: true
-    optional: true
-    access-points:
-      $(yaml_quote "$WIFI_SSID"):
-        password: $(yaml_quote "$WIFI_PSK")
-EOF
-  fi
-}
-
-# The first-boot script cloud-init writes to the appliance and runs once.
+# Stage the seed files, secrets included, under a 0700 dir the EXIT trap
+# removes. What goes in them is the role's business, not this script's: each
+# schema lives in scripts/internal/seed-<role>.sh, which CI can build and
+# validate on its own rather than only through a 5 GB image write.
 #
-# A failed layer stops the chain and leaves a marker (FM_FIRST_BOOT_FAILED,
-# read by `machine doctor`) naming the step. It never prints "done" after a
-# failure: an unattended rig that fails and reports done is the omission class
-# this repo exists to remove (#28). SSH is up before this script runs, so
-# stopping here still leaves a reachable rig.
-build_first_boot_script() {
-  cat <<EOF
-#!/usr/bin/env bash
-set -uo pipefail
-exec >>/var/log/fm-first-boot.log 2>&1
-echo "== fm first boot: \$(date) =="
-export NONINTERACTIVE=1
-rm -f "$FM_FIRST_BOOT_FAILED"
-fail() {
-  mkdir -p "\$(dirname "$FM_FIRST_BOOT_FAILED")"
-  printf '%s\\n' "\$1" >"$FM_FIRST_BOOT_FAILED"
-  echo "== fm first boot FAILED at: \$1 (\$(date)) =="
-  exit 1
-}
-EOF
-  if [ -n "$GH_TOKEN" ]; then
-    cat <<EOF
-install -o "$NEW_USER" -g "$NEW_USER" -m 0600 /dev/null "/home/$NEW_USER/.git-credentials"
-printf 'https://x-access-token:%s@github.com\n' '$GH_TOKEN' >"/home/$NEW_USER/.git-credentials"
-sudo -u "$NEW_USER" -H git config --global credential.helper store
-EOF
-  fi
-  cat <<EOF
-echo "-- machine layer: fm-setup --jetson"
-machine_rc=0
-sudo -u "$NEW_USER" -H bash -c 'curl -fsSL --proto "=https" $FM_SETUP_INSTALL_URL | bash -s -- --jetson -y' || machine_rc=\$?
-EOF
-  # The join runs before the machine layer's failure is acted on: a rig that
-  # failed mid-provision is worth far more on the tailnet than off it, and the
-  # tailscale step sits early enough in the role that a later failure leaves
-  # the binary in place (#28).
-  if [ -n "$TS_AUTHKEY" ]; then
-    cat <<EOF
-echo "-- tailscale join"
-if command -v tailscale >/dev/null; then
-  tailscale up --ssh --authkey '$TS_AUTHKEY' || echo "tailscale join failed; run 'sudo tailscale up --ssh' by hand"
-else
-  echo "tailscale not installed — join skipped"
-fi
-EOF
-  fi
-  cat <<EOF
-[ "\$machine_rc" -eq 0 ] || fail "machine layer (fm-setup --jetson, exit \$machine_rc)"
-EOF
-  if [ -n "$GH_TOKEN" ]; then
-    cat <<EOF
-echo "-- workspace layer: fm_ros2 --recorder --service"
-sudo -u "$NEW_USER" -H bash -c 'mkdir -p $MACHINE_WORKSPACE && cd $MACHINE_WORKSPACE && curl -fsSL --proto "=https" $FM_ROS2_INSTALL_URL | bash -s -- --recorder --service' \
-  || fail "workspace layer (fm_ros2 --recorder --service)"
-EOF
-  else
-    cat <<EOF
-cat >"/home/$NEW_USER/NEXT-STEP.md" <<'NOTE'
-Machine layer is provisioned. The recorder needs first-motive org access:
-  gh auth login    # or place an SSH key
-  mkdir -p $MACHINE_WORKSPACE && cd $MACHINE_WORKSPACE
-  curl -fsSL --proto "=https" $FM_ROS2_INSTALL_URL | bash -s -- --recorder --service
-NOTE
-chown "$NEW_USER:$NEW_USER" "/home/$NEW_USER/NEXT-STEP.md"
-echo "-- no --gh-token: recorder install deferred (see ~/NEXT-STEP.md)"
-EOF
-  fi
-  cat <<EOF
-echo "== fm first boot done: \$(date) =="
-EOF
-}
-
-build_user_data() {
-  cat <<EOF
-#cloud-config
-# Seeded by fm-setup (./run.sh flash). One appliance, no wizard.
-hostname: $NEW_HOSTNAME
-manage_etc_hosts: true
-ssh_pwauth: false
-package_update: true
-# avahi-daemon earns its place: the image resolves hosts through "files dns"
-# only, so without it $NEW_HOSTNAME.local answers nowhere and the appliance is
-# reachable by IP alone — on a rig that is handed over screenless, that is the
-# difference between working and lost. Installed before runcmd, so the
-# provisioning chain is already followable over .local.
-packages: [curl, git, avahi-daemon, libnss-mdns]
-users:
-  - name: $NEW_USER
-    gecos: First Motive appliance
-    groups: [adm, sudo, dialout, video, plugdev]
-    shell: /bin/bash
-    lock_passwd: true
-    # Appliance owner on a single-purpose box; the install chain and the
-    # auto-updater both need root without a console to type a password into.
-    sudo: ALL=(ALL) NOPASSWD:ALL
-    ssh_authorized_keys:
-EOF
-  local line
-  while IFS= read -r line; do
-    [ -n "$line" ] && printf '      - %s\n' "$line"
-  done <<<"$SSH_KEYS"
-  # The identity card is seeded whether or not the install chain runs. It is
-  # what the machine *is*, not part of provisioning it: a card-less rig cannot
-  # derive a namespace, does not know its own workspace, and cannot be told
-  # apart from the next rig off the same command.
-  cat <<EOF
-write_files:
-  - path: $FM_MACHINE_FILE_LINUX
-    permissions: "0644"
-    content: |
-EOF
-  # The card comes from lib.sh's one emitter, indented into the YAML block the
-  # same way the first-boot script below is. It used to be written inline here,
-  # which is how a backslash meant for a heredoc ended up inside the JSON and
-  # shipped a card no reader could parse.
-  fm_machine_card_literal \
-    "$MACHINE_NAME" jetson "$MACHINE_FLEET" "$MACHINE_TRANSPORT" \
-    "$MACHINE_WORKLOAD" "$MACHINE_WORKSPACE" | sed 's/^/      /'
-  if [ "$PROVISION" = 1 ]; then
-    cat <<EOF
-  - path: /usr/local/sbin/fm-first-boot.sh
-    permissions: "0700"
-    content: |
-EOF
-    build_first_boot_script | sed 's/^/      /'
-    cat <<EOF
-runcmd:
-  - [bash, /usr/local/sbin/fm-first-boot.sh]
-EOF
-  fi
-}
-
-# Stage the three seed files, secrets included, under a 0700 dir the EXIT trap
-# removes.
+# The two secrets travel in the environment rather than on the command line,
+# because an argument to a child process is readable from the process table by
+# any local account for as long as the child lives.
 stage_seed() {
   SEED_DIR="$(mktemp -d "$CACHE_DIR/.seed.XXXXXX")"
   chmod 700 "$SEED_DIR"
-  build_user_data >"$SEED_DIR/user-data"
-  build_network_config >"$SEED_DIR/network-config"
-  cat >"$SEED_DIR/meta-data" <<EOF
-dsmode: local
-instance_id: $NEW_HOSTNAME
-EOF
+  local keys_file="$SEED_DIR/.authorized-keys"
+  ( umask 077; printf '%s' "$SSH_KEYS" >"$keys_file" )
+
+  local args=(
+    --out "$SEED_DIR"
+    --name "$MACHINE_NAME"
+    --user "$NEW_USER"
+    --fleet "$MACHINE_FLEET"
+    --transport "$MACHINE_TRANSPORT"
+    --workspace "$MACHINE_WORKSPACE"
+    --authorized-keys "$keys_file"
+    --setup-url "$FM_SETUP_INSTALL_URL"
+    --ros2-url "$FM_ROS2_INSTALL_URL"
+  )
+  if [ -n "$MACHINE_WORKLOAD" ]; then args+=(--workload "$MACHINE_WORKLOAD"); fi
+  if [ "$PROVISION" != 1 ]; then args+=(--no-provision); fi
+
+  FM_GH_TOKEN="$GH_TOKEN" \
+  FM_TS_AUTHKEY="$TS_AUTHKEY" \
+  FM_FLASH_WIFI="${WIFI_SSID:+$WIFI_SSID:$WIFI_PSK}" \
+    bash "$FM_ROOT/scripts/internal/seed-jetson.sh" "${args[@]}"
+
+  # The keys are in user-data by now; the staging copy is not seed content and
+  # must not reach the card.
+  rm -f "$keys_file"
 }
 
 # --- Seed injection ---------------------------------------------------------
