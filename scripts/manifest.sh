@@ -313,7 +313,7 @@ FM_ROS_RMW_REQUIRED=(
 # fm-tools' own install.sh does. Pinned here rather than tracking latest: two
 # machines provisioned months apart should get the same CLI.
 FM_TOOLS_REPO=first-motive/fm-tools
-FM_TOOLS_VERSION=v0.4.1
+FM_TOOLS_VERSION=v0.8.1
 
 # uv installs the tool. It is not in Ubuntu's archive, so it comes from Astral's
 # installer, pinned to a version rather than "latest" for the same reason.
