@@ -79,7 +79,18 @@ gpu_smoke_test() {
 }
 
 do_install() {
-  fm_has_docker || { fm_err "docker is not reachable — run the docker step first"; return 1; }
+  if ! fm_has_docker; then
+    # Docker installed and running, but this user declined the docker group —
+    # the documented safe answer in the docker step. That is a skip, not a
+    # failure: the message used to claim docker was missing and abort the whole
+    # run (#32).
+    if fm_has_cmd docker && sudo -n docker info >/dev/null 2>&1; then
+      fm_skip "docker group declined — isaac-sim skipped; rerun after: sudo usermod -aG docker $(id -un) (then log back in)"
+      return 0
+    fi
+    fm_err "docker is not reachable — run the docker step first"
+    return 1
+  fi
 
   # Isaac Sim cannot run without the GPU reaching the container, so a failed
   # smoke test stops this step — but only this step. It reports and returns

@@ -100,6 +100,7 @@ do_install() {
   # that mounts the host filesystem. That is a deliberate grant, so it is asked
   # for rather than assumed, and an unattended run declines and says so.
   fm_warn "the docker group is equivalent to root — a member can mount the host filesystem into a container"
+  fm_info "declining is fine for the rig; on the workstation isaac-sim needs it and is skipped without it"
   if fm_confirm "Add $USER to the docker group?"; then
     sudo usermod -aG docker "$USER"
     fm_warn "$USER added to the docker group — log out and back in for it to take effect"
