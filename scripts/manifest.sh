@@ -313,7 +313,7 @@ FM_ROS_RMW_REQUIRED=(
 # fm-tools' own install.sh does. Pinned here rather than tracking latest: two
 # machines provisioned months apart should get the same CLI.
 FM_TOOLS_REPO=first-motive/fm-tools
-FM_TOOLS_VERSION=v0.4.1
+FM_TOOLS_VERSION=v0.8.1
 
 # uv installs the tool. It is not in Ubuntu's archive, so it comes from Astral's
 # installer, pinned to a version rather than "latest" for the same reason.
@@ -433,6 +433,11 @@ FM_JETSON_USER=fm
 # read `main` while the paragraph above was already written about the other half:
 # the argument applied to one of the two layers and not to its neighbour, so a
 # card pinned its machine layer and left the ROS stack floating.
+# Written by the first-boot script when a layer fails, holding the step's name.
+# `machine doctor` reads it, so a rig that stopped mid-provision says so on the
+# first command anyone runs rather than looking done from the outside.
+FM_FIRST_BOOT_FAILED=/var/lib/fm/first-boot-failed
+
 FM_SETUP_RAW_BASE="https://raw.githubusercontent.com/first-motive/fm-setup"
 FM_ROS2_RAW_BASE="https://raw.githubusercontent.com/first-motive/fm-ros2"
 FM_ROS2_REPO_URL="https://github.com/first-motive/fm-ros2.git"

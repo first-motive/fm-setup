@@ -107,6 +107,21 @@ _add_repo_inner() {
   sudo apt-get install -y "$deb"
 }
 
+# Whether any ROS 2 apt source is already on the host, in either format.
+#
+# Canonical's Tegra image ships one as deb822 (ros2.sources, key inline) before
+# fm-setup ever runs. Adding ours beside it defines the same repository twice
+# with two Signed-By values, and apt refuses the whole update — every later apt
+# step then fails. The existing source is trusted as-is: its package list is
+# identical, and replacing a file the image owns is not this step's business.
+ros_source_present() {
+  local f
+  for f in ros2.sources ros2-apt-source.list ros2-apt-source.sources ros2.list; do
+    [ -f "/etc/apt/sources.list.d/$f" ] && return 0
+  done
+  return 1
+}
+
 do_install() {
   local distro codename p missing=()
   distro="$(ros_distro)"
@@ -115,9 +130,11 @@ do_install() {
   fm_log "ROS 2 $distro on $codename"
   sudo add-apt-repository -y universe
 
-  [ -f /etc/apt/sources.list.d/ros2-apt-source.list ] \
-    || [ -f /etc/apt/sources.list.d/ros2.list ] \
-    || add_repo
+  if ros_source_present; then
+    fm_ok "ROS 2 apt source already present"
+  else
+    add_repo
+  fi
 
   while IFS= read -r p; do
     fm_has_pkg "$p" || missing+=("$p")

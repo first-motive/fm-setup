@@ -339,6 +339,14 @@ do_doctor() {
 
   fm_info "namespace  $(fm_machine_namespace "$(jq -r '.name' "$file")" 2>/dev/null || echo '—')"
 
+  # A flashed rig's first boot leaves this behind when a layer failed. Without
+  # it a half-provisioned appliance looks healthy from every other check here.
+  if [ -f "$FM_FIRST_BOOT_FAILED" ]; then
+    fm_err "first boot failed at: $(cat "$FM_FIRST_BOOT_FAILED")"
+    fm_info "see /var/log/fm-first-boot.log, then rerun: sudo /usr/local/sbin/fm-first-boot.sh"
+    problems=$((problems + 1))
+  fi
+
   if [ "$problems" -gt 0 ]; then
     fm_err "$problems problem(s)"
     return "$EX_PRECONDITION"
