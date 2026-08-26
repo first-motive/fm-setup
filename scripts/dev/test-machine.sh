@@ -146,6 +146,11 @@ assert_rc "valid_fleet rejects a space"        1 fm_machine_valid_fleet "two wor
 assert_rc "valid_fleet accepts a real fleet"   0 fm_machine_valid_fleet "bench-2"
 assert_rc "valid_name rejects uppercase abbrev" 1 fm_machine_valid_name "fm-REC-01"
 assert_rc "valid_name accepts a real name"      0 fm_machine_valid_name "fm-rec-01"
+# The workstation half of the same rule, now that `flash --role workstation`
+# writes cards too: fm-ws-01 is a workstation and nothing else.
+assert_rc "valid_name accepts a workstation name" 0 fm_machine_valid_name "fm-ws-01" workstation
+assert_rc "valid_name rejects a rig name for a workstation" 1 \
+  fm_machine_valid_name "fm-rec-01" workstation
 
 # --- Reading ----------------------------------------------------------------
 
