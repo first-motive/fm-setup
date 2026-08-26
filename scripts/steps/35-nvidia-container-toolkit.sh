@@ -43,8 +43,10 @@ do_check() {
 
 add_repo() {
   fm_log "adding the NVIDIA container toolkit apt repo"
+  # --batch --yes: a rerun after a mid-run failure finds the keyring already
+  # there, and gpg's overwrite prompt would hang an unattended install (#31).
   curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
-    | sudo gpg --dearmor -o "$KEYRING"
+    | sudo gpg --batch --yes --dearmor -o "$KEYRING"
   # gpg exits 0 on empty input, so a truncated fetch would leave an empty
   # keyring here and apt would then trust an unverifiable repo.
   if ! sudo test -s "$KEYRING"; then
@@ -66,8 +68,13 @@ do_install() {
     pinned+=("${p}=${FM_NVIDIA_CONTAINER_VERSION}")
   done
 
+  # A pin means this version whatever is installed now. The distro archive can
+  # seed a newer toolkit before this repo is added, and apt refuses to step
+  # back without --allow-downgrades (#33). The hold then keeps unattended
+  # upgrades from drifting the four packages apart again.
   fm_log "apt install ${pinned[*]}"
-  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "${pinned[@]}"
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --allow-downgrades "${pinned[@]}"
+  sudo apt-mark hold "${FM_NVIDIA_CONTAINER_APT[@]}" >/dev/null
 
   fm_log "configuring the docker runtime"
   sudo nvidia-ctk runtime configure --runtime=docker
@@ -82,6 +89,7 @@ do_uninstall() {
     fm_has_pkg "$p" && installed+=("$p")
   done
   if [ "${#installed[@]}" -gt 0 ]; then
+    sudo apt-mark unhold "${installed[@]}" >/dev/null
     fm_log "apt remove ${installed[*]}"
     sudo apt-get remove -y "${installed[@]}"
   fi
