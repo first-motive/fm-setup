@@ -30,6 +30,7 @@ WORKSTATION_STEPS=(
   "workspace|12-workspace.sh|on"
   "fm-cli|15-fm-cli.sh|on"
   "nvidia|20-nvidia.sh|on"
+  "no-snap|25-no-snap.sh|on"
   "docker|30-docker.sh|on"
   "nvidia-container|35-nvidia-container-toolkit.sh|on"
   "ros2|40-ros2.sh|on"
@@ -196,6 +197,21 @@ FM_NVIDIA_CONTAINER_APT=(
 
 # Image used by the documented GPU smoke test.
 FM_CUDA_SMOKE_IMAGE=nvidia/cuda:12.8.0-base-ubuntu22.04
+
+# --- Browser, without snap -------------------------------------------------
+
+# Mozilla's own apt repo. The archive's `firefox` package is a shim that
+# installs the snap, and a snapped browser cannot open a recording under /data
+# — the confinement is in the way of the work the workstation exists for.
+#
+# The key is pinned by fingerprint rather than trusted on TLS alone: it signs
+# the browser everyone on this machine types passwords into, and a repo signed
+# by the wrong key installs whatever it likes as root. Re-read it after a key
+# rotation with:
+#   gpg --show-keys --with-colons <keyring> | awk -F: '/^fpr:/ {print $10; exit}'
+FM_MOZILLA_APT_URL="https://packages.mozilla.org/apt"
+FM_MOZILLA_KEY_URL="https://packages.mozilla.org/apt/repo-signing-key.gpg"
+FM_MOZILLA_KEY_FPR=35BAA0B33E9EB396F59CA838C0BA5CE6DC6315A3
 
 # --- Docker ----------------------------------------------------------------
 
