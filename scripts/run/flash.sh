@@ -302,8 +302,12 @@ EOF
 }
 
 # The first-boot script cloud-init writes to the appliance and runs once.
-# Failures do not abort it — a rig with a half-finished install and a live SSH
-# door beats one that stopped before it was reachable.
+#
+# A failed layer stops the chain and leaves a marker (FM_FIRST_BOOT_FAILED,
+# read by `machine doctor`) naming the step. It never prints "done" after a
+# failure: an unattended rig that fails and reports done is the omission class
+# this repo exists to remove (#28). SSH is up before this script runs, so
+# stopping here still leaves a reachable rig.
 build_first_boot_script() {
   cat <<EOF
 #!/usr/bin/env bash
@@ -311,6 +315,13 @@ set -uo pipefail
 exec >>/var/log/fm-first-boot.log 2>&1
 echo "== fm first boot: \$(date) =="
 export NONINTERACTIVE=1
+rm -f "$FM_FIRST_BOOT_FAILED"
+fail() {
+  mkdir -p "\$(dirname "$FM_FIRST_BOOT_FAILED")"
+  printf '%s\\n' "\$1" >"$FM_FIRST_BOOT_FAILED"
+  echo "== fm first boot FAILED at: \$1 (\$(date)) =="
+  exit 1
+}
 EOF
   if [ -n "$GH_TOKEN" ]; then
     cat <<EOF
@@ -321,18 +332,31 @@ EOF
   fi
   cat <<EOF
 echo "-- machine layer: fm-setup --jetson"
-sudo -u "$NEW_USER" -H bash -c 'curl -fsSL --proto "=https" $FM_SETUP_INSTALL_URL | bash -s -- --jetson -y'
+machine_rc=0
+sudo -u "$NEW_USER" -H bash -c 'curl -fsSL --proto "=https" $FM_SETUP_INSTALL_URL | bash -s -- --jetson -y' || machine_rc=\$?
 EOF
+  # The join runs before the machine layer's failure is acted on: a rig that
+  # failed mid-provision is worth far more on the tailnet than off it, and the
+  # tailscale step sits early enough in the role that a later failure leaves
+  # the binary in place (#28).
   if [ -n "$TS_AUTHKEY" ]; then
     cat <<EOF
 echo "-- tailscale join"
-tailscale up --ssh --authkey '$TS_AUTHKEY' || echo "tailscale join failed; run 'sudo tailscale up --ssh' by hand"
+if command -v tailscale >/dev/null; then
+  tailscale up --ssh --authkey '$TS_AUTHKEY' || echo "tailscale join failed; run 'sudo tailscale up --ssh' by hand"
+else
+  echo "tailscale not installed — join skipped"
+fi
 EOF
   fi
+  cat <<EOF
+[ "\$machine_rc" -eq 0 ] || fail "machine layer (fm-setup --jetson, exit \$machine_rc)"
+EOF
   if [ -n "$GH_TOKEN" ]; then
     cat <<EOF
 echo "-- workspace layer: fm_ros2 --recorder --service"
-sudo -u "$NEW_USER" -H bash -c 'mkdir -p $MACHINE_WORKSPACE && cd $MACHINE_WORKSPACE && curl -fsSL --proto "=https" $FM_ROS2_INSTALL_URL | bash -s -- --recorder --service'
+sudo -u "$NEW_USER" -H bash -c 'mkdir -p $MACHINE_WORKSPACE && cd $MACHINE_WORKSPACE && curl -fsSL --proto "=https" $FM_ROS2_INSTALL_URL | bash -s -- --recorder --service' \
+  || fail "workspace layer (fm_ros2 --recorder --service)"
 EOF
   else
     cat <<EOF
