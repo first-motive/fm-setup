@@ -397,26 +397,50 @@ FM_DDS_RMEM_MAX=134217728
 FM_LIDAR_IP=192.168.1.131
 FM_LIDAR_HOST_IP=192.168.1.10
 
-# --- Jetson SD card --------------------------------------------------------
+# --- Flashable images ------------------------------------------------------
+#
+# One pinned image per role, so `./run.sh flash --role <role>` never has to be
+# told what to write. The names are role-suffixed scalars rather than a map, the
+# same shape FM_OS_CODENAME_* already uses: flash resolves the pair by
+# indirection on the role, and a role with no pin fails loudly instead of
+# resolving to some other role's image.
+#
+# Both are pinned by sha256. An upstream image refresh must break loudly here,
+# not change what a flash means silently.
 
 # Canonical's preinstalled Ubuntu Server image for Jetson Orin — the OS the
-# jetson role provisions on top of. Flashed by ./run.sh flash, which also seeds
-# cloud-init so the appliance boots configured. Pinned by sha256: an upstream
-# image refresh must break loudly here, not change what a flash means silently.
-FM_JETSON_IMAGE_URL="https://cdimage.ubuntu.com/releases/jammy/release/nvidia-tegra/ubuntu-22.04-preinstalled-server-arm64+tegra-jetson.img.xz"
-FM_JETSON_IMAGE_SHA256=27c54b9f3a23b4c8a6a8490cc41281061b359fea031c44ebdf7932316331f68a
+# jetson role provisions on top of. Flashed with its cloud-init seed replaced
+# inside the rootfs, so the appliance boots configured.
+FM_IMAGE_URL_JETSON="https://cdimage.ubuntu.com/releases/jammy/release/nvidia-tegra/ubuntu-22.04-preinstalled-server-arm64+tegra-jetson.img.xz"
+FM_IMAGE_SHA256_JETSON=27c54b9f3a23b4c8a6a8490cc41281061b359fea031c44ebdf7932316331f68a
 
-# Rootfs partition start, in 512-byte sectors, of the exact image above. The
-# image ships its cloud-init seed baked into the ext4 rootfs (datasource
+# Ubuntu Desktop for the GPU workstation. The desktop ISO rather than the server
+# one because the workstation is a box people sit at — rviz, Isaac Sim, and the
+# annotation tooling all want a session — and its installer carries the
+# `ubuntu-desktop-minimal` source the autoinstall seed selects.
+#
+# The ISO is written raw and the seed rides in a second FAT partition, so there
+# is no decompression step and nothing to loop-mount: an ISO's filesystem is
+# read-only, and remastering one on macOS would mean xorriso in a container.
+FM_IMAGE_URL_WORKSTATION="https://releases.ubuntu.com/26.04/ubuntu-26.04-desktop-amd64.iso"
+FM_IMAGE_SHA256_WORKSTATION=487f87faaf547ea30e0aba4d5b53346292571256b25333a978db1692bcee9dd2
+
+# Size of the FAT partition `flash` appends after a raw-written ISO to carry the
+# autoinstall seed. The seed is a few kilobytes; the floor is what mkfs.fat and
+# the two partition tools will accept for a FAT16 volume without complaint.
+FM_FLASH_CIDATA_SIZE_MB=64
+
+# Rootfs partition start, in 512-byte sectors, of the exact Jetson image above.
+# That image ships its cloud-init seed baked into the ext4 rootfs (datasource
 # NoCloud, seed dir wins over any FAT drop-in), so ./run.sh flash loop-mounts
 # the rootfs at this offset to replace the seed before writing the card. A
 # constant of the pinned image: re-derive with `fdisk -l` on an image bump.
 FM_JETSON_ROOTFS_OFFSET=104448
 
-# Appliance identity is no longer a constant here. `./run.sh flash` derives the
-# name from the machine identity card below and bakes the card into the seed, so
-# the rig boots already knowing which recorder it is.
-FM_JETSON_USER=fm
+# The account `flash` creates on either role's machine. Not the machine's
+# identity — that is the card, derived from --name and baked into the seed —
+# only the human-shaped login every First Motive box answers on.
+FM_FLASH_USER=fm
 
 # First-boot provisioning: the two install layers cloud-init chains after the
 # card's first boot. Machine layer first, workspace layer second.

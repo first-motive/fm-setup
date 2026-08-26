@@ -67,7 +67,7 @@ fm_ros2_ref() {
 FM_ROS2_INSTALL_URL="$FM_ROS2_RAW_BASE/$(fm_ros2_ref)/install.sh"
 
 CACHE_DIR="${FM_FLASH_CACHE:-$HOME/.cache/fm-setup}"
-IMAGE_XZ="$CACHE_DIR/$(basename "$FM_JETSON_IMAGE_URL")"
+IMAGE_XZ="$CACHE_DIR/$(basename "$FM_IMAGE_URL_JETSON")"
 IMAGE_RAW="${IMAGE_XZ%.xz}"
 WORK_IMG=""
 SEED_DIR=""
@@ -89,7 +89,7 @@ MACHINE_WORKLOAD=recorder
 # known. Consumers read this out of the card rather than assuming a path.
 MACHINE_WORKSPACE=""
 NEW_HOSTNAME="$MACHINE_NAME"
-NEW_USER="$FM_JETSON_USER"
+NEW_USER="$FM_FLASH_USER"
 WIFI_SSID=""
 WIFI_PSK=""
 # Secrets default from the environment, which keeps them out of shell history
@@ -116,7 +116,7 @@ Usage: ./run.sh flash --device <disk> [options]
   --fleet <name>           population this rig joins (default: $MACHINE_FLEET)
   --transport <profile>    middleware profile (default: $MACHINE_TRANSPORT)
   --workload <kind>        what the rig does (default: $MACHINE_WORKLOAD)
-  --user <name>            appliance user (default: $FM_JETSON_USER)
+  --user <name>            appliance user (default: $FM_FLASH_USER)
   --ssh-key <file>         public key to authorize (default: every ~/.ssh/*.pub)
   --wifi <ssid:psk>        join this network on boot (Ethernet needs nothing)
   --tailscale-authkey <k>  join the tailnet on first boot (use an ephemeral key).
@@ -144,7 +144,7 @@ boot consumes it. Hand the card straight to the Jetson, and prefer
 ephemeral/least-scope credentials.
 
 First boot takes 15-30 min on the provisioning chain. Watch it:
-  ssh $FM_JETSON_USER@$MACHINE_NAME.local tail -f /var/log/fm-first-boot.log
+  ssh $FM_FLASH_USER@$MACHINE_NAME.local tail -f /var/log/fm-first-boot.log
 EOF
 }
 
@@ -188,10 +188,10 @@ trap cleanup EXIT INT TERM HUP
 
 fetch_image() {
   mkdir -p "$CACHE_DIR"
-  if [ ! -f "$IMAGE_XZ" ] || ! fm_verify_checksum "$IMAGE_XZ" "$FM_JETSON_IMAGE_SHA256" 2>/dev/null; then
-    fm_log "downloading $(basename "$FM_JETSON_IMAGE_URL")"
-    curl -fSL --proto '=https' -C - -o "$IMAGE_XZ" "$FM_JETSON_IMAGE_URL"
-    fm_verify_checksum "$IMAGE_XZ" "$FM_JETSON_IMAGE_SHA256"
+  if [ ! -f "$IMAGE_XZ" ] || ! fm_verify_checksum "$IMAGE_XZ" "$FM_IMAGE_SHA256_JETSON" 2>/dev/null; then
+    fm_log "downloading $(basename "$FM_IMAGE_URL_JETSON")"
+    curl -fSL --proto '=https' -C - -o "$IMAGE_XZ" "$FM_IMAGE_URL_JETSON"
+    fm_verify_checksum "$IMAGE_XZ" "$FM_IMAGE_SHA256_JETSON"
     rm -f "$IMAGE_RAW" # a fresh download invalidates the cached decompression
   fi
   fm_ok "image verified against the pinned sha256"
@@ -595,7 +595,7 @@ eject_card() {
 print_plan() {
   fm_banner
   fm_log "flash plan"
-  fm_info "image     $(basename "$FM_JETSON_IMAGE_URL")"
+  fm_info "image     $(basename "$FM_IMAGE_URL_JETSON")"
   fm_info "device    ${DEVICE:-<required>}"
   fm_info "identity  $NEW_USER@$NEW_HOSTNAME (password login locked, SSH keys injected)"
   fm_info "card      $MACHINE_NAME · fleet $MACHINE_FLEET · $MACHINE_TRANSPORT · $MACHINE_WORKLOAD · ns $(fm_machine_namespace "$MACHINE_NAME")"
