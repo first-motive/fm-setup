@@ -109,7 +109,12 @@ FM_MACHINE_TRANSPORTS=(zenoh dds-lan)
 # because `role` cannot answer the question — a recorder rig and a processor rig
 # are both `jetson`, which left FM_BRIDGE_PROFILE as the last per-host value
 # anyone still typed into an env file by hand.
-FM_MACHINE_WORKLOADS=(recorder processor robot)
+#
+# `router` is the one workload that runs no bridge: it runs zenohd itself, the
+# single point the whole fleet meets at. It is a workload rather than a role
+# because the machine hosting it is an ordinary `mac` (or `workstation`) that
+# also does other things — what makes it the router is the job, not the hardware.
+FM_MACHINE_WORKLOADS=(recorder processor robot router)
 
 # Names are fm-<abbrev>-<nn>, so two recorders on one LAN are fm-rec-01 and
 # fm-rec-02 rather than one fm-jetson and a collision. The abbreviation follows
