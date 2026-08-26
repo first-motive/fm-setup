@@ -120,7 +120,13 @@ FM_MACHINE_TRANSPORTS=(zenoh dds-lan)
 # and publishes only teleop commands. Without it a Mac on the zenoh transport has
 # a loopback-only DDS graph and its ROS tools see nothing at all — which is why
 # "the laptop needs no workload" stopped being true (fm-comms#19).
-FM_MACHINE_WORKLOADS=(recorder processor robot router cockpit)
+#
+# `workstation` is the GPU tower running the sim and the dataset engine together,
+# so its bridge is the union of `robot` and `processor`. It is its own workload
+# rather than either half: under `processor` the tower's bridge held a session
+# and carried no joint states, which reads as a network fault and is a workload
+# that named half the machine (fm-comms#20).
+FM_MACHINE_WORKLOADS=(recorder processor robot workstation router cockpit)
 
 # Names are fm-<abbrev>-<nn>, so two recorders on one LAN are fm-rec-01 and
 # fm-rec-02 rather than one fm-jetson and a collision. The abbreviation follows

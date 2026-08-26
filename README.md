@@ -308,9 +308,14 @@ without a bridge its ROS tools see nothing the fleet publishes; the `cockpit`
 profile is the mirror of a rig's — the fleet's published set in, teleop commands
 out.
 
+The GPU tower is `workstation`. It runs the sim and the dataset engine together,
+so its bridge is the union of `robot` and `processor`; `processor` alone left it
+holding a session and publishing no joint states (fm-comms#20).
+
 ```bash
 fm machine init --name fm-rec-01 --workload recorder
 fm machine init --workload cockpit           # a Mac: its own bridge
+fm machine init --workload workstation       # the GPU tower: robot + processor
 fm machine init --workload none              # repurposed; no bridge any more
 ```
 
