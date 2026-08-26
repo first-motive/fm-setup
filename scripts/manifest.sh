@@ -114,7 +114,13 @@ FM_MACHINE_TRANSPORTS=(zenoh dds-lan)
 # single point the whole fleet meets at. It is a workload rather than a role
 # because the machine hosting it is an ordinary `mac` (or `workstation`) that
 # also does other things — what makes it the router is the job, not the hardware.
-FM_MACHINE_WORKLOADS=(recorder processor robot router)
+#
+# `cockpit` is the Mac someone sits in front of. It runs a bridge like a rig
+# does, but the mirror image of one: it subscribes to what the fleet publishes
+# and publishes only teleop commands. Without it a Mac on the zenoh transport has
+# a loopback-only DDS graph and its ROS tools see nothing at all — which is why
+# "the laptop needs no workload" stopped being true (fm-comms#19).
+FM_MACHINE_WORKLOADS=(recorder processor robot router cockpit)
 
 # Names are fm-<abbrev>-<nn>, so two recorders on one LAN are fm-rec-01 and
 # fm-rec-02 rather than one fm-jetson and a collision. The abbreviation follows
