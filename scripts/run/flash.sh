@@ -241,10 +241,10 @@ resolve_role() {
   sha_var="FM_IMAGE_SHA256_$upper"
   IMAGE_URL="${!url_var:-}"
   IMAGE_SHA256="${!sha_var:-}"
-  [ -n "$IMAGE_URL" ] && [ -n "$IMAGE_SHA256" ] || {
+  if [ -z "$IMAGE_URL" ] || [ -z "$IMAGE_SHA256" ]; then
     fm_err "no image pinned for role '$ROLE' — add $url_var and $sha_var to the manifest"
     return 1
-  }
+  fi
 
   IMAGE_DOWNLOAD="$CACHE_DIR/$(basename "$IMAGE_URL")"
   # Only the Jetson image is compressed. An ISO is written exactly as it arrives,
