@@ -217,11 +217,11 @@ fm_seed_authorized_keys_yaml() {
 # differs between a capture rig and a workstation.
 fm_seed_first_boot() {
   local role="$1" machine_flag workspace_flag
-  case "$role" in
-    jetson)      machine_flag=--jetson;      workspace_flag=--recorder ;;
-    workstation) machine_flag=--workstation; workspace_flag=--processor ;;
-    *) fm_err "no first-boot flags for role '$role'"; return 1 ;;
-  esac
+  # The machine layer's flag is the role's own name; the workspace layer's comes
+  # from the manifest, because a rig records and a workstation processes and
+  # neither name follows from the other.
+  machine_flag="--$role"
+  workspace_flag="$(fm_flash_workspace_flag "$role")" || return 1
 
   cat <<EOF
 #!/usr/bin/env bash

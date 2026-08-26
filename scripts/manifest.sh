@@ -442,6 +442,18 @@ FM_JETSON_ROOTFS_OFFSET=104448
 # only the human-shaped login every First Motive box answers on.
 FM_FLASH_USER=fm
 
+# What each role's first boot asks fm_ros2 to install, as "role|flag".
+#
+# The machine layer's flag is the role itself (`--jetson`, `--workstation`), so
+# it is derived rather than listed. The workspace layer's is not: a rig records
+# and a workstation processes, and neither name follows from the other. One
+# table here rather than a case in each seed builder, so a role added later is a
+# line in this file.
+FM_FLASH_WORKSPACE_FLAG=(
+  "jetson|--recorder"
+  "workstation|--processor"
+)
+
 # First-boot provisioning: the two install layers cloud-init chains after the
 # card's first boot. Machine layer first, workspace layer second.
 #
