@@ -137,14 +137,15 @@ The consequence is that whoever can push a `v*` tag here decides what runs as
 root on every rig. That is why `.github/CODEOWNERS` names one reviewer, and why
 the tag is cut deliberately rather than on merge.
 
-## Flashing The Jetson
+## Flashing A Machine
 
-The jetson role starts before the OS exists. The `flash` verb writes Canonical's
-Ubuntu 22.04 Server image for Jetson Orin to an SD card and replaces the image's
-cloud-init seed before the write, so the appliance's first boot needs no
-monitor, keyboard, or wizard:
+Both roles start before the OS exists. The `flash` verb writes the role's pinned
+image to removable media and puts a seed on it that answers every question the
+first boot would otherwise ask, so neither machine needs a monitor, a keyboard,
+or a wizard.
 
 ```bash
+# The capture rig — an SD card for the Jetson.
 fm flash --device /dev/disk4                    # or: ./run.sh flash --device …
 fm flash --device /dev/disk4 --wifi "rig-lan:psk"
 
@@ -152,14 +153,37 @@ read -rs FM_GH_TOKEN && export FM_GH_TOKEN      # token, without leaking it
 fm flash --device /dev/disk4
 ```
 
+```bash
+# The GPU workstation — a USB stick for Ubuntu Desktop.
+read -rs FM_FLASH_PASSWORD_HASH && export FM_FLASH_PASSWORD_HASH
+fm flash --role workstation --device /dev/disk4 --name fm-ws-01
+```
+
+The workstation's password is a console login, so the installer wants it already
+hashed. Generate one with `mkpasswd --method=SHA-512 --rounds=4096`. It is the
+one credential a workstation needs and a rig does not: the rig's account is
+locked and reached by key alone, while somebody sits down in front of a
+workstation.
+
 ![one-shot flash](docs/diagrams/one_shot_flash.svg)
 
-The card boots as `fm@fm-jetson` — SSH keys injected, password login locked —
-and provisions itself: this repo's jetson role, then fm_ros2's recorder service.
-The recorder's overlays are private, so that second layer runs unattended only
-when `--gh-token` (a read-only fine-grained PAT) was baked at flash time;
-without one, first boot stops after the machine layer and leaves the remaining
-one-liner in `~/NEXT-STEP.md` on the appliance.
+The media boots as `fm@<name>` — SSH keys injected, password login locked — and
+provisions itself: this repo's role, then fm_ros2's workspace layer (the
+recorder service on a rig, the processor on a workstation). Those overlays are
+private, so that second layer runs unattended only when `--gh-token` (a
+read-only fine-grained PAT) was baked at flash time; without one, first boot
+stops after the machine layer and leaves the remaining one-liner in
+`~/NEXT-STEP.md` on the machine.
+
+The two roles differ in one place a person can see. The Jetson image carries its
+cloud-init seed inside its own root filesystem, so `flash` replaces it there and
+the card boots straight through. An ISO's filesystem is read-only, so the
+workstation's seed rides in a second FAT partition labelled `CIDATA` written
+after the ISO — which the installer finds, but only once its boot menu has been
+told to go ahead. That is one keypress on the machine, and the only part of a
+workstation rebuild that is not unattended. Removing it means remastering the
+ISO with an `autoinstall` kernel argument, which is
+[issue #36](https://github.com/first-motive/fm-setup/issues/36).
 
 Both layers are pinned to a release tag, resolved at flash time and baked into
 the card: this repo's from its own `install.sh`, fm_ros2's from the newest `v*`
@@ -169,21 +193,39 @@ that claim is only worth anything if you can read which two it means.
 
 | flag | effect |
 | --- | --- |
+| `--role` | `jetson` (default) or `workstation`; picks the image, the seed, and the install chain |
 | `--device` | target disk, whole device; internal disks are refused |
-| `--name`, `--user` | identity (defaults `fm-rec-01`, `fm`); the name becomes the hostname, the mDNS name, and the ROS namespace |
-| `--fleet`, `--transport`, `--workload` | the rest of the seeded identity card (defaults `prod`, `zenoh`, `recorder`) |
+| `--name`, `--user` | identity (defaults `fm-rec-01` / `fm-ws-01`, and `fm`); the name becomes the hostname, the mDNS name, and the ROS namespace |
+| `--fleet`, `--transport`, `--workload` | the rest of the seeded identity card (defaults `prod`, `zenoh`, and the role's own workload) |
 | `--ssh-key` | public key to authorize (default: every `~/.ssh/*.pub`) |
-| `--wifi ssid:psk` | join wifi on boot; Ethernet needs nothing |
+| `--password-hash` | console password, already hashed — workstation only, and required there |
+| `--wifi ssid:psk` | join wifi on boot — jetson only; the workstation is a wired box |
 | `--tailscale-authkey` | join the tailnet on first boot — use an ephemeral key |
-| `--gh-token` | org access for the recorder's private overlays |
+| `--gh-token` | org access for the private overlays |
 | `--no-provision` | identity only, no first-boot installs |
 | `--dry-run` | print the plan, touch nothing |
 | `-y`, `--yes` | skip the erase confirmation |
 
-Prerequisites: the board's QSPI must carry NVIDIA's r36.x UEFI firmware — any
-Orin that has booted JetPack 6 qualifies. On macOS the seed swap needs a
+A name has to match its role: `fm-rec-01` is a jetson and `fm-ws-01` is a
+workstation, and `flash` refuses the pair that disagrees rather than baking a
+card whose topics land under the wrong namespace.
+
+Prerequisites, jetson: the board's QSPI must carry NVIDIA's r36.x UEFI firmware
+— any Orin that has booted JetPack 6 qualifies. On macOS the seed swap needs a
 container runtime (OrbStack or Docker), because the image's rootfs is ext4.
-balenaCLI is used to write and validate the card when present; plain `dd`
+
+Prerequisites, workstation: `sgdisk` on the machine doing the flashing, for the
+seed partition — `brew install gptfdisk` on macOS, `apt install gdisk` on Ubuntu.
+The workstation itself needs nothing beyond the stick: boot it, pick the stick
+from the firmware's boot menu, and confirm the autoinstall when it asks. Then
+leave it alone — the install, the reboot, and both provisioning layers run
+without anyone there. Follow them the same way a rig is followed:
+
+```bash
+ssh fm@fm-ws-01.local tail -f /var/log/fm-first-boot.log
+```
+
+balenaCLI is used to write and validate the media when present; plain `dd`
 otherwise.
 
 Pass the two secrets through the environment — `FM_GH_TOKEN` and
@@ -441,6 +483,7 @@ where a gap in its package list is found by someone standing next to a board.
 | `FM_SELFTEST` | run the CI self-test and provision nothing |
 | `FM_GH_TOKEN` | org token `./run.sh flash` bakes into a card, without it reaching history or the process table |
 | `FM_TS_AUTHKEY` | tailnet authkey for the same, on the same terms |
+| `FM_FLASH_PASSWORD_HASH` | hashed console password for `flash --role workstation`, on the same terms |
 | `FM_FLASH_CACHE` | where `./run.sh flash` keeps the downloaded image (default `~/.cache/fm-setup`) |
 | `FM_REHEARSE_PLATFORM` | container platform for `rehearse.sh` and `converge-check.sh` (default `linux/arm64`; CI sets `linux/amd64` to run native) |
 | `FM_CONVERGE_IMAGE` | container image for `converge-check.sh` (default `ubuntu:22.04`) |

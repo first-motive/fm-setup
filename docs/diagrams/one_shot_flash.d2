@@ -6,7 +6,7 @@ mac: "" {
   grid-rows: 2
   class: block
   r: Mac { class: role }
-  a: "fm flash --device /dev/diskN" { class: art }
+  a: "fm flash --role <role> --device /dev/diskN" { class: art }
 }
 
 card: "" {
@@ -14,7 +14,15 @@ card: "" {
   class: block
   r: SD Card { class: role }
   p: "Ubuntu 22.04 Server (tegra)" { class: pkg }
-  a: "cloud-init seed: fm@fm-jetson" { class: art }
+  a: "seed swapped inside the rootfs" { class: art }
+}
+
+stick: "" {
+  grid-rows: 3
+  class: block
+  r: USB Stick { class: role }
+  p: "Ubuntu 26.04 Desktop (amd64)" { class: pkg }
+  a: "autoinstall seed on CIDATA" { class: art }
 }
 
 boot: First Boot — Unattended {
@@ -23,24 +31,26 @@ boot: First Boot — Unattended {
     grid-rows: 2
     class: block
     r: Machine Layer { class: role }
-    a: "fm-setup --jetson" { class: art }
+    a: "fm-setup --<role>" { class: art }
   }
   ws: "" {
     grid-rows: 2
     class: block
     r: Workspace Layer { class: role }
-    a: "fm_ros2 --recorder --service" { class: art }
+    a: "fm_ros2 --recorder | --processor" { class: art }
   }
   ci -> ws: gh token baked
 }
 
-rig: "" {
+machine: "" {
   grid-rows: 2
   class: block
-  r: Capture Rig { class: role }
-  a: "recording on boot" { class: art }
+  r: Rig Or Workstation { class: role }
+  a: "provisioned on boot" { class: art }
 }
 
-mac -> card: flash + seed
+mac -> card: --role jetson
+mac -> stick: --role workstation
 card -> boot: power on
-boot -> rig
+stick -> boot: power on, confirm once
+boot -> machine
