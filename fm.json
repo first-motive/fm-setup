@@ -27,7 +27,7 @@
     },
     "flash": {
       "script": "scripts/run/flash.sh",
-      "help": "build a provisioned Jetson SD card, boot-ready"
+      "help": "build provisioned boot media for a role, boot-ready"
     }
   }
 }

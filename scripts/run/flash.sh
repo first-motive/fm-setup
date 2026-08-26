@@ -1,31 +1,38 @@
 #!/usr/bin/env bash
 #
-# flash — build a provisioned Jetson SD card, from the machine with the SD slot.
+# flash — build provisioned boot media, from the machine with the slot.
 #
-#   ./run.sh flash --device /dev/disk4                       # macOS
-#   ./run.sh flash --device /dev/sdb --wifi "rig-lan:secret" # Linux
+#   ./run.sh flash --device /dev/disk4                            # a capture rig
+#   ./run.sh flash --role workstation --device /dev/disk4 \
+#     --name fm-ws-01                                             # the workstation
 #
-# Writes Canonical's Ubuntu Server image for Jetson Orin (pinned in
-# scripts/manifest.sh) with the cloud-init seed replaced before the write, so
-# the first boot needs no monitor, keyboard, or wizard: hostname, appliance
-# user, SSH keys, and optional wifi are decided before power-on, and a
-# first-boot script chains fm-setup's jetson role and (with --gh-token)
-# fm_ros2's recorder install. The card comes out of this script ready to
-# record.
+# Writes the role's pinned image (scripts/manifest.sh) and puts a seed on the
+# media that answers everything the first boot would otherwise ask: hostname,
+# user, SSH keys, the identity card, and a first-boot script that chains this
+# repo's role and — with --gh-token — fm_ros2's workspace layer. The media comes
+# out of this script ready to boot into a provisioned machine.
 #
-# Why the seed is replaced in the image, not dropped on the card: this image
-# bakes its NoCloud seed into the ext4 rootfs (/var/lib/cloud/seed/nocloud —
-# the ubuntu/ubuntu first-login wizard), and a baked seed beats any file laid
-# on the FAT partition. So the flow is: clone the cached image (copy-on-write
-# where the filesystem offers it), loop-mount the rootfs at the pinned offset,
-# swap the seed, then flash the clone. On macOS the ext4 mount happens inside
-# a privileged container (OrbStack/Docker); on Linux it is a plain loop mount.
+# The two roles put the seed in different places, because their images differ:
+#
+#   jetson       a raw .img whose ext4 rootfs carries a baked NoCloud seed
+#                (/var/lib/cloud/seed/nocloud), which beats any file laid on the
+#                FAT partition. So the image is cloned, the rootfs loop-mounted
+#                at the pinned offset, the seed swapped, and the clone written.
+#                On macOS that ext4 mount happens inside a privileged container
+#                (OrbStack/Docker); on Linux it is a plain loop mount.
+#
+#   workstation  an ISO, whose filesystem is read-only. It is written raw and a
+#                second FAT partition labelled CIDATA is added after it, which
+#                is where the desktop installer's cloud-init looks. Nothing is
+#                remastered, so the boot menu still asks once before the
+#                autoinstall starts — the one keypress a rebuild needs.
 #
 # Engine: balena CLI when present (validates after write), otherwise dd. The
 # target must be a whole, external disk — internal disks are refused outright.
 #
-# Firmware prerequisite, documented not automated: the board's QSPI must carry
-# NVIDIA's r36.x UEFI firmware. Any Orin that has booted JetPack 6 qualifies.
+# Firmware prerequisite for the jetson, documented not automated: the board's
+# QSPI must carry NVIDIA's r36.x UEFI firmware. Any Orin that has booted
+# JetPack 6 qualifies.
 
 set -euo pipefail
 
@@ -67,35 +74,65 @@ fm_ros2_ref() {
 FM_ROS2_INSTALL_URL="$FM_ROS2_RAW_BASE/$(fm_ros2_ref)/install.sh"
 
 CACHE_DIR="${FM_FLASH_CACHE:-$HOME/.cache/fm-setup}"
-IMAGE_XZ="$CACHE_DIR/$(basename "$FM_JETSON_IMAGE_URL")"
-IMAGE_RAW="${IMAGE_XZ%.xz}"
+# Where the cache may live, checked before anything uses it.
+#
+# On macOS this directory is bind-mounted into a privileged container for the
+# jetson's ext4 seed swap, which is a container with the host's device nodes in
+# reach. FM_FLASH_CACHE pointing at /dev, /etc, or / would hand it those. This
+# is not a privilege boundary — whoever sets the variable already runs the sudo
+# below — but a cache directory has one shape, and a value with another shape is
+# a mistake worth refusing rather than mounting.
+require_sane_cache_dir() {
+  case "$CACHE_DIR" in
+    /*) ;;
+    *) fm_err "FM_FLASH_CACHE must be an absolute path: '$CACHE_DIR'"; return 1 ;;
+  esac
+  case "$CACHE_DIR" in
+    /|/dev|/dev/*|/etc|/etc/*|/proc|/proc/*|/sys|/sys/*|/boot|/boot/*|/usr|/usr/*|/bin|/bin/*|/sbin|/sbin/*|/lib|/lib/*|/root|/root/*)
+      fm_err "FM_FLASH_CACHE may not be a system directory: '$CACHE_DIR'"
+      fm_info "it is bind-mounted into a privileged container on macOS"
+      return 1 ;;
+  esac
+}
+# Resolved from the role once it is known — see resolve_role.
+IMAGE_URL=""
+IMAGE_SHA256=""
+IMAGE_DOWNLOAD=""
+IMAGE_RAW=""
 WORK_IMG=""
+# The working image is a throwaway clone for the jetson and the cached image
+# itself for the workstation, and only the first may be deleted on the way out.
+WORK_IS_CLONE=0
 SEED_DIR=""
+CIDATA_LABEL=CIDATA
 
+ROLE=jetson
 DEVICE=""
-# The card decides the hostname, not the other way round: a rig's name, its
+# The card decides the hostname, not the other way round: a machine's name, its
 # mDNS name, and the stem of its ROS namespace are one fact, seeded here so the
-# appliance boots already knowing which recorder it is. 01 is a default that the
-# second rig of a role must override — two cards claiming fm-rec-01 collide on
-# the LAN exactly as the old singular fm-jetson did.
-MACHINE_NAME="fm-$(fm_machine_abbrev jetson)-01"
+# machine boots already knowing which one it is. Empty until the role is known,
+# because the abbreviation follows the role; 01 is a default the second machine
+# of a role must override — two cards claiming fm-rec-01 collide on the LAN
+# exactly as the old singular fm-jetson did.
+MACHINE_NAME=""
 MACHINE_FLEET="$FM_MACHINE_FLEET_DEFAULT"
 MACHINE_TRANSPORT="${FM_MACHINE_TRANSPORTS[0]}"
-# A flashed card is a capture rig, which is what makes recorder the right
-# default here and no default at all in `machine init` — that verb runs on
-# workstations and laptops too, where there is no bridge to select.
-MACHINE_WORKLOAD=recorder
+# Also empty until the role is known. A flashed card is a capture rig, so the
+# jetson defaults to recorder; a workstation runs no bridge and defaults to none,
+# which is the same answer `machine init` gives on a machine with no workload.
+MACHINE_WORKLOAD=""
 # One visible parent directory for every checkout, resolved once --user is
 # known. Consumers read this out of the card rather than assuming a path.
 MACHINE_WORKSPACE=""
-NEW_HOSTNAME="$MACHINE_NAME"
-NEW_USER="$FM_JETSON_USER"
+NEW_HOSTNAME=""
+NEW_USER="$FM_FLASH_USER"
 WIFI_SSID=""
 WIFI_PSK=""
 # Secrets default from the environment, which keeps them out of shell history
 # and out of the process table. A flag still overrides, for a scripted caller.
 TS_AUTHKEY="${FM_TS_AUTHKEY:-}"
 GH_TOKEN="${FM_GH_TOKEN:-}"
+PASSWORD_HASH="${FM_FLASH_PASSWORD_HASH:-}"
 SSH_KEY_FILE=""
 SSH_KEYS=""
 PROVISION=1
@@ -104,62 +141,60 @@ ASSUME_YES=0
 
 usage() {
   cat <<EOF
-flash — build a provisioned Jetson SD card
+flash — build provisioned boot media for a role
 
-Usage: ./run.sh flash --device <disk> [options]
+Usage: ./run.sh flash [--role <role>] --device <disk> [options]
 
+  --role <role>            jetson (default) or workstation. Picks the image,
+                           the seed schema, and the first-boot install chain.
   --device <disk>          target disk, whole device (macOS /dev/diskN,
                            Linux /dev/sdX). Internal disks are refused.
-  --name <fm-rec-nn>       machine name, which is also the hostname, the mDNS
+  --name <fm-xx-nn>        machine name, which is also the hostname, the mDNS
                            name, and the stem of the ROS namespace
-                           (default: $MACHINE_NAME — override on the second rig)
-  --fleet <name>           population this rig joins (default: $MACHINE_FLEET)
+                           (default: fm-rec-01 / fm-ws-01 — override on the
+                           second machine of a role)
+  --fleet <name>           population this machine joins (default: $MACHINE_FLEET)
   --transport <profile>    middleware profile (default: $MACHINE_TRANSPORT)
-  --workload <kind>        what the rig does (default: $MACHINE_WORKLOAD)
-  --user <name>            appliance user (default: $FM_JETSON_USER)
+  --workload <kind>        what the machine does, or none (default: recorder on
+                           the jetson, none on the workstation)
+  --user <name>            the account the machine answers on (default: $FM_FLASH_USER)
   --ssh-key <file>         public key to authorize (default: every ~/.ssh/*.pub)
-  --wifi <ssid:psk>        join this network on boot (Ethernet needs nothing)
+  --password-hash <hash>   console password, already hashed — workstation only,
+                           and required there. Prefer FM_FLASH_PASSWORD_HASH.
+                           Generate one with: mkpasswd --method=SHA-512 --rounds=4096
+  --wifi <ssid:psk>        join this network on boot — jetson only
   --tailscale-authkey <k>  join the tailnet on first boot (use an ephemeral key).
                            Prefer FM_TS_AUTHKEY, for the reason below.
   --gh-token <token>       read-only fine-grained PAT for the private overlays;
-                           with it, the recorder service installs unattended.
+                           with it, the workspace layer installs unattended.
                            Prefer FM_GH_TOKEN (below) — an argument is visible
                            in the process table and in shell history.
   --no-provision           identity only — skip the first-boot install chain
   --dry-run                print the plan, touch nothing
   -y, --yes                skip the erase confirmation
 
-macOS needs a container runtime (OrbStack or Docker) for the seed swap — the
-rootfs is ext4. Linux needs only sudo.
+macOS needs a container runtime (OrbStack or Docker) for the jetson's seed swap
+— the rootfs is ext4 — and sgdisk (brew install gptfdisk) for the workstation's
+seed partition. Linux needs sgdisk and sudo.
 
 Read a secret from the environment instead of the command line, so it reaches
 neither shell history nor the process table:
 
   read -rs FM_GH_TOKEN && export FM_GH_TOKEN
   read -rs FM_TS_AUTHKEY && export FM_TS_AUTHKEY
+  read -rs FM_FLASH_PASSWORD_HASH && export FM_FLASH_PASSWORD_HASH
   ./run.sh flash --device <disk> -y
 
-Every secret passed here lands in the card's seed in plain text until first
-boot consumes it. Hand the card straight to the Jetson, and prefer
+Every secret passed here lands in the seed in plain text until first boot
+consumes it. Hand the media straight to the machine, and prefer
 ephemeral/least-scope credentials.
 
 First boot takes 15-30 min on the provisioning chain. Watch it:
-  ssh $FM_JETSON_USER@$MACHINE_NAME.local tail -f /var/log/fm-first-boot.log
+  ssh $FM_FLASH_USER@<name>.local tail -f /var/log/fm-first-boot.log
 EOF
 }
 
 # --- Small helpers ----------------------------------------------------------
-
-# Quote a value for YAML: double-quoted, with backslash, quote, and newline
-# escaping — a newline smuggled into an ssid/psk must not become YAML structure.
-yaml_quote() {
-  local s="$1"
-  s="${s//\\/\\\\}"
-  s="${s//\"/\\\"}"
-  s="${s//$'\n'/\\n}"
-  s="${s//$'\r'/\\r}"
-  printf '"%s"' "$s"
-}
 
 require_sane_name() {
   # LC_ALL=C: a glob range follows the locale's collation, and under a UTF-8
@@ -176,7 +211,9 @@ require_sane_name() {
 
 cleanup() {
   # The clone and the staged seed both carry secrets — never leave them behind.
-  if [ -n "$WORK_IMG" ]; then rm -f "$WORK_IMG"; fi
+  # The cached image carries none and is expensive to fetch again, so only a
+  # clone is removed here.
+  if [ "$WORK_IS_CLONE" = 1 ] && [ -n "$WORK_IMG" ]; then rm -f "$WORK_IMG"; fi
   if [ -n "$SEED_DIR" ]; then rm -rf "$SEED_DIR"; fi
 }
 # INT/TERM/HUP as well as EXIT: a closed terminal during the long write or the
@@ -184,21 +221,65 @@ cleanup() {
 # carries the baked token in plain text.
 trap cleanup EXIT INT TERM HUP
 
+# --- Role -------------------------------------------------------------------
+
+# Resolve everything the role decides, before anything else reads it.
+#
+# The image pins are looked up by name rather than through a case, so a role
+# added to the manifest is a role this verb can already flash. A role with no pin
+# fails here, loudly, rather than resolving to some other role's image.
+resolve_role() {
+  fm_machine_valid_role "$ROLE" || return 1
+  case "$ROLE" in
+    jetson|workstation) ;;
+    *) fm_err "role '$ROLE' has no image to flash (jetson|workstation)"; return 1 ;;
+  esac
+
+  local upper url_var sha_var
+  upper="$(printf '%s' "$ROLE" | tr '[:lower:]' '[:upper:]')"
+  url_var="FM_IMAGE_URL_$upper"
+  sha_var="FM_IMAGE_SHA256_$upper"
+  IMAGE_URL="${!url_var:-}"
+  IMAGE_SHA256="${!sha_var:-}"
+  if [ -z "$IMAGE_URL" ] || [ -z "$IMAGE_SHA256" ]; then
+    fm_err "no image pinned for role '$ROLE' — add $url_var and $sha_var to the manifest"
+    return 1
+  fi
+
+  IMAGE_DOWNLOAD="$CACHE_DIR/$(basename "$IMAGE_URL")"
+  # Only the Jetson image is compressed. An ISO is written exactly as it arrives,
+  # so there is nothing to decompress and nothing to cache twice.
+  case "$IMAGE_DOWNLOAD" in
+    *.xz) IMAGE_RAW="${IMAGE_DOWNLOAD%.xz}" ;;
+    *)    IMAGE_RAW="$IMAGE_DOWNLOAD" ;;
+  esac
+
+  [ -n "$MACHINE_NAME" ] || MACHINE_NAME="fm-$(fm_machine_abbrev "$ROLE")-01"
+  NEW_HOSTNAME="$MACHINE_NAME"
+  if [ -z "$MACHINE_WORKLOAD" ]; then
+    case "$ROLE" in
+      jetson)      MACHINE_WORKLOAD=recorder ;;
+      workstation) MACHINE_WORKLOAD=none ;;
+    esac
+  fi
+}
+
 # --- Image ------------------------------------------------------------------
 
 fetch_image() {
   mkdir -p "$CACHE_DIR"
-  if [ ! -f "$IMAGE_XZ" ] || ! fm_verify_checksum "$IMAGE_XZ" "$FM_JETSON_IMAGE_SHA256" 2>/dev/null; then
-    fm_log "downloading $(basename "$FM_JETSON_IMAGE_URL")"
-    curl -fSL --proto '=https' -C - -o "$IMAGE_XZ" "$FM_JETSON_IMAGE_URL"
-    fm_verify_checksum "$IMAGE_XZ" "$FM_JETSON_IMAGE_SHA256"
-    rm -f "$IMAGE_RAW" # a fresh download invalidates the cached decompression
+  if [ ! -f "$IMAGE_DOWNLOAD" ] || ! fm_verify_checksum "$IMAGE_DOWNLOAD" "$IMAGE_SHA256" 2>/dev/null; then
+    fm_log "downloading $(basename "$IMAGE_URL")"
+    curl -fSL --proto '=https' -C - -o "$IMAGE_DOWNLOAD" "$IMAGE_URL"
+    fm_verify_checksum "$IMAGE_DOWNLOAD" "$IMAGE_SHA256"
+    # A fresh download invalidates the cached decompression, where there is one.
+    [ "$IMAGE_RAW" = "$IMAGE_DOWNLOAD" ] || rm -f "$IMAGE_RAW"
   fi
   fm_ok "image verified against the pinned sha256"
-  if [ ! -f "$IMAGE_RAW" ]; then
+  if [ "$IMAGE_RAW" != "$IMAGE_DOWNLOAD" ] && [ ! -f "$IMAGE_RAW" ]; then
     fm_log "decompressing (cached for the next flash)"
     fm_require_cmd xz
-    xz -dk "$IMAGE_XZ"
+    xz -dk "$IMAGE_DOWNLOAD"
   fi
 }
 
@@ -206,6 +287,7 @@ fetch_image() {
 # instant; elsewhere it is a plain copy.
 clone_image() {
   WORK_IMG="$CACHE_DIR/.flash-$$.img"
+  WORK_IS_CLONE=1
   fm_log "staging a working copy of the image"
   cp -c "$IMAGE_RAW" "$WORK_IMG" 2>/dev/null || cp "$IMAGE_RAW" "$WORK_IMG"
 }
@@ -250,7 +332,7 @@ confirm_erase() {
   if [ "$ASSUME_YES" = 1 ]; then
     return 0
   fi
-  fm_confirm "erase $DEVICE and write the Jetson image?" || {
+  fm_confirm "erase $DEVICE and write the $ROLE image?" || {
     fm_err "aborted"; return 1
   }
 }
@@ -271,181 +353,49 @@ collect_ssh_keys() {
   fi
   [ -n "$keys" ] || {
     fm_err "no SSH public key found (~/.ssh/*.pub) — pass --ssh-key"
-    fm_info "the card locks password login, so a key is the only door in"
+    fm_info "the seed locks password login, so a key is the only door in"
     return 1
   }
   printf '%s' "$keys"
 }
 
-build_network_config() {
-  cat <<EOF
-# Seeded by fm-setup (./run.sh flash). Ethernet always; wifi when creds given.
-version: 2
-ethernets:
-  all-eth:
-    match: {name: "e*"}
-    dhcp4: true
-    optional: true
-EOF
-  if [ -n "$WIFI_SSID" ]; then
-    cat <<EOF
-wifis:
-  all-wl:
-    match: {name: "wl*"}
-    dhcp4: true
-    optional: true
-    access-points:
-      $(yaml_quote "$WIFI_SSID"):
-        password: $(yaml_quote "$WIFI_PSK")
-EOF
-  fi
-}
-
-# The first-boot script cloud-init writes to the appliance and runs once.
+# Stage the seed files, secrets included, under a 0700 dir the EXIT trap
+# removes. What goes in them is the role's business, not this script's: each
+# schema lives in scripts/internal/seed-<role>.sh, which CI can build and
+# validate on its own rather than only through a 5 GB image write.
 #
-# A failed layer stops the chain and leaves a marker (FM_FIRST_BOOT_FAILED,
-# read by `machine doctor`) naming the step. It never prints "done" after a
-# failure: an unattended rig that fails and reports done is the omission class
-# this repo exists to remove (#28). SSH is up before this script runs, so
-# stopping here still leaves a reachable rig.
-build_first_boot_script() {
-  cat <<EOF
-#!/usr/bin/env bash
-set -uo pipefail
-exec >>/var/log/fm-first-boot.log 2>&1
-echo "== fm first boot: \$(date) =="
-export NONINTERACTIVE=1
-rm -f "$FM_FIRST_BOOT_FAILED"
-fail() {
-  mkdir -p "\$(dirname "$FM_FIRST_BOOT_FAILED")"
-  printf '%s\\n' "\$1" >"$FM_FIRST_BOOT_FAILED"
-  echo "== fm first boot FAILED at: \$1 (\$(date)) =="
-  exit 1
-}
-EOF
-  if [ -n "$GH_TOKEN" ]; then
-    cat <<EOF
-install -o "$NEW_USER" -g "$NEW_USER" -m 0600 /dev/null "/home/$NEW_USER/.git-credentials"
-printf 'https://x-access-token:%s@github.com\n' '$GH_TOKEN' >"/home/$NEW_USER/.git-credentials"
-sudo -u "$NEW_USER" -H git config --global credential.helper store
-EOF
-  fi
-  cat <<EOF
-echo "-- machine layer: fm-setup --jetson"
-machine_rc=0
-sudo -u "$NEW_USER" -H bash -c 'curl -fsSL --proto "=https" $FM_SETUP_INSTALL_URL | bash -s -- --jetson -y' || machine_rc=\$?
-EOF
-  # The join runs before the machine layer's failure is acted on: a rig that
-  # failed mid-provision is worth far more on the tailnet than off it, and the
-  # tailscale step sits early enough in the role that a later failure leaves
-  # the binary in place (#28).
-  if [ -n "$TS_AUTHKEY" ]; then
-    cat <<EOF
-echo "-- tailscale join"
-if command -v tailscale >/dev/null; then
-  tailscale up --ssh --authkey '$TS_AUTHKEY' || echo "tailscale join failed; run 'sudo tailscale up --ssh' by hand"
-else
-  echo "tailscale not installed — join skipped"
-fi
-EOF
-  fi
-  cat <<EOF
-[ "\$machine_rc" -eq 0 ] || fail "machine layer (fm-setup --jetson, exit \$machine_rc)"
-EOF
-  if [ -n "$GH_TOKEN" ]; then
-    cat <<EOF
-echo "-- workspace layer: fm_ros2 --recorder --service"
-sudo -u "$NEW_USER" -H bash -c 'mkdir -p $MACHINE_WORKSPACE && cd $MACHINE_WORKSPACE && curl -fsSL --proto "=https" $FM_ROS2_INSTALL_URL | bash -s -- --recorder --service' \
-  || fail "workspace layer (fm_ros2 --recorder --service)"
-EOF
-  else
-    cat <<EOF
-cat >"/home/$NEW_USER/NEXT-STEP.md" <<'NOTE'
-Machine layer is provisioned. The recorder needs first-motive org access:
-  gh auth login    # or place an SSH key
-  mkdir -p $MACHINE_WORKSPACE && cd $MACHINE_WORKSPACE
-  curl -fsSL --proto "=https" $FM_ROS2_INSTALL_URL | bash -s -- --recorder --service
-NOTE
-chown "$NEW_USER:$NEW_USER" "/home/$NEW_USER/NEXT-STEP.md"
-echo "-- no --gh-token: recorder install deferred (see ~/NEXT-STEP.md)"
-EOF
-  fi
-  cat <<EOF
-echo "== fm first boot done: \$(date) =="
-EOF
-}
-
-build_user_data() {
-  cat <<EOF
-#cloud-config
-# Seeded by fm-setup (./run.sh flash). One appliance, no wizard.
-hostname: $NEW_HOSTNAME
-manage_etc_hosts: true
-ssh_pwauth: false
-package_update: true
-# avahi-daemon earns its place: the image resolves hosts through "files dns"
-# only, so without it $NEW_HOSTNAME.local answers nowhere and the appliance is
-# reachable by IP alone — on a rig that is handed over screenless, that is the
-# difference between working and lost. Installed before runcmd, so the
-# provisioning chain is already followable over .local.
-packages: [curl, git, avahi-daemon, libnss-mdns]
-users:
-  - name: $NEW_USER
-    gecos: First Motive appliance
-    groups: [adm, sudo, dialout, video, plugdev]
-    shell: /bin/bash
-    lock_passwd: true
-    # Appliance owner on a single-purpose box; the install chain and the
-    # auto-updater both need root without a console to type a password into.
-    sudo: ALL=(ALL) NOPASSWD:ALL
-    ssh_authorized_keys:
-EOF
-  local line
-  while IFS= read -r line; do
-    [ -n "$line" ] && printf '      - %s\n' "$line"
-  done <<<"$SSH_KEYS"
-  # The identity card is seeded whether or not the install chain runs. It is
-  # what the machine *is*, not part of provisioning it: a card-less rig cannot
-  # derive a namespace, does not know its own workspace, and cannot be told
-  # apart from the next rig off the same command.
-  cat <<EOF
-write_files:
-  - path: $FM_MACHINE_FILE_LINUX
-    permissions: "0644"
-    content: |
-EOF
-  # The card comes from lib.sh's one emitter, indented into the YAML block the
-  # same way the first-boot script below is. It used to be written inline here,
-  # which is how a backslash meant for a heredoc ended up inside the JSON and
-  # shipped a card no reader could parse.
-  fm_machine_card_literal \
-    "$MACHINE_NAME" jetson "$MACHINE_FLEET" "$MACHINE_TRANSPORT" \
-    "$MACHINE_WORKLOAD" "$MACHINE_WORKSPACE" | sed 's/^/      /'
-  if [ "$PROVISION" = 1 ]; then
-    cat <<EOF
-  - path: /usr/local/sbin/fm-first-boot.sh
-    permissions: "0700"
-    content: |
-EOF
-    build_first_boot_script | sed 's/^/      /'
-    cat <<EOF
-runcmd:
-  - [bash, /usr/local/sbin/fm-first-boot.sh]
-EOF
-  fi
-}
-
-# Stage the three seed files, secrets included, under a 0700 dir the EXIT trap
-# removes.
+# The two secrets travel in the environment rather than on the command line,
+# because an argument to a child process is readable from the process table by
+# any local account for as long as the child lives.
 stage_seed() {
   SEED_DIR="$(mktemp -d "$CACHE_DIR/.seed.XXXXXX")"
   chmod 700 "$SEED_DIR"
-  build_user_data >"$SEED_DIR/user-data"
-  build_network_config >"$SEED_DIR/network-config"
-  cat >"$SEED_DIR/meta-data" <<EOF
-dsmode: local
-instance_id: $NEW_HOSTNAME
-EOF
+  local keys_file="$SEED_DIR/.authorized-keys"
+  ( umask 077; printf '%s' "$SSH_KEYS" >"$keys_file" )
+
+  local args=(
+    --out "$SEED_DIR"
+    --name "$MACHINE_NAME"
+    --user "$NEW_USER"
+    --fleet "$MACHINE_FLEET"
+    --transport "$MACHINE_TRANSPORT"
+    --workspace "$MACHINE_WORKSPACE"
+    --authorized-keys "$keys_file"
+    --setup-url "$FM_SETUP_INSTALL_URL"
+    --ros2-url "$FM_ROS2_INSTALL_URL"
+  )
+  if [ -n "$MACHINE_WORKLOAD" ]; then args+=(--workload "$MACHINE_WORKLOAD"); fi
+  if [ "$PROVISION" != 1 ]; then args+=(--no-provision); fi
+
+  FM_GH_TOKEN="$GH_TOKEN" \
+  FM_TS_AUTHKEY="$TS_AUTHKEY" \
+  FM_FLASH_WIFI="${WIFI_SSID:+$WIFI_SSID:$WIFI_PSK}" \
+  FM_FLASH_PASSWORD_HASH="$PASSWORD_HASH" \
+    bash "$FM_ROOT/scripts/internal/seed-$ROLE.sh" "${args[@]}"
+
+  # The keys are in user-data by now; the staging copy is not seed content and
+  # must not reach the card.
+  rm -f "$keys_file"
 }
 
 # --- Seed injection ---------------------------------------------------------
@@ -487,6 +437,143 @@ inject_seed() {
     linux) inject_seed_linux ;;
   esac
   fm_ok "seed carries $NEW_USER@$NEW_HOSTNAME"
+}
+
+# --- The CIDATA partition ---------------------------------------------------
+#
+# The workstation's half. An ISO's filesystem is read-only, so its seed cannot be
+# swapped the way the Jetson's is; it rides in a FAT partition added after the
+# written ISO, which is where cloud-init's NoCloud datasource looks for a volume
+# labelled CIDATA.
+#
+# sgdisk rather than each platform's own partition editor, because the two would
+# otherwise disagree about a table this delicate: an isohybrid ISO puts its
+# backup GPT header at the end of the *image*, not the end of the stick, and
+# `sgdisk -e` is the one command that moves it before a partition is appended.
+
+# Echo the number of the last partition on DEVICE — the one just appended.
+#
+# Checked for shape rather than trusted: this number becomes a device path that
+# is handed to mkfs and to mount, and sgdisk printing something unexpected —
+# because the table is corrupt, or because stderr arrived on stdout — should
+# stop the run rather than name a device nobody meant.
+last_part_number() {
+  local n
+  n="$(sudo sgdisk --print "$DEVICE" | awk '/^ *[0-9]+ / { last = $1 } END { print last }')"
+  case "$n" in
+    ""|*[!0-9]*) fm_err "could not read a partition number from sgdisk: '${n:-<empty>}'"; return 1 ;;
+  esac
+  printf '%s\n' "$n"
+}
+
+# Echo the device node of partition N on DEVICE.
+part_node() {
+  local n="$1"
+  if [ "$(fm_detect_os)" = "macos" ]; then
+    printf '%ss%s\n' "$DEVICE" "$n"
+  elif [ -b "${DEVICE}${n}" ]; then
+    printf '%s%s\n' "$DEVICE" "$n"
+  else
+    printf '%sp%s\n' "$DEVICE" "$n"
+  fi
+}
+
+unmount_disk() {
+  if [ "$(fm_detect_os)" = "macos" ]; then
+    diskutil unmountDisk force "$DEVICE" >/dev/null
+  else
+    sudo umount "${DEVICE}"?* 2>/dev/null || true
+  fi
+}
+
+append_cidata() {
+  fm_require_cmd sgdisk || {
+    fm_info "macOS: brew install gptfdisk · Debian/Ubuntu: apt install gdisk"
+    return 1
+  }
+  fm_log "adding the $CIDATA_LABEL seed partition"
+  unmount_disk
+
+  # -e first: the ISO's backup GPT sits at the end of the image, and a partition
+  # appended before it is moved lands outside the table the firmware reads.
+  sudo sgdisk -e "$DEVICE" >/dev/null
+  sudo sgdisk --new "0:0:+${FM_FLASH_CIDATA_SIZE_MB}M" \
+    --typecode 0:0700 --change-name "0:$CIDATA_LABEL" "$DEVICE" >/dev/null
+
+  local node
+  node="$(part_node "$(last_part_number)")" || return 1
+
+  if [ "$(fm_detect_os)" = "macos" ]; then
+    diskutil unmountDisk force "$DEVICE" >/dev/null
+    # -F 16: a 64 MB volume is small enough that newfs_msdos would otherwise pick
+    # FAT12, which cloud-init's datasource does not look at.
+    sudo newfs_msdos -F 16 -v "$CIDATA_LABEL" "/dev/r${node#/dev/}" >/dev/null
+  else
+    sudo partprobe "$DEVICE" 2>/dev/null || true
+    sudo mkfs.vfat -F 16 -n "$CIDATA_LABEL" "$node" >/dev/null
+  fi
+
+  copy_seed_to "$node"
+  fm_ok "seed carries $NEW_USER@$NEW_HOSTNAME on $CIDATA_LABEL"
+}
+
+# Mount the CIDATA partition at a temp path, run CMD with it, unmount. Both the
+# copy and the read-back verify want exactly this, and a mount left behind on a
+# stick someone is about to unplug is its own small disaster.
+with_cidata() {
+  local node="$1"; shift
+  local mnt rc=0
+  mnt="$(mktemp -d)"
+  if [ "$(fm_detect_os)" = "macos" ]; then
+    diskutil mount -mountPoint "$mnt" "$node" >/dev/null
+  else
+    sudo mount "$node" "$mnt"
+  fi
+  "$@" "$mnt" || rc=$?
+  sync
+  if [ "$(fm_detect_os)" = "macos" ]; then
+    diskutil unmount "$mnt" >/dev/null 2>&1 || true
+  else
+    sudo umount "$mnt" 2>/dev/null || true
+  fi
+  rmdir "$mnt" 2>/dev/null || true
+  return "$rc"
+}
+
+copy_seed_files() {
+  local mnt="$1"
+  sudo cp "$SEED_DIR/user-data" "$SEED_DIR/meta-data" "$mnt/"
+}
+
+copy_seed_to() { with_cidata "$1" copy_seed_files; }
+
+compare_seed_files() {
+  local mnt="$1" f
+  for f in user-data meta-data; do
+    cmp -s "$SEED_DIR/$f" "$mnt/$f" || {
+      fm_err "$f on the stick does not match what was staged"
+      return 1
+    }
+  done
+}
+
+# Read the seed back off the stick. The ISO region is hashed like any other
+# write; this is the half of the media that dd never saw, so it is compared
+# file by file instead.
+verify_cidata() {
+  local node
+  node="$(part_node "$(last_part_number)")" || return 1
+  fm_log "verifying the seed partition"
+  with_cidata "$node" compare_seed_files || return 1
+  fm_ok "$CIDATA_LABEL carries the staged seed"
+}
+
+# Put the seed where the role's image expects to find it.
+place_seed() {
+  case "$ROLE" in
+    jetson)      inject_seed ;;
+    workstation) append_cidata ;;
+  esac
 }
 
 # --- Flash engines ----------------------------------------------------------
@@ -576,8 +663,8 @@ flash_image() {
     fm_warn "balena failed — falling back to dd"
   fi
   if ! flash_dd; then
-    fm_err "the write failed part-way — the card is not bootable"
-    fm_info "a card that drops off the bus twice is failing, not glitching:"
+    fm_err "the write failed part-way — the media is not bootable"
+    fm_info "media that drops off the bus twice is failing, not glitching:"
     fm_info "try another reader, another port, and skip any hub"
     return 1
   fi
@@ -592,22 +679,39 @@ eject_card() {
 
 # --- Plan -------------------------------------------------------------------
 
+# One line naming where this role's seed ends up, because it is the difference
+# between the two roles a person has to know about: one boots straight through,
+# the other asks once.
+seed_placement_summary() {
+  case "$ROLE" in
+    jetson)      printf 'swapped into the image rootfs (NoCloud)\n' ;;
+    workstation) printf "%s partition after the ISO, %s MB (confirm once at boot)\n" \
+                   "$CIDATA_LABEL" "$FM_FLASH_CIDATA_SIZE_MB" ;;
+  esac
+}
+
 print_plan() {
+  local workspace_flag
+  workspace_flag="$(fm_flash_workspace_flag "$ROLE")"
   fm_banner
   fm_log "flash plan"
-  fm_info "image     $(basename "$FM_JETSON_IMAGE_URL")"
+  fm_info "role      $ROLE"
+  fm_info "image     $(basename "$IMAGE_URL")"
   fm_info "device    ${DEVICE:-<required>}"
   fm_info "identity  $NEW_USER@$NEW_HOSTNAME (password login locked, SSH keys injected)"
-  fm_info "card      $MACHINE_NAME · fleet $MACHINE_FLEET · $MACHINE_TRANSPORT · $MACHINE_WORKLOAD · ns $(fm_machine_namespace "$MACHINE_NAME")"
+  fm_info "card      $MACHINE_NAME · fleet $MACHINE_FLEET · $MACHINE_TRANSPORT · ${MACHINE_WORKLOAD:-none} · ns $(fm_machine_namespace "$MACHINE_NAME")"
   fm_info "workspace $MACHINE_WORKSPACE"
-  fm_info "wifi      ${WIFI_SSID:-none (Ethernet)}"
+  fm_info "seed      $(seed_placement_summary)"
+  if [ "$ROLE" = jetson ]; then
+    fm_info "wifi      ${WIFI_SSID:-none (Ethernet)}"
+  fi
   if [ -n "$TS_AUTHKEY" ]; then
     fm_info "tailscale authkey provided"
   else
     fm_info "tailscale manual (sudo tailscale up --ssh)"
   fi
   if [ "$PROVISION" = 1 ]; then
-    fm_info "boot      fm-setup --jetson${GH_TOKEN:+, then fm_ros2 --recorder --service}"
+    fm_info "boot      fm-setup --$ROLE${GH_TOKEN:+, then fm_ros2 $workspace_flag --service}"
     # The two refs this card will carry. Printed because "reproducible" is a
     # claim about exactly these, and a plan that hides them cannot be checked
     # against the release anyone thinks they are flashing.
@@ -615,24 +719,80 @@ print_plan() {
     setup_ref="${FM_SETUP_INSTALL_URL#"$FM_SETUP_RAW_BASE"/}"; setup_ref="${setup_ref%/install.sh}"
     ros2_ref="${FM_ROS2_INSTALL_URL#"$FM_ROS2_RAW_BASE"/}";   ros2_ref="${ros2_ref%/install.sh}"
     fm_info "refs      fm-setup $setup_ref · fm_ros2 $ros2_ref"
-    [ -n "$GH_TOKEN" ] || fm_info "          (no --gh-token: recorder deferred to ~/NEXT-STEP.md)"
+    [ -n "$GH_TOKEN" ] || fm_info "          (no --gh-token: workspace layer deferred to ~/NEXT-STEP.md)"
   else
     fm_info "boot      identity only (--no-provision)"
+  fi
+}
+
+# Everything a bad flag can be caught on, before anything is fetched, staged, or
+# erased. Returns 2 throughout: a rejected value is a usage error, and `fm`'s
+# exit-code contract keeps that distinct from a run that failed part-way.
+validate_request() {
+  require_sane_cache_dir || return 2
+  resolve_role || return 2
+  require_sane_name hostname "$NEW_HOSTNAME" || return 2
+  require_sane_name username "$NEW_USER" || return 2
+  MACHINE_WORKSPACE="/home/$NEW_USER/fm"
+
+  # Every card field is checked here, against the same validators `machine init`
+  # uses, before any of them is written into the seed. This is the one card
+  # nobody can correct afterwards: an unvalidated value goes onto the media
+  # baked into /etc/fm/machine.json, and a value carrying a quote or a brace
+  # would land as malformed JSON on a machine already in someone's hands.
+  #
+  # The name is checked against the role, not on its own: a card calling itself
+  # fm-ws-01 while claiming to be a jetson puts a recorder's topics under the
+  # workstation's namespace, which is invisible until nothing subscribes.
+  fm_machine_valid_name "$MACHINE_NAME" "$ROLE" || return 2
+  fm_machine_valid_fleet "$MACHINE_FLEET" || return 2
+  fm_machine_valid_transport "$MACHINE_TRANSPORT" || return 2
+  MACHINE_WORKLOAD="$(fm_machine_workload_value "$MACHINE_WORKLOAD")"
+  fm_machine_valid_workload "$MACHINE_WORKLOAD" || return 2
+  fm_machine_valid_workspace "$MACHINE_WORKSPACE" || return 2
+
+  # Both secrets are interpolated into the first-boot script, which runs as root
+  # on the machine, so a value carrying a quote closes the string it sits in and
+  # the rest of it becomes commands. The card is already written by then and the
+  # machine is in someone's hands, so this is checked before anything is staged.
+  case "$GH_TOKEN" in *[!A-Za-z0-9_-]*) fm_err "--gh-token looks malformed"; return 2 ;; esac
+  case "$TS_AUTHKEY" in *[!A-Za-z0-9_-]*) fm_err "--tailscale-authkey looks malformed"; return 2 ;; esac
+
+  # A flag that belongs to the other role is a mistake worth naming. Silently
+  # ignoring it would flash a wired workstation that its operator believes has
+  # wifi credentials on it.
+  if [ "$ROLE" != jetson ] && [ -n "$WIFI_SSID" ]; then
+    fm_err "--wifi is jetson only — the workstation is a wired box"
+    return 2
+  fi
+  if [ "$ROLE" = jetson ] && [ -n "$PASSWORD_HASH" ]; then
+    fm_err "--password-hash is workstation only — the rig's account is locked and key-only"
+    return 2
+  fi
+  # The seed builder refuses a missing or plaintext hash too. Saying so here as
+  # well means a --dry-run reports it, rather than a person discovering it after
+  # the image has downloaded.
+  if [ "$ROLE" = workstation ] && [ "$PROVISION" = 1 ] && [ -z "$PASSWORD_HASH" ]; then
+    fm_err "the workstation needs a console password: set FM_FLASH_PASSWORD_HASH or pass --password-hash"
+    fm_info "generate one with: mkpasswd --method=SHA-512 --rounds=4096"
+    return 2
   fi
 }
 
 main() {
   while [ $# -gt 0 ]; do
     case "$1" in
+      --role)              ROLE="${2:?--role needs a value}"; shift 2 ;;
       --device)            DEVICE="${2:?--device needs a value}"; shift 2 ;;
-      --name)              MACHINE_NAME="${2:?--name needs a value}"; NEW_HOSTNAME="$MACHINE_NAME"; shift 2 ;;
+      --name)              MACHINE_NAME="${2:?--name needs a value}"; shift 2 ;;
       --fleet)             MACHINE_FLEET="${2:?--fleet needs a value}"; shift 2 ;;
       --transport)         MACHINE_TRANSPORT="${2:?--transport needs a value}"; shift 2 ;;
       --workload)          MACHINE_WORKLOAD="${2:?--workload needs a value}"; shift 2 ;;
       --user)              NEW_USER="${2:?}"; shift 2 ;;
       --ssh-key)           SSH_KEY_FILE="${2:?}"; shift 2 ;;
+      --password-hash)     PASSWORD_HASH="${2:?}"; shift 2 ;;
       --wifi)
-        case "${2:-}" in *:*) ;; *) fm_err "--wifi wants ssid:psk"; return 1 ;; esac
+        case "${2:-}" in *:*) ;; *) fm_err "--wifi wants ssid:psk"; return 2 ;; esac
         WIFI_SSID="${2%%:*}"; WIFI_PSK="${2#*:}"; shift 2 ;;
       --tailscale-authkey) TS_AUTHKEY="${2:?}"; shift 2 ;;
       --gh-token)          GH_TOKEN="${2:?}"; shift 2 ;;
@@ -640,32 +800,11 @@ main() {
       --dry-run)           DRY_RUN=1; shift ;;
       -y|--yes)            ASSUME_YES=1; shift ;;
       -h|--help)           usage; return 0 ;;
-      *) fm_err "unknown option: $1"; usage; return 1 ;;
+      *) fm_err "unknown option: $1"; usage; return 2 ;;
     esac
   done
 
-  require_sane_name hostname "$NEW_HOSTNAME"
-  require_sane_name username "$NEW_USER"
-  # The name is the card's primary key, so its shape is checked here rather
-  # than discovered on the rig hours later by a doctor run nobody is watching.
-  MACHINE_WORKSPACE="/home/$NEW_USER/fm"
-  # Every card field is checked here, against the same validators `machine init`
-  # uses, before any of them is written into the seed. This is the one card
-  # nobody can correct afterwards: an unvalidated value goes onto the SD card
-  # baked into /etc/fm/machine.json, and a value carrying a quote or a brace
-  # would land as malformed JSON on a rig that is already in someone's hands.
-  fm_machine_valid_name "$MACHINE_NAME" jetson
-  fm_machine_valid_fleet "$MACHINE_FLEET"
-  fm_machine_valid_transport "$MACHINE_TRANSPORT"
-  MACHINE_WORKLOAD="$(fm_machine_workload_value "$MACHINE_WORKLOAD")"
-  fm_machine_valid_workload "$MACHINE_WORKLOAD"
-  fm_machine_valid_workspace "$MACHINE_WORKSPACE"
-  # Both secrets are interpolated into the first-boot script, which runs as root
-  # on the appliance, so a value carrying a quote closes the string it sits in
-  # and the rest of it becomes commands. The card is already written by then and
-  # the rig is in someone's hands, so this is checked before anything is staged.
-  case "$GH_TOKEN" in *[!A-Za-z0-9_-]*) fm_err "--gh-token looks malformed"; return 1 ;; esac
-  case "$TS_AUTHKEY" in *[!A-Za-z0-9_-]*) fm_err "--tailscale-authkey looks malformed"; return 1 ;; esac
+  validate_request || return $?
 
   print_plan
   if [ "$DRY_RUN" = 1 ]; then
@@ -673,25 +812,46 @@ main() {
     return 0
   fi
 
-  [ -n "$DEVICE" ] || { fm_err "--device is required"; usage; return 1; }
+  [ -n "$DEVICE" ] || { fm_err "--device is required"; usage; return 2; }
   case "$(fm_detect_os)" in
     macos) validate_device_macos ;;
     linux) validate_device_linux ;;
   esac
 
-  # Keys are the only door into the appliance — fail before the disk is erased.
+  # Keys are the only door in — fail before the disk is erased.
   SSH_KEYS="$(collect_ssh_keys)"
 
   fetch_image
-  clone_image
   stage_seed
-  inject_seed
-  confirm_erase
-  flash_image
+
+  # The jetson's seed goes into the image before the write; the workstation's
+  # goes onto the media after it, because an ISO is written exactly as it came.
+  if [ "$ROLE" = jetson ]; then
+    clone_image
+    place_seed
+    confirm_erase
+    flash_image
+  else
+    WORK_IMG="$IMAGE_RAW"
+    confirm_erase
+    flash_image
+    place_seed
+    verify_cidata
+  fi
   eject_card
 
-  fm_ok "insert the card and power the Jetson on"
-  fm_info "first boot provisions unattended; follow it with:"
+  report_next_steps
+}
+
+report_next_steps() {
+  if [ "$ROLE" = workstation ]; then
+    fm_ok "boot the workstation from this stick and confirm the autoinstall once"
+    fm_info "pick it from the firmware's boot menu, answer the one prompt, then leave it:"
+    fm_info "the install, the reboot, and both provisioning layers run unattended"
+  else
+    fm_ok "insert the card and power the Jetson on"
+    fm_info "first boot provisions unattended; follow it with:"
+  fi
   fm_info "  ssh $NEW_USER@$NEW_HOSTNAME.local tail -f /var/log/fm-first-boot.log"
   fm_info "give it a few minutes: .local answers only once cloud-init has"
   fm_info "installed avahi. Before that, try the router's own DNS:"

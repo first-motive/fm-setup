@@ -419,6 +419,22 @@ fm_machine_valid_name() {
   esac
 }
 
+# fm_flash_workspace_flag ROLE — echo the fm_ros2 install flag a flashed
+# machine's first boot passes (jetson→--recorder).
+#
+# Beside fm_machine_abbrev because it answers the same shape of question from the
+# same kind of table: a per-role fact that two scripts would otherwise each keep
+# their own copy of, and disagree about the day a role is added.
+fm_flash_workspace_flag() {
+  local role="$1" entry r f
+  for entry in ${FM_FLASH_WORKSPACE_FLAG[@]+"${FM_FLASH_WORKSPACE_FLAG[@]}"}; do
+    IFS='|' read -r r f <<<"$entry"
+    [ "$r" = "$role" ] && { printf '%s\n' "$f"; return 0; }
+  done
+  fm_err "no workspace install flag for role '$role' — add one to the manifest"
+  return 1
+}
+
 # fm_machine_abbrev ROLE — echo the name abbreviation a role uses (jetson→rec).
 fm_machine_abbrev() {
   local role="$1" entry r a
