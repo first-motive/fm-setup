@@ -639,8 +639,14 @@ verify_card() {
   fm_log "verifying the card against the image"
   expected="$(sha256_stream <"$WORK_IMG")"
   # A short or failed read changes the hash, so the comparison below is the
-  # error check — the pipeline's own exit status adds nothing.
-  actual="$(sudo dd if="$raw" bs=16m 2>/dev/null | head -c "$size" | sha256_stream)"
+  # error check — the pipeline's own exit status adds nothing. It subtracts,
+  # in fact: `head` closes the pipe at $size, dd dies of SIGPIPE, and under
+  # `pipefail` + `errexit` that killed this whole script here with no message,
+  # no "card matches", and no seed partition (fm-ws-01, 2026-08-27). Read
+  # exactly the image's bytes instead so dd ends on its own, and keep the
+  # `|| true` so a stray signal still lands in the hash comparison, not here.
+  actual="$( { sudo dd if="$raw" bs=1048576 count="$(( (size + 1048575) / 1048576 ))" 2>/dev/null || true; } \
+             | head -c "$size" | sha256_stream)"
   if [ "$actual" != "$expected" ]; then
     fm_err "the card does not match the image — it is not bootable"
     fm_info "re-seat the reader and run this again; a dropped USB link mid-write"
