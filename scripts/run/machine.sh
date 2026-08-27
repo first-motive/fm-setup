@@ -234,6 +234,11 @@ do_init() {
   fm_info "workload   ${WORKLOAD:-none}"
   fm_info "workspace  $WORKSPACE"
   fm_info "namespace  $(fm_machine_namespace "$NAME")  (derived, never typed)"
+  # The card is read once, at service start. Nothing here can reach into a
+  # running fm-zenoh-bridge and tell it the workload changed, and a bridge that
+  # kept its old profile filters with the old allow-list while every file on the
+  # machine says otherwise (fm-comms#20).
+  fm_info "transport services read the card at start — restart fm-zenoh-bridge"
 
   align_hostname
 }
