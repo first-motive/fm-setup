@@ -168,7 +168,7 @@ do_uninstall() {
   fi
 
   if [ -f "$SRC_DIR/build/install_manifest.txt" ]; then
-    sudo xargs -r rm -f < "$SRC_DIR/build/install_manifest.txt"
+    sudo cat "$SRC_DIR/build/install_manifest.txt" | sudo xargs -r rm -f
     sudo ldconfig
     fm_ok "RSUSB build removed from $PREFIX"
   else
