@@ -61,6 +61,7 @@ JETSON_STEPS=(
   "docker|30-docker.sh|on"
   "ros2|40-ros2.sh|on"
   "udev-rules|45-udev-rules.sh|on"
+  "librealsense-rsusb|47-librealsense-rsusb.sh|on"
   "dds-tuning|50-dds-tuning.sh|on"
   "tailscale|60-tailscale.sh|on"
 )
