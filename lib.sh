@@ -219,6 +219,31 @@ fm_ledger_packages() {
 # drift is measured against.
 fm_apt_manual() { apt-mark showmanual 2>/dev/null | sort; }
 
+# The manual set this host arrived with, captured once by the system-update step
+# before anything else has run. Drift is measured against it: without a baseline
+# every package the OS image shipped would read as unexplained.
+fm_baseline_file() { printf '%s\n' "$FM_STATE_DIR/baseline"; }
+
+# Record the baseline if it has not been recorded yet. Idempotent, and never
+# overwrites: a second capture on a provisioned host would adopt every package
+# the steps had since added, which is exactly what drift is supposed to find.
+fm_baseline_capture() {
+  local file
+  file="$(fm_baseline_file)"
+  if [ -f "$file" ]; then
+    fm_skip "baseline already captured"
+    return 0
+  fi
+  local tmp
+  tmp="$(mktemp)" || return 1
+  fm_apt_manual > "$tmp"
+  fm_state_sudo mkdir -p "$FM_STATE_DIR"
+  fm_state_sudo cp "$tmp" "$file"
+  fm_state_sudo chmod 0644 "$file"
+  rm -f "$tmp"
+  fm_ok "baseline captured: $(wc -l < "$file" | tr -d ' ') packages"
+}
+
 # fm_apt_install STEP PKG… — install PKGs and record what appeared.
 #
 # Idempotent: a package already present is not reinstalled, and a re-run adds

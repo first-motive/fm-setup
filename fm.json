@@ -1,6 +1,10 @@
 {
   "version": 1,
   "commands": {
+    "pkg": {
+      "script": "scripts/run/pkg.sh",
+      "help": "install a one-off package, recorded against the adhoc ledger"
+    },
     "machine": {
       "script": "scripts/run/machine.sh",
       "help": "this host's identity card: init | show | doctor | reset"

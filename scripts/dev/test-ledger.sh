@@ -219,6 +219,53 @@ assert_rc "uninstall refuses the same id" 1 fm_apt_uninstall "../evil"
 assert_eq "and wrote nothing outside the ledger" "false" \
   "$([ -e "$TMP/state/evil" ] && echo true || echo false)"
 
+# --- Drift ------------------------------------------------------------------
+#
+# The audit's package half, which is the half a fake apt can prove. Units and
+# /etc need a real host, and both degrade to a skip where they cannot look.
+
+DRIFT="$FM_ROOT/scripts/internal/drift.sh"
+export FM_ROOT
+drift_out() { bash "$DRIFT" "$FM_ROOT/scripts/steps" 2>&1; }
+
+# The host arrives with something already installed, as every host does.
+echo "coreutils" >> "$INSTALLED"; echo "coreutils" >> "$MANUAL"
+fm_baseline_capture >/dev/null
+assert_eq "the baseline is captured once" "coreutils" "$(cat "$(fm_baseline_file)")"
+
+fm_apt_install docker foo >/dev/null
+assert_eq "a package a step installed is accounted for" "1" \
+  "$(drift_out | grep -c 'packages: none unaccounted for')"
+
+# Installed behind the steps' back, which is the whole point of the audit.
+echo "sl" >> "$INSTALLED"; echo "sl" >> "$MANUAL"
+assert_eq "a package nobody claimed is reported" "1" "$(drift_out | grep -c '^ *sl$')"
+
+# Recording it is what stops the report, without pretending a step exists.
+fm_ledger_record adhoc sl
+assert_eq "recording it clears the report" "1" \
+  "$(drift_out | grep -c 'packages: none unaccounted for')"
+
+# A second capture would adopt everything the steps have since added.
+fm_baseline_capture >/dev/null
+assert_eq "the baseline is never recaptured" "coreutils" "$(cat "$(fm_baseline_file)")"
+
+# --- Declared units ---------------------------------------------------------
+#
+# The audit reads FM_UNITS out of the step files with sed rather than sourcing
+# them, because a step file ends in fm_dispatch and sourcing one would run it.
+# That makes the parse a contract with the step template, so it is held here.
+
+FAKE_STEPS="$TMP/steps"
+mkdir -p "$FAKE_STEPS"
+printf 'FM_UNITS=(one.service two.timer)\n' > "$FAKE_STEPS/10-a.sh"
+printf 'FM_UNITS=("quoted.service")\n'      > "$FAKE_STEPS/20-b.sh"
+printf 'echo no units here\n'               > "$FAKE_STEPS/30-c.sh"
+
+assert_eq "units are read from every step that declares them" "one.service quoted.service two.timer" \
+  "$(bash "$DRIFT" "$FAKE_STEPS" --declared-units | tr '\n' ' ' | sed 's/ $//')"
+assert_rc "the audit runs against a steps dir that declares none" 0 bash "$DRIFT" "$FM_ROOT/scripts/steps"
+
 # --- Result ----------------------------------------------------------------
 
 printf '\n'
