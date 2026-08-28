@@ -26,6 +26,7 @@
 # Ubuntu 26.04 on the GPU workstation: training, annotation, and sim.
 WORKSTATION_STEPS=(
   "system-update|00-system-update.sh|on"
+  "etckeeper|05-etckeeper.sh|on"
   "base-deps|10-base-deps.sh|on"
   "workspace|12-workspace.sh|on"
   "fm-cli|15-fm-cli.sh|on"
@@ -55,6 +56,7 @@ WORKSTATION_STEPS=(
 # no shared /data. Add both here the day someone develops on it directly.
 JETSON_STEPS=(
   "system-update|00-system-update.sh|on"
+  "etckeeper|05-etckeeper.sh|on"
   "base-deps|10-base-deps.sh|on"
   "workspace|12-workspace.sh|on"
   "fm-cli|15-fm-cli.sh|on"
