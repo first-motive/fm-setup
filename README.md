@@ -43,6 +43,14 @@ unless the machine's identity card says otherwise — and hands over to the
 checkout, because the manifest and the steps live in the repo, and a provisioned
 machine needs them on disk to re-check itself later.
 
+Every package a step installs is recorded against that step, in a ledger under
+`/var/lib/fm-setup/pkgs`. That is what lets one step be uninstalled without
+taking another's dependencies with it: a removal that would reach outside the
+step's own ledger aborts and names what it would have taken. `--check` ends by
+reporting drift — packages, enabled units, and `/etc` changes that no step
+accounts for — and `fm pkg add <name>` records a one-off so it is accounted for
+from the moment it lands.
+
 The workspace is not an arbitrary choice of directory. It is the card's
 `workspace` field, the one visible parent every First Motive checkout shares,
 and it is where the `fm` CLI looks: a copy of this repo kept anywhere else is one
