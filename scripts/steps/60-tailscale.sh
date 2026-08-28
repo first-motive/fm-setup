@@ -39,6 +39,10 @@ do_install() {
     # Tailscale's own installer adds the apt repo for this distro release and
     # installs the daemon. It is the vendor's documented path.
     curl -fsSL https://tailscale.com/install.sh | sh
+    # The vendor's installer adds its own apt repo and installs from it, so
+    # there is no fm_apt_install call to diff. The package it lands is the one
+    # named here.
+    fm_ledger_record tailscale tailscale
     fm_ok "tailscale installed"
   fi
 
@@ -64,8 +68,7 @@ do_uninstall() {
   # Logging out first releases the node from the tailnet; removing the package
   # alone leaves a stale machine in the admin console.
   sudo tailscale logout || fm_warn "tailscale logout failed — remove the node in the admin console"
-  sudo apt-get remove -y tailscale
-  fm_ok "tailscale removed"
+  fm_apt_uninstall tailscale || return 1
 }
 
 fm_dispatch "$@"

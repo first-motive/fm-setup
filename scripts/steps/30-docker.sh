@@ -80,16 +80,7 @@ do_install() {
 
   [ -f "$SOURCES" ] || add_repo
 
-  local missing=()
-  for p in "${FM_DOCKER_APT[@]}"; do
-    fm_has_pkg "$p" || missing+=("$p")
-  done
-  if [ "${#missing[@]}" -gt 0 ]; then
-    fm_log "apt install ${missing[*]}"
-    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "${missing[@]}"
-  else
-    fm_ok "docker packages present"
-  fi
+  fm_apt_install docker "${FM_DOCKER_APT[@]}"
 
   if id -nG "$USER" | tr ' ' '\n' | grep -qx docker; then
     fm_ok "$USER already in the docker group"
@@ -110,14 +101,7 @@ do_install() {
 }
 
 do_uninstall() {
-  local p installed=()
-  for p in "${FM_DOCKER_APT[@]}"; do
-    fm_has_pkg "$p" && installed+=("$p")
-  done
-  if [ "${#installed[@]}" -gt 0 ]; then
-    fm_log "apt remove ${installed[*]}"
-    sudo apt-get remove -y "${installed[@]}"
-  fi
+  fm_apt_uninstall docker || return 1
   sudo rm -f "$SOURCES" "$KEYRING"
   # Images, volumes, and networks live in /var/lib/docker and are left alone:
   # removing them would destroy pulled models and dataset volumes.

@@ -45,13 +45,7 @@ do_install() {
     return 0
   fi
 
-  if fm_has_pkg "$FM_NVIDIA_DRIVER"; then
-    fm_ok "$FM_NVIDIA_DRIVER already installed"
-  else
-    fm_log "apt install $FM_NVIDIA_DRIVER"
-    sudo apt-get update
-    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "$FM_NVIDIA_DRIVER"
-  fi
+  fm_apt_install nvidia "$FM_NVIDIA_DRIVER"
 
   if driver_loaded; then
     fm_ok "driver loaded: $(nvidia-smi --query-gpu=driver_version --format=csv,noheader | head -1)"

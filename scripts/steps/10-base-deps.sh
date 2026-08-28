@@ -21,20 +21,7 @@ do_check() {
 }
 
 do_install() {
-  local p missing=()
-  for p in "${FM_APT_BASE[@]}"; do
-    fm_has_pkg "$p" || missing+=("$p")
-  done
-
-  if [ "${#missing[@]}" -eq 0 ]; then
-    fm_ok "base deps present"
-    return 0
-  fi
-
-  fm_log "apt install ${missing[*]}"
-  sudo apt-get update
-  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "${missing[@]}"
-  fm_ok "base deps installed"
+  fm_apt_install base-deps "${FM_APT_BASE[@]}"
 }
 
 do_uninstall() {

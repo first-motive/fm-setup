@@ -76,6 +76,12 @@ do_install() {
   sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --allow-downgrades "${pinned[@]}"
   sudo apt-mark hold "${FM_NVIDIA_CONTAINER_APT[@]}" >/dev/null
 
+  # Recorded rather than installed through fm_apt_install: this is the one step
+  # that installs pinned "name=version" strings, which the helper's presence
+  # check cannot read. The packages are named in the manifest, so what the
+  # ledger must hold is known without diffing for it.
+  fm_ledger_record nvidia-container "${FM_NVIDIA_CONTAINER_APT[@]}"
+
   fm_log "configuring the docker runtime"
   sudo nvidia-ctk runtime configure --runtime=docker
   sudo systemctl restart docker
@@ -88,11 +94,12 @@ do_uninstall() {
   for p in "${FM_NVIDIA_CONTAINER_APT[@]}"; do
     fm_has_pkg "$p" && installed+=("$p")
   done
+  # The hold comes off first: apt refuses to remove a held package, and the
+  # ledger's own refusal must be the one that stops this, not a stale hold.
   if [ "${#installed[@]}" -gt 0 ]; then
     sudo apt-mark unhold "${installed[@]}" >/dev/null
-    fm_log "apt remove ${installed[*]}"
-    sudo apt-get remove -y "${installed[@]}"
   fi
+  fm_apt_uninstall nvidia-container || return 1
   sudo rm -f "$SOURCES" "$KEYRING"
   fm_warn "/etc/docker/daemon.json still names the nvidia runtime — edit it before restarting docker"
 }
