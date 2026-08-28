@@ -250,24 +250,47 @@ fm_apt_manual() { apt-mark showmanual 2>/dev/null | LC_ALL=C sort; }
 # every package the OS image shipped would read as unexplained.
 fm_baseline_file() { printf '%s\n' "$FM_STATE_DIR/baseline"; }
 
+# The same idea for systemd. A machine arrives with about a hundred enabled
+# units nobody chose — NetworkManager, cron, apport, cloud-init — and no step
+# will ever declare one of them. Reported against nothing, that is a hundred
+# lines of noise on every check, which is how a drift report teaches people to
+# stop reading it.
+fm_baseline_units_file() { printf '%s\n' "$FM_STATE_DIR/baseline-units"; }
+
+# Echo the units this host will start on its own, sorted. `enabled` alone: a
+# static or generated unit is not something anyone chose.
+fm_enabled_units() {
+  fm_has_cmd systemctl || return 0
+  systemctl list-unit-files --state=enabled --no-legend --no-pager 2>/dev/null \
+    | awk '{print $1}' | LC_ALL=C sort -u
+}
+
 # Record the baseline if it has not been recorded yet. Idempotent, and never
 # overwrites: a second capture on a provisioned host would adopt every package
 # the steps had since added, which is exactly what drift is supposed to find.
 fm_baseline_capture() {
-  local file
-  file="$(fm_baseline_file)"
+  _fm_baseline_one "$(fm_baseline_file)" packages fm_apt_manual
+  _fm_baseline_one "$(fm_baseline_units_file)" units fm_enabled_units
+}
+
+# _fm_baseline_one FILE LABEL PRODUCER — write PRODUCER's output to FILE once.
+#
+# Split per file rather than per run, because the two baselines were added at
+# different times: a host that captured packages before units existed must still
+# get its unit baseline on the next run, and neither may overwrite the other.
+_fm_baseline_one() {
+  local file="$1" label="$2" producer="$3" tmp
   if [ -f "$file" ]; then
-    fm_skip "baseline already captured"
+    fm_skip "$label baseline already captured"
     return 0
   fi
-  local tmp
   tmp="$(mktemp)" || return 1
-  fm_apt_manual > "$tmp"
+  "$producer" > "$tmp"
   fm_state_sudo mkdir -p "$FM_STATE_DIR"
   fm_state_sudo cp "$tmp" "$file"
   fm_state_sudo chmod 0644 "$file"
   rm -f "$tmp"
-  fm_ok "baseline captured: $(wc -l < "$file" | tr -d ' ') packages"
+  fm_ok "$label baseline captured: $(wc -l < "$file" | tr -d ' ') $label"
 }
 
 # fm_apt_install STEP PKG… — install PKGs and record what appeared.

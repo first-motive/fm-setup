@@ -30,6 +30,8 @@ export FM_STATE_DIR="$TMP/state"
 # shellcheck source=../../lib.sh disable=SC1091
 . "$FM_ROOT/lib.sh"
 
+mkdir -p "$TMP/steps-declaring"
+
 PASS=0
 FAIL=0
 ok()  { PASS=$((PASS + 1)); printf '    %s✓%s %s\n' "${FM_C_GREEN}" "${FM_C_RESET}" "$1"; }
@@ -58,8 +60,10 @@ assert_rc() {
 
 BIN="$TMP/bin"
 mkdir -p "$BIN"
-export INSTALLED="$TMP/installed" MANUAL="$TMP/manual" REVDEP="$TMP/revdep"
+export INSTALLED="$TMP/installed" MANUAL="$TMP/manual" REVDEP="$TMP/revdep" ENABLED="$TMP/enabled"
 : > "$INSTALLED"; : > "$MANUAL"; : > "$REVDEP"
+# The units any machine arrives with, present before the first capture.
+printf 'NetworkManager.service\ncron.service\n' > "$ENABLED"
 export PATH="$BIN:$PATH"
 
 cat > "$BIN/dpkg" <<'FAKE'
@@ -72,6 +76,16 @@ cat > "$BIN/apt-mark" <<'FAKE'
 #!/usr/bin/env bash
 [ "${1:-}" = "showmanual" ] || exit 1
 cat "$MANUAL"
+FAKE
+
+# The unit half needs a systemd to have an opinion. ENABLED stands in for
+# `systemctl list-unit-files --state=enabled`, in that command's column shape.
+cat > "$BIN/systemctl" <<'FAKE'
+#!/usr/bin/env bash
+case " $* " in
+  *" list-unit-files "*) awk '{print $1, "enabled", "enabled"}' "$ENABLED" ;;
+  *) exit 1 ;;
+esac
 FAKE
 
 cat > "$BIN/sudo" <<'FAKE'
@@ -249,6 +263,29 @@ assert_eq "recording it clears the report" "1" \
 # A second capture would adopt everything the steps have since added.
 fm_baseline_capture >/dev/null
 assert_eq "the baseline is never recaptured" "coreutils" "$(cat "$(fm_baseline_file)")"
+
+# --- Units against their own baseline ---------------------------------------
+#
+# A machine arrives with about a hundred enabled units nobody chose. Reported
+# against nothing, that buries the one unit somebody did enable — which is the
+# whole finding this audit exists to surface.
+
+assert_eq "the unit baseline is captured too" "NetworkManager.service cron.service" \
+  "$(tr '\n' ' ' < "$(fm_baseline_units_file)" | sed 's/ $//')"
+assert_eq "the OS image's own units are not drift" "1" \
+  "$(drift_out | grep -c 'units: none unaccounted for')"
+
+# One unit enabled after provisioning, which no step declares.
+printf 'somebody-enabled-this.service\n' >> "$ENABLED"
+assert_eq "a unit enabled since the baseline is reported" "1" \
+  "$(drift_out | grep -c 'somebody-enabled-this.service')"
+assert_eq "and the hundred it arrived with are not" "0" \
+  "$(drift_out | grep -c 'NetworkManager.service')"
+
+# A step that declares the unit accounts for it, same as a ledger does a package.
+printf 'FM_UNITS=(somebody-enabled-this.service)\n' > "$TMP/steps-declaring/50-x.sh"
+assert_eq "a step declaring it clears the report" "1" \
+  "$(bash "$DRIFT" "$TMP/steps-declaring" 2>&1 | grep -c 'units: none unaccounted for')"
 
 # --- Claiming what nothing owns ---------------------------------------------
 #
