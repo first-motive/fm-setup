@@ -36,6 +36,56 @@ that provisions one cannot.
 3. Confirm each mode holds its contract: `check` never mutates and exits 0,
    `install` is idempotent, `uninstall` reverses what it can and warns about
    what it cannot.
+4. If the step enables a systemd unit, name it in an `FM_UNITS=(…)` array in the
+   step file. The drift audit reads that array to tell an enabled unit somebody
+   chose from one nobody did.
+
+### Packages Go Through The Ledger
+
+A step never calls `apt-get` directly:
+
+```bash
+fm_apt_install <step-id> <pkg>…    # install, and record what actually appeared
+fm_apt_uninstall <step-id>         # remove only what this step's ledger holds
+```
+
+The step id is the same string as the manifest id, in both calls. A mismatch
+means an uninstall silently removes nothing.
+
+`fm_apt_install` records the difference the install made — the manual apt set
+before and after — into `/var/lib/fm-setup/pkgs/<step>`. `fm_apt_uninstall`
+simulates the removal first and refuses, naming the extras, if it would reach a
+package outside that file. That refusal is the point: `apt-get remove` on a
+step's declared list takes every reverse-dependent with it, which is how
+removing the container toolkit used to take Docker.
+
+Never `apt-get autoremove` and never `purge` from an uninstall. Both reach past
+the step by design.
+
+Two cases cannot go through the helper, and both record explicitly with
+`fm_ledger_record <step-id> <pkg>…`: a pinned `name=version` install, whose
+presence check the helper cannot read, and a vendor installer that adds its own
+repo. Both are commented where they appear.
+
+### One-Off Packages
+
+A package needed now, before anyone knows whether it is permanent:
+
+```bash
+fm pkg add ffmpeg     # installed and recorded against the adhoc ledger
+fm pkg list           # what is waiting to be promoted to a step
+```
+
+It is not an escape from the rule — it is the rule's cheap path. The package is
+accounted for immediately, and drift stops reporting it. A package still there
+next month belongs in a step.
+
+### Drift
+
+`./install.sh --check` ends with a drift report: manually installed packages in
+neither the baseline nor any ledger, enabled units no step declares, and
+uncommitted changes under `/etc`. It reports and never fixes — the repair is a
+step, or a removal, and both are decisions a person makes.
 
 A script under `scripts/run/` is a person-typed verb and must be declared in
 `fm.json` in the same change. CI fails on an undeclared verb.
@@ -78,6 +128,7 @@ Run both before opening a PR:
 ```bash
 shellcheck install.sh run.sh lib.sh scripts/manifest.sh scripts/*/*.sh
 FM_SELFTEST=1 bash install.sh
+./scripts/dev/test-ledger.sh
 ```
 
 ## Onboarding

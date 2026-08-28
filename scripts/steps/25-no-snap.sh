@@ -163,20 +163,11 @@ do_install() {
     sudo DEBIAN_FRONTEND=noninteractive apt-get purge -y firefox
   fi
 
-  if fm_has_pkg firefox; then
-    fm_ok "firefox present ($(firefox_version))"
-  else
-    fm_log "apt install firefox (packages.mozilla.org)"
-    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y firefox
-    fm_ok "firefox installed from apt"
-  fi
+  fm_apt_install no-snap firefox
 }
 
 do_uninstall() {
-  if fm_has_pkg firefox; then
-    fm_log "apt remove firefox"
-    sudo apt-get remove -y firefox
-  fi
+  fm_apt_uninstall no-snap || return 1
   sudo rm -f "$SOURCES" "$KEYRING" "$MOZILLA_PIN" "$SNAP_PIN"
   # snapd is not put back. Reinstalling it would re-mount the confinement this
   # step exists to remove, on a machine whose owner asked for the opposite, and

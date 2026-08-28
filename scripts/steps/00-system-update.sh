@@ -15,6 +15,12 @@ fm_require_linux
 
 do_check() {
   local pending
+  if [ -f "$(fm_baseline_file)" ]; then
+    fm_ok "package baseline captured"
+  else
+    fm_warn "no package baseline — drift cannot be reported until this step installs"
+  fi
+
   pending="$(apt list --upgradable 2>/dev/null | grep -c upgradable || true)"
   if [ "$pending" -gt 0 ]; then
     fm_info "$pending package(s) upgradable"
@@ -26,6 +32,11 @@ do_check() {
 }
 
 do_install() {
+  # Before the upgrade, and before any other step has installed anything: this
+  # is the only moment the manual set is still only what the OS image shipped.
+  # Every later drift report is measured against it.
+  fm_baseline_capture
+
   fm_log "apt update && apt upgrade"
   sudo apt-get update
   sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y

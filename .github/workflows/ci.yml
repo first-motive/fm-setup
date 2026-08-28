@@ -129,6 +129,18 @@ jobs:
       - name: Exercise the machine identity card
         run: ./scripts/dev/test-machine.sh
 
+  # The ledger decides what an uninstall may remove from a provisioned machine,
+  # so its bug is measured in packages someone did not ask to lose. No runner has
+  # a machine to prove that on, and rehearsing a removal in a container proves
+  # only that container's apt — the suite fakes apt instead, which is the one way
+  # to stage the case that matters: a removal that would widen past the step.
+  ledger:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - name: Exercise the apt ledger
+        run: ./scripts/dev/test-ledger.sh
+
   # The path a fresh machine actually takes: install.sh arrives over a pipe with
   # no file on disk, fetches lib.sh, verifies it, clones the repo, and hands over
   # to the checkout. It is the one path a plain `bash install.sh` never covers,

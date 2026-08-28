@@ -93,12 +93,7 @@ do_check() {
 }
 
 ensure_build_deps() {
-  local missing=() p
-  for p in "${BUILD_DEPS[@]}"; do fm_has_pkg "$p" || missing+=("$p"); done
-  if [ "${#missing[@]}" -gt 0 ]; then
-    fm_log "installing build deps: ${missing[*]}"
-    sudo apt-get install -y "${missing[@]}"
-  fi
+  fm_apt_install librealsense-rsusb "${BUILD_DEPS[@]}"
 }
 
 build_library() {
@@ -174,6 +169,10 @@ do_uninstall() {
   else
     fm_skip "no install manifest — $PREFIX files left in place"
   fi
+
+  # Only the build deps this step brought in, and only if removing them takes
+  # nothing else. A compiler another step needs stays.
+  fm_apt_uninstall librealsense-rsusb || fm_warn "build deps left in place"
 }
 
 fm_dispatch "$@"

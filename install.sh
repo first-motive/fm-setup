@@ -348,6 +348,16 @@ main() {
   echo
 
   fm_run_steps "$mode" "$role" "$here/scripts/steps" "$dry"
+
+  # Last, and only on a check: the steps report what they were asked to put on
+  # the machine, and this reports what is on it that nobody asked for. A warning
+  # rather than a failure — a drifted host is a host to look at, not a broken
+  # command.
+  if [ "$mode" = "check" ] && [ "$dry" != "1" ]; then
+    echo
+    FM_ROOT="$here" bash "$here/scripts/internal/drift.sh" "$here/scripts/steps" || true
+  fi
+
   fm_ok "done."
 }
 

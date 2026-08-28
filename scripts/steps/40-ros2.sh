@@ -105,6 +105,10 @@ _add_repo_inner() {
   fi
 
   sudo apt-get install -y "$deb"
+  # A local .deb, so there is no package list to install it from and nothing for
+  # fm_apt_install to diff. Named here instead, from the one package the file
+  # carries.
+  fm_ledger_record ros2 ros2-apt-source
 }
 
 # Whether any ROS 2 apt source is already on the host, in either format.
@@ -141,8 +145,7 @@ do_install() {
   done < <(ros_packages)
 
   if [ "${#missing[@]}" -gt 0 ]; then
-    fm_log "apt install ${missing[*]}"
-    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "${missing[@]}"
+    fm_apt_install ros2 "${missing[@]}"
   else
     fm_ok "ROS packages present"
   fi
