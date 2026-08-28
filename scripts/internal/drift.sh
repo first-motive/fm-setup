@@ -26,6 +26,9 @@ FM_ROOT="${FM_ROOT:-$(cd "$_here/../.." && pwd)}"
 STEPS_DIR="${1:-$FM_ROOT/scripts/steps}"
 
 # Every package any step has claimed on this host, plus the baseline, sorted.
+#
+# Every sort feeding a comm below pins LC_ALL=C — see fm_ledger_steps in lib.sh
+# for what a UTF-8 collation does to a byte-wise merge.
 accounted_packages() {
   local step
   if [ -f "$(fm_baseline_file)" ]; then cat "$(fm_baseline_file)"; fi
@@ -42,7 +45,7 @@ accounted_packages() {
 # convention, which is what the step template shows.
 declared_units() {
   sed -n 's/^FM_UNITS=(\(.*\))$/\1/p' "$STEPS_DIR"/*.sh 2>/dev/null \
-    | tr ' ' '\n' | tr -d '"' | sed '/^$/d' | sort -u
+    | tr ' ' '\n' | tr -d '"' | sed '/^$/d' | LC_ALL=C sort -u
 }
 
 # Units this host will start on its own. `enabled` alone: a static or generated
@@ -51,12 +54,12 @@ declared_units() {
 enabled_units() {
   fm_has_cmd systemctl || return 0
   systemctl list-unit-files --state=enabled --no-legend --no-pager 2>/dev/null \
-    | awk '{print $1}' | sort -u
+    | awk '{print $1}' | LC_ALL=C sort -u
 }
 
 report_packages() {
   local extra
-  extra="$(comm -13 <(accounted_packages | sort -u) <(fm_apt_manual))"
+  extra="$(LC_ALL=C comm -13 <(accounted_packages | LC_ALL=C sort -u) <(fm_apt_manual))"
   if [ -z "$extra" ]; then
     fm_ok "packages: none unaccounted for"
     return 0
@@ -69,7 +72,7 @@ report_packages() {
 report_units() {
   local extra
   fm_has_cmd systemctl || { fm_skip "units (no systemctl)"; return 0; }
-  extra="$(comm -13 <(declared_units) <(enabled_units))"
+  extra="$(LC_ALL=C comm -13 <(declared_units) <(enabled_units))"
   if [ -z "$extra" ]; then
     fm_ok "units: none unaccounted for"
     return 0
