@@ -138,6 +138,201 @@ fm_verify_checksum() {
   fi
 }
 
+# --- Apt ledger ------------------------------------------------------------
+#
+# What each step actually added to this machine, recorded at install time.
+#
+# A step's package list says what it asks for. It does not say what apt put on
+# the host to satisfy the request, and it does not say which of those packages
+# another step had already pulled in. Uninstall needs both. `apt-get remove` on
+# a step's declared list takes every reverse-dependent with it, so removing the
+# container toolkit can take Docker, and `autoremove` afterwards takes whatever
+# else has since been orphaned — on a machine whose other steps are still meant
+# to work.
+#
+# So each install records the difference it made: the manual set before, the
+# manual set after, and the packages that appeared between them, appended to a
+# per-step file. Uninstall removes only what its own file holds, and only after
+# a simulated removal proves the real one stays inside that set.
+#
+# The ledger records this host; it is not a second copy of the manifest. The
+# manifest declares intent and is reviewed. The ledger observes the result and
+# is never edited by hand.
+
+# Where the observed state of this host is kept. Overridable so a test and a
+# rehearsal container write somewhere they already own — see fm_state_sudo.
+FM_STATE_DIR="${FM_STATE_DIR:-/var/lib/fm-setup}"
+
+# Derived, not separately overridable: one knob moves the whole state
+# directory, so a test cannot redirect the ledger and leave the baseline
+# pointing at the real machine.
+FM_LEDGER_DIR="$FM_STATE_DIR/pkgs"
+
+# fm_state_sudo CMD… — run CMD as root only when the state directory is the
+# system path. Under the override it runs plain, for the same reason card_sudo
+# does: the override exists for tests and rehearsal, which write where the
+# caller can already write, and honouring it with sudo would turn a debugging
+# knob into a way to spend someone's sudo on a path of the environment's
+# choosing.
+fm_state_sudo() {
+  if [ "$FM_STATE_DIR" = /var/lib/fm-setup ] && [ "$(id -u)" != 0 ]; then
+    sudo "$@"
+  else
+    "$@"
+  fi
+}
+
+# Echo a step's ledger file, whether or not it exists.
+#
+# A step id is a filename here, so one carrying a slash would resolve the ledger
+# somewhere else entirely — and both writers run under sudo. Every id in use
+# comes from the manifest today; the guard is what keeps that true when the next
+# caller takes one from a flag.
+fm_ledger_file() {
+  case "$1" in
+    ""|*/*|.|..) fm_err "not a usable step id: '$1'"; return 1 ;;
+  esac
+  printf '%s\n' "$FM_LEDGER_DIR/$1"
+}
+
+# Echo every step id holding a ledger on this host, one per line.
+fm_ledger_steps() {
+  local f
+  [ -d "$FM_LEDGER_DIR" ] || return 0
+  for f in "$FM_LEDGER_DIR"/*; do
+    [ -f "$f" ] || continue
+    basename "$f"
+  done | sort
+}
+
+# Echo the packages a step's ledger holds, one per line; nothing when it has no
+# ledger.
+fm_ledger_packages() {
+  local file
+  file="$(fm_ledger_file "$1")" || return 1
+  [ -f "$file" ] || return 0
+  sort -u "$file"
+}
+
+# Echo the manually-installed apt packages on this host, sorted. This is the
+# set apt itself treats as asked-for, which is what a step adds to and what
+# drift is measured against.
+fm_apt_manual() { apt-mark showmanual 2>/dev/null | sort; }
+
+# fm_apt_install STEP PKG… — install PKGs and record what appeared.
+#
+# Idempotent: a package already present is not reinstalled, and a re-run adds
+# nothing to the ledger. Steps call this instead of apt-get, so no package
+# reaches a First Motive host without a step's name attached to it.
+fm_apt_install() {
+  local step="$1"; shift
+  [ "$#" -gt 0 ] || return 0
+
+  local p absent=()
+  for p in "$@"; do
+    fm_has_pkg "$p" || absent+=("$p")
+  done
+
+  if [ "${#absent[@]}" -eq 0 ]; then
+    # Present, and deliberately not recorded here. Present says nothing about
+    # who put it there: on a host provisioned before the ledger existed, or on
+    # one where another step pulled the package in first, claiming it now would
+    # let two steps each believe they may remove it.
+    fm_ok "$step: packages present"
+    return 0
+  fi
+
+  local before after added
+  before="$(fm_apt_manual)"
+  fm_log "apt install ${absent[*]}"
+  sudo apt-get update
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "${absent[@]}"
+  after="$(fm_apt_manual)"
+
+  # The diff, not the request: what apt actually added under this step's name.
+  added="$(comm -13 <(printf '%s\n' "$before") <(printf '%s\n' "$after"))"
+  if [ -n "$added" ]; then
+    # shellcheck disable=SC2086
+    fm_ledger_record "$step" $added
+  fi
+  fm_ok "$step: installed ${absent[*]}"
+}
+
+# fm_ledger_record STEP PKG… — append PKGs to STEP's ledger, sorted and unique.
+#
+# Only packages the host actually has are recorded. A name apt resolved to
+# something else, or a virtual package, would otherwise sit in the ledger for
+# good as a removal that never succeeds.
+fm_ledger_record() {
+  local step="$1"; shift
+  local file tmp p keep=()
+  file="$(fm_ledger_file "$step")" || return 1
+  for p in "$@"; do
+    fm_has_pkg "$p" && keep+=("$p")
+  done
+  [ "${#keep[@]}" -gt 0 ] || return 0
+
+  tmp="$(mktemp)" || return 1
+  if [ -f "$file" ]; then cat "$file" >> "$tmp"; fi
+  printf '%s\n' "${keep[@]}" >> "$tmp"
+  sort -u -o "$tmp" "$tmp"
+  fm_state_sudo mkdir -p "$FM_LEDGER_DIR"
+  # Removed before it is written, so the copy can never follow a symlink left
+  # where a ledger should be. Only root can plant one in /var/lib/fm-setup —
+  # this is what keeps that from mattering if the directory's mode ever drifts.
+  fm_state_sudo rm -f "$file"
+  fm_state_sudo cp "$tmp" "$file"
+  fm_state_sudo chmod 0644 "$file"
+  rm -f "$tmp"
+}
+
+# fm_apt_uninstall STEP — remove what STEP added, and nothing else.
+#
+# Refuses rather than widens. `apt-get -s remove` is asked what the real removal
+# would take; one package outside this step's ledger aborts the whole thing with
+# the extras named, because that package belongs to another step and removing it
+# would break a part of the machine nobody asked to change.
+#
+# Never `autoremove`, never `purge`: both reach past this step by design.
+fm_apt_uninstall() {
+  local step="$1"
+  local file owned=() p sim extras=()
+  file="$(fm_ledger_file "$step")" || return 1
+
+  if [ ! -f "$file" ]; then
+    fm_skip "$step: no package ledger"
+    return 0
+  fi
+
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    fm_has_pkg "$p" && owned+=("$p")
+  done < <(sort -u "$file")
+
+  if [ "${#owned[@]}" -eq 0 ]; then
+    fm_state_sudo rm -f "$file"
+    fm_ok "$step: nothing left to remove"
+    return 0
+  fi
+
+  sim="$(sudo apt-get -s remove "${owned[@]}" 2>/dev/null | awk '/^Remv /{print $2}')"
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    _fm_in_list "$p" "${owned[@]}" || extras+=("$p")
+  done <<< "$sim"
+
+  if [ "${#extras[@]}" -gt 0 ]; then
+    fm_err "$step: removing its packages would also take ${extras[*]}"
+    fm_err "  those came from another step — uninstall that step first, or leave this one"
+    return 1
+  fi
+
+  fm_log "apt remove ${owned[*]}"
+  sudo DEBIAN_FRONTEND=noninteractive apt-get remove -y "${owned[@]}"
+  fm_state_sudo rm -f "$file"
+  fm_ok "$step: removed ${owned[*]}"
+}
+
 # --- Release ---------------------------------------------------------------
 #
 # The release tag is written down exactly once, in install.sh, and every other
