@@ -48,13 +48,12 @@ declared_units() {
     | tr ' ' '\n' | tr -d '"' | sed '/^$/d' | LC_ALL=C sort -u
 }
 
-# Units this host will start on its own. `enabled` alone: a static or generated
-# unit is not something anyone chose, and reporting those would bury the ones
-# somebody did.
-enabled_units() {
-  fm_has_cmd systemctl || return 0
-  systemctl list-unit-files --state=enabled --no-legend --no-pager 2>/dev/null \
-    | awk '{print $1}' | LC_ALL=C sort -u
+# What a step declares, plus what the machine arrived with. Same shape as the
+# package side: the baseline is the answer to "nobody chose this", and without
+# it every unit in the OS image reads as drift.
+accounted_units() {
+  declared_units
+  if [ -f "$(fm_baseline_units_file)" ]; then cat "$(fm_baseline_units_file)"; fi
 }
 
 report_packages() {
@@ -72,15 +71,19 @@ report_packages() {
 report_units() {
   local extra
   fm_has_cmd systemctl || { fm_skip "units (no systemctl)"; return 0; }
-  extra="$(LC_ALL=C comm -13 <(declared_units) <(enabled_units))"
+  if [ ! -f "$(fm_baseline_units_file)" ]; then
+    fm_warn "no unit baseline — run the system-update step, then this reports properly"
+    return 0
+  fi
+  extra="$(LC_ALL=C comm -13 <(accounted_units | LC_ALL=C sort -u) <(fm_enabled_units))"
   if [ -z "$extra" ]; then
     fm_ok "units: none unaccounted for"
     return 0
   fi
-  # Loud but not alarming: most hosts carry enabled units from the OS image that
-  # no step will ever declare, and this is the list somebody reads once and then
-  # declares or disables.
-  fm_warn "enabled units no step declares:"
+  # Now a short list by construction: the OS image's own units are in the
+  # baseline, so what is left is a unit somebody enabled on this machine after
+  # it was provisioned.
+  fm_warn "units enabled since the baseline, that no step declares:"
   printf '%s\n' "$extra" | sed 's/^/        /' >&2
 }
 
@@ -110,7 +113,7 @@ main() {
 
   fm_log "drift"
   if [ ! -f "$(fm_baseline_file)" ]; then
-    fm_warn "no baseline — run the system-update step, then this reports properly"
+    fm_warn "no package baseline — run the system-update step, then this reports properly"
   fi
   report_packages
   report_units

@@ -47,8 +47,8 @@ Every package a step installs is recorded against that step, in a ledger under
 `/var/lib/fm-setup/pkgs`. That is what lets one step be uninstalled without
 taking another's dependencies with it: a removal that would reach outside the
 step's own ledger aborts and names what it would have taken. `--check` ends by
-reporting drift — packages, enabled units, and `/etc` changes that no step
-accounts for — and `fm pkg add <name>` records a one-off so it is accounted for
+reporting drift — packages, units enabled since the machine was provisioned, and
+`/etc` changes that no step accounts for — and `fm pkg add <name>` records a one-off so it is accounted for
 from the moment it lands.
 
 The workspace is not an arbitrary choice of directory. It is the card's

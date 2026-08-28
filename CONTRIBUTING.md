@@ -83,9 +83,14 @@ next month belongs in a step.
 ### Drift
 
 `./install.sh --check` ends with a drift report: manually installed packages in
-neither the baseline nor any ledger, enabled units no step declares, and
-uncommitted changes under `/etc`. It reports and never fixes — the repair is a
-step, or a removal, and both are decisions a person makes.
+neither the baseline nor any ledger, units enabled since the baseline that no
+step declares, and uncommitted changes under `/etc`. It reports and never fixes
+— the repair is a step, or a removal, and both are decisions a person makes.
+
+Both baselines are captured once, by the system-update step, before anything
+else has run. They are what a machine arrived with: about sixty packages and a
+hundred enabled units nobody chose. Without them every one of those reads as
+drift, and a report that long is one nobody reads.
 
 A script under `scripts/run/` is a person-typed verb and must be declared in
 `fm.json` in the same change. CI fails on an undeclared verb.
