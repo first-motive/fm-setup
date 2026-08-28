@@ -250,6 +250,91 @@ assert_eq "recording it clears the report" "1" \
 fm_baseline_capture >/dev/null
 assert_eq "the baseline is never recaptured" "coreutils" "$(cat "$(fm_baseline_file)")"
 
+# --- Claiming what nothing owns ---------------------------------------------
+#
+# `fm pkg add` exists for a package somebody already installed by hand, so the
+# case it must handle is the one where nothing is missing. Recording nothing
+# there left the package unowned for good: never removable, and named by every
+# drift report until somebody wrote a step for it.
+
+echo "ncdu" >> "$INSTALLED"; echo "ncdu" >> "$MANUAL"
+fm_apt_install oneoff ncdu >/dev/null
+assert_eq "a present, unowned package is claimed" "ncdu" "$(ledger_of oneoff)"
+
+# The two things a claim must not take. The baseline came with the OS image;
+# the other ledger belongs to a step that will remove it itself.
+fm_apt_install second coreutils >/dev/null
+assert_eq "a baseline package is never claimed" "" "$(ledger_of second)"
+fm_apt_install second ncdu >/dev/null
+assert_eq "another step's package is never claimed" "" "$(ledger_of second)"
+
+fm_apt_uninstall oneoff >/dev/null
+assert_eq "and the claim is what makes it removable" "" "$(grep -x ncdu "$INSTALLED" || true)"
+
+# --- Collation --------------------------------------------------------------
+#
+# comm is a byte-wise merge and rejects input its own collation did not produce.
+# Under a UTF-8 locale sort ignores punctuation, so package names like
+# libopencc1.1 and libnvidia-container1 come back in an order comm calls
+# unsorted; it exits 1, and under set -e the caller dies mid-report. A
+# workstation on en_ZA.UTF-8 found this. No CI runner reproduces it — they all
+# collate as C — so the locale is faked here rather than hunted for.
+#
+# The shim is the contract, stated as code: a sort that does not pin LC_ALL=C
+# gets dictionary order, which is what a UTF-8 locale does to these names. Any
+# call site that drops the pin fails the two cases below.
+
+cat > "$BIN/sort" <<'FAKE'
+#!/usr/bin/env bash
+# Stands in for a UTF-8 collation: -d ignores punctuation, exactly the reorder
+# that breaks comm. A caller that pins LC_ALL=C gets the real ordering.
+if [ "${LC_ALL:-}" = "C" ]; then exec /usr/bin/sort "$@"; fi
+exec /usr/bin/sort -d "$@"
+FAKE
+chmod +x "$BIN/sort"
+
+# Runs one ledger helper and fails unless its output is in byte order, which is
+# the order comm requires.
+cat > "$TMP/sorted-check.sh" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+. "$FM_ROOT/lib.sh"
+"\$@" | LC_ALL=C sort -c
+EOF
+chmod +x "$TMP/sorted-check.sh"
+
+# lib-zoo against libapple is the whole bug in three names: byte order puts the
+# hyphen first, dictionary order drops it and puts lib-zoo last.
+printf 'lib-zoo\nlibapple\nlibopencc1.1\n' >> "$INSTALLED"
+printf 'lib-zoo\nlibapple\nlibopencc1.1\n' >> "$MANUAL"
+
+# Asserted as byte-sortedness rather than on comm's complaint: GNU comm warns
+# and exits 1, BSD comm says nothing at all, and a test that only fails on Linux
+# is a test this repo's developers never see fail.
+assert_rc "the manual set comes back byte-sorted whatever the locale" 0 \
+  env LC_ALL=en_ZA.UTF-8 bash "$TMP/sorted-check.sh" fm_apt_manual
+assert_rc "so does the ledger's own list" 0 \
+  env LC_ALL=en_ZA.UTF-8 bash "$TMP/sorted-check.sh" fm_ledger_packages docker
+
+out="$(LC_ALL=en_ZA.UTF-8 drift_out || true)"
+assert_eq "drift still reports the unaccounted packages" "3" \
+  "$(printf '%s' "$out" | grep -cE 'lib-zoo|libapple|libopencc1.1')"
+
+# The same comm sits inside fm_apt_install, where the cost is worse: the
+# packages land and the ledger entry never does.
+cat > "$TMP/install-under-locale.sh" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+. "$FM_ROOT/lib.sh"
+fm_apt_install third newpkg
+EOF
+chmod +x "$TMP/install-under-locale.sh"
+assert_rc "fm_apt_install's own diff survives it too" 0 \
+  env LC_ALL=en_ZA.UTF-8 bash "$TMP/install-under-locale.sh"
+assert_eq "and the ledger entry lands" "newpkg" "$(ledger_of third)"
+
+rm -f "$BIN/sort"
+
 # --- Declared units ---------------------------------------------------------
 #
 # The audit reads FM_UNITS out of the step files with sed rather than sourcing

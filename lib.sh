@@ -196,13 +196,20 @@ fm_ledger_file() {
 }
 
 # Echo every step id holding a ledger on this host, one per line.
+#
+# LC_ALL=C here and on every sort below. These lists are compared with `comm`,
+# which is a byte-wise merge and rejects input its own collation did not
+# produce. Under a UTF-8 locale `sort` ignores punctuation, so `libopencc1.1`
+# and `libnvidia-container1` come back in an order comm calls unsorted — it then
+# exits 1, and under `set -e` the caller dies mid-report. A workstation on
+# en_ZA.UTF-8 found this; every CI runner collates as C and never would.
 fm_ledger_steps() {
   local f
   [ -d "$FM_LEDGER_DIR" ] || return 0
   for f in "$FM_LEDGER_DIR"/*; do
     [ -f "$f" ] || continue
     basename "$f"
-  done | sort
+  done | LC_ALL=C sort
 }
 
 # Echo the packages a step's ledger holds, one per line; nothing when it has no
@@ -211,13 +218,32 @@ fm_ledger_packages() {
   local file
   file="$(fm_ledger_file "$1")" || return 1
   [ -f "$file" ] || return 0
-  sort -u "$file"
+  LC_ALL=C sort -u "$file"
+}
+
+# fm_ledger_unclaimed PKG — 0 when no step and no baseline accounts for PKG.
+#
+# Present says nothing about who put a package there. A package in the baseline
+# came with the OS image, and one in another step's ledger belongs to that step;
+# claiming either would let two owners each believe they may remove it. What is
+# left — present, unexplained, unowned — is exactly what a claim is for.
+fm_ledger_unclaimed() {
+  local pkg="$1" step baseline
+  baseline="$(fm_baseline_file)"
+  if [ -f "$baseline" ] && grep -qxF "$pkg" "$baseline"; then
+    return 1
+  fi
+  while IFS= read -r step; do
+    [ -n "$step" ] || continue
+    fm_ledger_packages "$step" | grep -qxF "$pkg" && return 1
+  done < <(fm_ledger_steps)
+  return 0
 }
 
 # Echo the manually-installed apt packages on this host, sorted. This is the
 # set apt itself treats as asked-for, which is what a step adds to and what
 # drift is measured against.
-fm_apt_manual() { apt-mark showmanual 2>/dev/null | sort; }
+fm_apt_manual() { apt-mark showmanual 2>/dev/null | LC_ALL=C sort; }
 
 # The manual set this host arrived with, captured once by the system-update step
 # before anything else has run. Drift is measured against it: without a baseline
@@ -259,11 +285,20 @@ fm_apt_install() {
   done
 
   if [ "${#absent[@]}" -eq 0 ]; then
-    # Present, and deliberately not recorded here. Present says nothing about
-    # who put it there: on a host provisioned before the ledger existed, or on
-    # one where another step pulled the package in first, claiming it now would
-    # let two steps each believe they may remove it.
-    fm_ok "$step: packages present"
+    # Nothing to install, which is not the same as nothing to record. A package
+    # that is present, in no baseline, and in no other step's ledger has no
+    # owner at all — and an unowned package is one nothing will ever remove and
+    # the drift report will name forever. Claim those, and only those.
+    local claim=()
+    for p in "$@"; do
+      fm_ledger_unclaimed "$p" && claim+=("$p")
+    done
+    if [ "${#claim[@]}" -gt 0 ]; then
+      fm_ledger_record "$step" "${claim[@]}"
+      fm_ok "$step: claimed ${claim[*]}"
+    else
+      fm_ok "$step: packages present"
+    fi
     return 0
   fi
 
@@ -275,7 +310,7 @@ fm_apt_install() {
   after="$(fm_apt_manual)"
 
   # The diff, not the request: what apt actually added under this step's name.
-  added="$(comm -13 <(printf '%s\n' "$before") <(printf '%s\n' "$after"))"
+  added="$(LC_ALL=C comm -13 <(printf '%s\n' "$before") <(printf '%s\n' "$after"))"
   if [ -n "$added" ]; then
     # shellcheck disable=SC2086
     fm_ledger_record "$step" $added
@@ -300,7 +335,7 @@ fm_ledger_record() {
   tmp="$(mktemp)" || return 1
   if [ -f "$file" ]; then cat "$file" >> "$tmp"; fi
   printf '%s\n' "${keep[@]}" >> "$tmp"
-  sort -u -o "$tmp" "$tmp"
+  LC_ALL=C sort -u -o "$tmp" "$tmp"
   fm_state_sudo mkdir -p "$FM_LEDGER_DIR"
   # Removed before it is written, so the copy can never follow a symlink left
   # where a ledger should be. Only root can plant one in /var/lib/fm-setup —
@@ -332,7 +367,7 @@ fm_apt_uninstall() {
   while IFS= read -r p; do
     [ -n "$p" ] || continue
     fm_has_pkg "$p" && owned+=("$p")
-  done < <(sort -u "$file")
+  done < <(LC_ALL=C sort -u "$file")
 
   if [ "${#owned[@]}" -eq 0 ]; then
     fm_state_sudo rm -f "$file"
