@@ -202,8 +202,13 @@ FM_APT_BASE=(
 
 # Pinned, not left to `ubuntu-drivers autoinstall`. Isaac Sim tracks driver
 # branches and refuses to start on a too-new one, so the driver moves when we
-# decide it moves.
-FM_NVIDIA_DRIVER=nvidia-driver-580-open
+# decide it moves. Install Ubuntu's signed kernel-module tracker first: under
+# Secure Boot, the driver metapackage can otherwise select a host-signed DKMS
+# fallback whose new key is not enrolled and cannot load after a kernel update.
+FM_NVIDIA_APT=(
+  linux-modules-nvidia-580-open-generic
+  nvidia-driver-580-open
+)
 
 # Container GPU passthrough. All four packages pin to one version — they move in
 # lockstep and an unpinned mix breaks the runtime hook.
