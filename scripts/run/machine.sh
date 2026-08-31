@@ -63,8 +63,9 @@ Options:
   --fleet <name>          population this machine joins (default: $FM_MACHINE_FLEET_DEFAULT)
   --transport <profile>   ${FM_MACHINE_TRANSPORTS[*]} (default: ${FM_MACHINE_TRANSPORTS[0]})
   --workload <kind>       ${FM_MACHINE_WORKLOADS[*]} — what this machine does in
-                          the stack. Optional: a workstation or a laptop runs no
-                          bridge and needs none. --workload none clears it.
+                          the stack. Optional, but a machine on the zenoh
+                          transport needs one to get a bridge: a Mac is
+                          \`cockpit\`. --workload none clears it.
   --workspace <path>      parent directory for every checkout
                           (default: $FM_MACHINE_WORKSPACE_DEFAULT)
   --json                  machine-readable output
@@ -233,6 +234,11 @@ do_init() {
   fm_info "workload   ${WORKLOAD:-none}"
   fm_info "workspace  $WORKSPACE"
   fm_info "namespace  $(fm_machine_namespace "$NAME")  (derived, never typed)"
+  # The card is read once, at service start. Nothing here can reach into a
+  # running fm-zenoh-bridge and tell it the workload changed, and a bridge that
+  # kept its old profile filters with the old allow-list while every file on the
+  # machine says otherwise (fm-comms#20).
+  fm_info "transport services read the card at start — restart fm-zenoh-bridge"
 
   align_hostname
 }

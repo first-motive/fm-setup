@@ -306,13 +306,24 @@ role.
 `workload` is the one optional field. It answers what a machine *does*, which
 `role` cannot: a recorder rig and a processor rig are both `jetson`, and that
 gap is why `FM_BRIDGE_PROFILE` was the last per-host value anyone still typed
-into an env file. It is optional because it is genuinely not universal — a GPU
-workstation and a laptop run no bridge, and requiring it would force a
-meaningless value onto them. Absent means this machine hosts no workload;
+into an env file. It is optional because it is genuinely not universal — a
+machine that runs no bridge needs no value, and requiring one would force a
+meaningless answer onto it. Absent means this machine hosts no workload;
 `--workload none` clears it when a machine is repurposed.
+
+A Mac is `cockpit`. Under the zenoh transport its DDS graph is loopback-only, so
+without a bridge its ROS tools see nothing the fleet publishes; the `cockpit`
+profile is the mirror of a rig's — the fleet's published set in, teleop commands
+out.
+
+The GPU tower is `workstation`. It runs the sim and the dataset engine together,
+so its bridge is the union of `robot` and `processor`; `processor` alone left it
+holding a session and publishing no joint states (fm-comms#20).
 
 ```bash
 fm machine init --name fm-rec-01 --workload recorder
+fm machine init --workload cockpit           # a Mac: its own bridge
+fm machine init --workload workstation       # the GPU tower: robot + processor
 fm machine init --workload none              # repurposed; no bridge any more
 ```
 
