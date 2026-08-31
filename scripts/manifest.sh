@@ -95,10 +95,11 @@ FM_MACHINE_SCHEMA_VERSION=1
 # to know what it may rely on.
 FM_MACHINE_SCHEMA=templates/machine/machine.schema.json
 
-# Roles a card may declare. The two provisioning roles plus `mac`, which
-# fm-setup never provisions — a laptop still needs a name, a fleet, and a
-# workspace to point at.
-FM_MACHINE_ROLES=(workstation jetson mac)
+# Roles a card may declare. The two provisioning roles plus `mac` and `robot`,
+# which fm-setup never provisions — a laptop still needs a name, a fleet, and a
+# workspace to point at, and a robot arrives on its vendor's own OS, adopted by
+# `fm device adopt` rather than flashed.
+FM_MACHINE_ROLES=(workstation jetson mac robot)
 
 # Middleware profiles a card may declare. zenoh is the supported path; dds-lan
 # is the labelled escape hatch for hardware that has not been through the
@@ -138,7 +139,15 @@ FM_MACHINE_NAME_ABBREV=(
   "jetson|rec"
   "workstation|ws"
   "mac|mac"
+  "robot|rob"
 )
+
+# The robots a `robot` card may declare. Required on that role and meaningless on
+# every other, because it is the field the rest of the fleet reads to know what
+# it is talking to: fm-comms picks the anvil bridge profile off it, and the robot
+# agent picks its adapter off it. `role` cannot answer that — an Anvil workcell
+# and an Axol are both robots, and they share not one interface.
+FM_MACHINE_ROBOTS=(anvil-openarm-v2 axol)
 
 # The fleet a machine joins when nobody says otherwise. Machines discover, sync,
 # and converge only within their own fleet, so a rig on a bench cannot be

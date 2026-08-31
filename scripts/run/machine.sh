@@ -40,6 +40,7 @@ ROLE=""
 FLEET=""
 TRANSPORT=""
 WORKLOAD=""
+ROBOT=""
 WORKSPACE=""
 AS_JSON=0
 DRY_RUN=0
@@ -66,6 +67,8 @@ Options:
                           the stack. Optional, but a machine on the zenoh
                           transport needs one to get a bridge: a Mac is
                           \`cockpit\`. --workload none clears it.
+  --robot <kind>          ${FM_MACHINE_ROBOTS[*]} — which robot this machine
+                          is. Required on the robot role, refused on any other.
   --workspace <path>      parent directory for every checkout
                           (default: $FM_MACHINE_WORKSPACE_DEFAULT)
   --json                  machine-readable output
@@ -93,6 +96,7 @@ validate_transport() { fm_machine_valid_transport "$1"; }
 validate_fleet()     { fm_machine_valid_fleet "$1"; }
 validate_workspace() { fm_machine_valid_workspace "$1"; }
 validate_workload()  { fm_machine_valid_workload "$1"; }
+validate_robot()     { fm_machine_valid_robot "$1"; }
 
 # --- Defaults ---------------------------------------------------------------
 
@@ -140,9 +144,31 @@ resolve_fields() {
     WORKLOAD="$(fm_machine_get_opt workload)"
   fi
 
+  # A value the caller passed wins; otherwise an existing card's carries forward
+  # like every other field a repair run was not asked to change. Not carried when
+  # the role moved off `robot`: the card would then claim hardware this machine
+  # is no longer said to be, and the fleet would pick an adapter for it.
+  if [ -z "$ROBOT" ] && [ -n "$existing" ] && [ "$ROLE" = robot ]; then
+    ROBOT="$(fm_machine_robot)"
+  fi
+
+  # A robot with no kind is a card the fleet cannot act on: fm-comms cannot pick
+  # a bridge profile from it and the robot agent cannot pick an adapter. A kind
+  # on anything else is a claim about hardware the machine does not have, and it
+  # would select that profile anyway.
+  if [ "$ROLE" = robot ] && [ -z "$ROBOT" ]; then
+    fm_err "role 'robot' needs --robot <${FM_MACHINE_ROBOTS[*]}>"
+    return 1
+  fi
+  if [ "$ROLE" != robot ] && [ -n "$ROBOT" ]; then
+    fm_err "--robot is for the 'robot' role, not '$ROLE'"
+    return 1
+  fi
+
   validate_fleet "$FLEET" || return 1
   validate_transport "$TRANSPORT" || return 1
   validate_workload "$WORKLOAD" || return 1
+  validate_robot "$ROBOT" || return 1
   validate_workspace "$WORKSPACE" || return 1
 }
 
@@ -154,9 +180,11 @@ card_json() {
     --arg fleet "$FLEET" \
     --arg transport "$TRANSPORT" \
     --arg workload "$WORKLOAD" \
+    --arg robot "$ROBOT" \
     --arg workspace "$WORKSPACE" \
     '{schema_version: $schema_version, name: $name, role: $role, fleet: $fleet, transport: $transport}
      + (if $workload == "" then {} else {workload: $workload} end)
+     + (if $robot == "" then {} else {robot: $robot} end)
      + {workspace: $workspace}'
 }
 
@@ -232,6 +260,7 @@ do_init() {
   fm_info "fleet      $FLEET"
   fm_info "transport  $TRANSPORT"
   fm_info "workload   ${WORKLOAD:-none}"
+  fm_info "robot      ${ROBOT:-none}"
   fm_info "workspace  $WORKSPACE"
   fm_info "namespace  $(fm_machine_namespace "$NAME")  (derived, never typed)"
   # The card is read once, at service start. Nothing here can reach into a
@@ -259,6 +288,7 @@ do_show() {
   fm_info "fleet      $(fm_machine_get fleet)"
   fm_info "transport  $(fm_machine_get transport)"
   fm_info "workload   $(fm_machine_workload || true)"
+  fm_info "robot      $(fm_machine_robot || true)"
   fm_info "workspace  $(fm_machine_get workspace)"
   fm_info "namespace  $(fm_machine_namespace)"
 }
@@ -331,6 +361,22 @@ do_doctor() {
     fm_info "workload   none — this machine hosts no bridge profile"
   fi
 
+  # The second optional field, and the one whose absence is only a problem on a
+  # robot. Reported the same way workload is, then held to the role.
+  value="$(jq -r '.robot // empty' "$file")"
+  if ! validate_robot "$value" 2>/dev/null; then
+    fm_err "invalid robot: '$value'"
+    problems=$((problems + 1))
+  elif [ -n "$value" ] && [ "$ROLE" != robot ]; then
+    fm_err "robot '$value' on role '$ROLE' — only a robot card carries one"
+    problems=$((problems + 1))
+  elif [ -z "$value" ] && [ "$ROLE" = robot ]; then
+    fm_err "role robot with no robot — nothing can tell which robot this is"
+    problems=$((problems + 1))
+  elif [ -n "$value" ]; then
+    fm_ok "robot $value"
+  fi
+
   value="$(jq -r '.workspace // empty' "$file")"
   if ! validate_workspace "$value" 2>/dev/null; then
     fm_err "invalid workspace: '$value'"
@@ -392,6 +438,7 @@ main() {
       --fleet)     FLEET="${2:?--fleet needs a value}"; shift 2 ;;
       --transport) TRANSPORT="${2:?--transport needs a value}"; shift 2 ;;
       --workload)  WORKLOAD="${2:?--workload needs a value (or 'none')}"; shift 2 ;;
+      --robot)     ROBOT="${2:?--robot needs a value}"; shift 2 ;;
       --workspace) WORKSPACE="${2:?--workspace needs a value}"; shift 2 ;;
       --json)      AS_JSON=1; shift ;;
       --dry-run)   DRY_RUN=1; shift ;;

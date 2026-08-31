@@ -280,6 +280,7 @@ name ──┬─→ hostname
 
 transport ─→ the middleware profile every process on the host sources
 workload  ─→ the comms bridge profile      (optional — see below)
+robot     ─→ which robot this machine is   (robot role only — see below)
 workspace ─→ where every First Motive checkout lives
 ```
 
@@ -326,6 +327,22 @@ fm machine init --workload cockpit           # a Mac: its own bridge
 fm machine init --workload workstation       # the GPU tower: robot + processor
 fm machine init --workload none              # repurposed; no bridge any more
 ```
+
+`robot` is the second optional field, and the one a `robot` card must carry. A
+robot arrives on its vendor's own OS and is adopted rather than flashed, so
+fm-setup provisions nothing on it and the card is all the fleet knows about it.
+The field names which robot it is, because `role` cannot: an Anvil workcell and
+an Axol are both robots and share not one interface. fm-comms selects the anvil
+bridge profile from it, and the robot agent selects its adapter from it.
+
+```bash
+fm machine init --name fm-rob-01 --role robot --robot anvil-openarm-v2 \
+  --workload robot
+fm machine init --name fm-rob-02 --role robot --robot axol
+```
+
+`fm device adopt` runs that command as one of its five steps, so the card is
+written the same way whether a person types it or the adopt flow does.
 
 A flashed card defaults to `recorder`, because a flashed card is a capture rig.
 `machine init` has no default, because it also runs on machines with no bridge
