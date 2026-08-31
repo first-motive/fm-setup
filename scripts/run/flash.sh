@@ -161,7 +161,8 @@ Usage: ./run.sh flash [--role <role>] --device <disk> [options]
   --ssh-key <file>         public key to authorize (default: every ~/.ssh/*.pub)
   --password-hash <hash>   console password, already hashed — workstation only,
                            and required there. Prefer FM_FLASH_PASSWORD_HASH.
-                           Generate one with: mkpasswd --method=SHA-512 --rounds=4096
+                           Linux: mkpasswd --method=SHA-512 --rounds=4096
+                           macOS: openssl passwd -6
   --wifi <ssid:psk>        join this network on boot — jetson only
   --tailscale-authkey <k>  join the tailnet on first boot (use an ephemeral key).
                            Prefer FM_TS_AUTHKEY, for the reason below.
@@ -174,8 +175,9 @@ Usage: ./run.sh flash [--role <role>] --device <disk> [options]
   -y, --yes                skip the erase confirmation
 
 macOS needs a container runtime (OrbStack or Docker) for the jetson's seed swap
-— the rootfs is ext4 — and sgdisk (brew install gptfdisk) for the workstation's
-seed partition. Linux needs sgdisk and sudo.
+— the rootfs is ext4 — and sgdisk for the workstation's seed partition, which
+this script installs itself (brew install gptfdisk) when Homebrew is present.
+Linux needs sgdisk and sudo.
 
 Read a secret from the environment instead of the command line, so it reaches
 neither shell history nor the process table:
@@ -486,11 +488,28 @@ unmount_disk() {
   fi
 }
 
-append_cidata() {
-  fm_require_cmd sgdisk || {
-    fm_info "macOS: brew install gptfdisk · Debian/Ubuntu: apt install gdisk"
+# The one dependency this verb installs rather than names: the Mac driving a
+# rebuild has Homebrew as its assumed package manager already (see fm_has_docker
+# and the OrbStack hint above), so a missing sgdisk is a brew invocation away —
+# stopping to make the operator type it is exactly the by-hand step a rebuild
+# should not have (#42). Without brew there is nothing to install with, so both
+# missing pieces are named. Linux keeps the plain error: package managers vary
+# and apt under sudo is not this script's call to make.
+require_sgdisk() {
+  fm_has_cmd sgdisk && return 0
+  if [ "$(fm_detect_os)" = "macos" ] && fm_has_cmd brew; then
+    fm_log "sgdisk is missing — installing gptfdisk with Homebrew"
+    brew install gptfdisk
+    fm_require_cmd sgdisk || return 1
+  else
+    fm_err "missing dependency: sgdisk — and no Homebrew (brew) here to install it"
+    fm_info "macOS: install Homebrew, then brew install gptfdisk · Debian/Ubuntu: apt install gdisk"
     return 1
-  }
+  fi
+}
+
+append_cidata() {
+  require_sgdisk || return 1
   fm_log "adding the $CIDATA_LABEL seed partition"
   unmount_disk
 
@@ -780,7 +799,7 @@ validate_request() {
   # the image has downloaded.
   if [ "$ROLE" = workstation ] && [ "$PROVISION" = 1 ] && [ -z "$PASSWORD_HASH" ]; then
     fm_err "the workstation needs a console password: set FM_FLASH_PASSWORD_HASH or pass --password-hash"
-    fm_info "generate one with: mkpasswd --method=SHA-512 --rounds=4096"
+    fm_info "generate one with: mkpasswd --method=SHA-512 --rounds=4096 (Linux) or openssl passwd -6 (macOS)"
     return 2
   fi
 }
