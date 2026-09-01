@@ -43,11 +43,18 @@ WORKSPACE="$(fm_machine_workspace)"
 EXPECTED="$(fm_setup_dir)"
 LEGACY_WORKSPACE="$FM_MACHINE_WORKSPACE_LEGACY"
 
-# Mode 2775: group-writable, and setgid so a file created by one member stays
-# owned by the group the next member is also in. Without the setgid bit a
-# checkout cloned by one person is unwritable by everybody else, which is the
-# shared workspace failing at the first `git pull` somebody else runs.
-WORKSPACE_MODE=2775
+# Mode 3775: group-writable, setgid, sticky.
+#
+# setgid, so a file created by one member stays owned by the group the next
+# member is also in. Without it a checkout cloned by one person is unwritable by
+# everybody else, which is the shared workspace failing at the first `git pull`
+# somebody else runs.
+#
+# sticky, so deleting an entry needs ownership of it rather than write on the
+# directory. Group-writable alone lets any member remove any other member's
+# checkout — and the removal that matters is not the malicious one, it is the
+# `rm -rf` aimed at a path that turned out to be somebody else's work.
+WORKSPACE_MODE=3775
 
 # Resolve a path to its physical location, or echo nothing when it does not
 # exist. Used to compare "the expected path" against "this checkout" without
