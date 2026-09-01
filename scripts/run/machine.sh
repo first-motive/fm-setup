@@ -42,6 +42,10 @@ TRANSPORT=""
 WORKLOAD=""
 ROBOT=""
 WORKSPACE=""
+# Distinguishes "the caller asked for this workspace" from "the card had one".
+# Only the second is converged onto the new default; a passed --workspace is a
+# deliberate choice and is written exactly as given, even back into a home.
+WORKSPACE_EXPLICIT=0
 AS_JSON=0
 DRY_RUN=0
 ASSUME_YES=0
@@ -90,6 +94,24 @@ EOF
 # cloud-init seed as well and a second copy of them would let the two callers
 # disagree about what a valid card is. These are thin names over that one set.
 
+# True when a workspace path sits inside somebody's home directory.
+#
+# The card names one workspace for the whole host, and a home directory is mode
+# 700 on Ubuntu — so a card pointing into one hands every other account a
+# workspace it cannot enter. That is how a machine ends up needing an FM_HOME
+# export in nine shell files, and it is invisible from the administrator's own
+# session, where every path resolves perfectly.
+#
+# Matched on the path rather than on the invoking user's $HOME, because doctor is
+# read by whoever happens to run it and a card naming /home/fm/fm is just as
+# wrong when fm is the one reading it.
+workspace_in_home() { # path
+  case "$1" in
+    /home/*|/root|/root/*|/Users/*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 validate_name()      { fm_machine_valid_name "$1" "$ROLE"; }
 validate_role()      { fm_machine_valid_role "$1"; }
 validate_transport() { fm_machine_valid_transport "$1"; }
@@ -134,6 +156,17 @@ resolve_fields() {
   [ -n "$FLEET" ]     || FLEET="$([ -n "$existing" ] && fm_machine_get fleet || printf '%s' "$FM_MACHINE_FLEET_DEFAULT")"
   [ -n "$TRANSPORT" ] || TRANSPORT="$([ -n "$existing" ] && fm_machine_get transport || printf '%s' "${FM_MACHINE_TRANSPORTS[0]}")"
   [ -n "$WORKSPACE" ] || WORKSPACE="$([ -n "$existing" ] && fm_machine_get workspace || printf '%s' "$FM_MACHINE_WORKSPACE_DEFAULT")"
+
+  # The one field a repair run does not simply carry forward. Every other value
+  # on an old card is still a fact about the machine; a workspace inside a home
+  # directory is the shape this repo has since stopped writing, and leaving it
+  # would mean a host converges on everything except the thing that keeps the
+  # team out of its checkouts. An explicit --workspace still wins, including one
+  # that puts it back.
+  if [ "$WORKSPACE_EXPLICIT" = 0 ] && workspace_in_home "$WORKSPACE"; then
+    fm_warn "workspace $WORKSPACE is inside a home directory — moving the card to $FM_MACHINE_WORKSPACE_DEFAULT"
+    WORKSPACE="$FM_MACHINE_WORKSPACE_DEFAULT"
+  fi
 
   # A value the caller passed wins, normalised so that `none` clears the field;
   # otherwise an existing card's workload carries forward like every other field
@@ -388,6 +421,14 @@ do_doctor() {
     # flashed rig, and a doctor that fails there would fail on every new machine.
     fm_warn "workspace $value does not exist yet"
   fi
+  # Judged separately from whether it exists, because a workspace in a home
+  # directory is wrong on a rig that has never booted and on one provisioned a
+  # year ago alike.
+  if workspace_in_home "$value"; then
+    fm_err "workspace $value is inside a home directory — only that account can read it"
+    fm_info "run 'fm machine init' to move the card to $FM_MACHINE_WORKSPACE_DEFAULT"
+    problems=$((problems + 1))
+  fi
 
   fm_info "namespace  $(fm_machine_namespace "$(jq -r '.name' "$file")" 2>/dev/null || echo '—')"
 
@@ -439,7 +480,7 @@ main() {
       --transport) TRANSPORT="${2:?--transport needs a value}"; shift 2 ;;
       --workload)  WORKLOAD="${2:?--workload needs a value (or 'none')}"; shift 2 ;;
       --robot)     ROBOT="${2:?--robot needs a value}"; shift 2 ;;
-      --workspace) WORKSPACE="${2:?--workspace needs a value}"; shift 2 ;;
+      --workspace) WORKSPACE="${2:?--workspace needs a value}"; WORKSPACE_EXPLICIT=1; shift 2 ;;
       --json)      AS_JSON=1; shift ;;
       --dry-run)   DRY_RUN=1; shift ;;
       -y|--yes)    ASSUME_YES=1; shift ;;

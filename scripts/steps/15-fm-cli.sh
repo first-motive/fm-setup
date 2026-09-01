@@ -13,9 +13,12 @@
 # it only makes sure uv exists first, which fm-tools requires but does not
 # install.
 #
-# Per-user, not system-wide: uv puts tools under the invoking user's home. A
-# second person on the box runs this step (or fm-tools' install.sh) for
-# themselves. Nothing here uses sudo.
+# uv puts tools under the invoking user's home, so the install itself is
+# per-user. On top of that this step links /usr/local/bin/fm at the binary uv
+# wrote, because a newcomer with an empty home has no ~/.local/bin on PATH and
+# nothing to run: the CLI is how they onboard, so it cannot be the thing that
+# waits until they have onboarded. One link means one pinned version for the
+# whole box and upgrades that only the administrator can make.
 
 set -euo pipefail
 
@@ -42,7 +45,84 @@ uv_bin() {
   return 1
 }
 
+# Where a system-wide `fm` lives.
+FM_SHIM=/usr/local/bin/fm
+
+# This account's uv tool binary — the thing the shim points at. uv writes tool
+# entry points here whether or not the directory is on PATH, which is the same
+# reason uv_bin looks there directly.
+uv_tool_fm() { printf '%s\n' "$HOME/.local/bin/fm"; }
+
+# Return success when the shim is the one this account installed. Both sides are
+# resolved before they are compared, because a shim installed from another
+# account is that person's pin and this step may neither move nor remove it.
+shim_is_ours() {
+  [ -L "$FM_SHIM" ] && [ "$(readlink -f "$FM_SHIM")" = "$(readlink -f "$(uv_tool_fm)")" ]
+}
+
+# The shim resolves into this account's home, and Ubuntu creates a home at mode
+# 750: every other account then gets "Permission denied" from a link that looks
+# perfectly healthy to the person who made it. Said out loud, never fixed here —
+# a home directory belongs to the person living in it, not to this step.
+#
+# Both directories the link resolves through, because either one closed to
+# others stops the same command in the same way.
+warn_unless_traversable() {
+  local dir mode
+  for dir in "$HOME" "$(dirname "$(uv_tool_fm)")"; do
+    mode="$(stat -c '%a' "$dir" 2>/dev/null)" || continue
+    # 0001 is the other-execute bit, which on a directory is the right to enter it.
+    if [ $(( 8#$mode & 0001 )) -eq 0 ]; then
+      fm_warn "$dir is mode $mode — every other account gets 'Permission denied' from $FM_SHIM"
+      fm_info "its owner makes the shim usable for the team with: chmod o+x $dir"
+    fi
+  done
+}
+
+# Fail when anyone but the owner can write a directory the shim resolves
+# through.
+#
+# The shim makes one account's binary the `fm` every other account runs. If a
+# second person can write $HOME or ~/.local/bin — a home left group-writable on
+# a machine where the whole team is in one group — they can replace that binary,
+# and it then runs as whoever typed `fm`. The link would hand a shared group a
+# way to execute code as each other, which is precisely the boundary the fm
+# group exists to keep.
+#
+# Checked rather than fixed, and checked immediately before the link is made:
+# these are somebody's own directories, and a step that silently tightened them
+# would be changing a home it does not own.
+shim_target_is_private() {
+  local dir mode
+  for dir in "$HOME" "$(dirname "$(uv_tool_fm)")"; do
+    mode="$(stat -c '%a' "$dir" 2>/dev/null)" || continue
+    # 0022 is the group-write and other-write bits, and nothing else.
+    if [ $(( 8#$mode & 0022 )) -ne 0 ]; then
+      fm_warn "$dir is mode $mode — anyone who can write it decides what every account's fm runs"
+      fm_info "not linking $FM_SHIM; make it private first: chmod go-w $dir"
+      return 1
+    fi
+  done
+}
+
 do_check() {
+  check_user_install
+  check_shim
+  return 0
+}
+
+check_shim() {
+  if shim_is_ours; then
+    fm_ok "$FM_SHIM -> $(uv_tool_fm)"
+    warn_unless_traversable
+  elif [ -e "$FM_SHIM" ]; then
+    fm_warn "$FM_SHIM points at another install ($(readlink -f "$FM_SHIM")), not this account's"
+  else
+    fm_warn "no $FM_SHIM — an account that has installed nothing has no fm on PATH"
+  fi
+}
+
+check_user_install() {
   local uv fm_path
   if uv="$(uv_bin)"; then
     fm_ok "uv $("$uv" --version 2>/dev/null | awk '{print $2}')"
@@ -140,10 +220,68 @@ do_install() {
     fm_ok "fm installed"
     fm_info "not on PATH in this shell yet; open a new one, then: fm status"
   fi
+
+  install_shim
+}
+
+# Link /usr/local/bin at this account's uv tool binary, so every account on the
+# box has fm on PATH.
+#
+# Every obstacle here is a skip rather than a failure: the per-user install above
+# has already succeeded by the time this runs, and an administrator who cannot
+# write /usr/local/bin still has a working CLI. A step that went red at this
+# point would report a machine as unprovisioned over a convenience.
+install_shim() {
+  if shim_is_ours; then
+    fm_ok "$FM_SHIM -> $(uv_tool_fm)"
+    warn_unless_traversable
+    return 0
+  fi
+
+  if [ -e "$FM_SHIM" ]; then
+    # Somebody else installed this one, and their pin is the one the box is
+    # running. Overwriting it would move every other account onto this account's
+    # CLI without anyone asking for that.
+    fm_warn "$FM_SHIM already points at another install ($(readlink -f "$FM_SHIM")) — leaving it"
+    fm_info "whoever owns that link removes it; this account can then take the pin"
+    return 0
+  fi
+
+  if ! fm_has_cmd sudo; then
+    fm_skip "no sudo here — $FM_SHIM not linked, so only this account has fm on PATH"
+    return 0
+  fi
+
+  # Writing into /usr/local/bin decides which CLI the whole machine runs, so it
+  # is asked for rather than assumed, and an unattended run declines and says so.
+  fm_warn "$FM_SHIM makes this account's pinned CLI the one every account on the box runs"
+  if ! fm_confirm "Link $FM_SHIM to $(uv_tool_fm)?"; then
+    fm_skip "system-wide fm declined — each account installs its own with: fm setup-onboard"
+    return 0
+  fi
+
+  # After the prompt rather than before it, so the gap between deciding the
+  # target is private and linking to it is not however long somebody took to
+  # answer a question.
+  shim_target_is_private || return 0
+
+  # A symlink rather than a wrapper script: a uv tool binary is a self-contained
+  # entry point naming its own venv interpreter, so it resolves to the right
+  # Python from wherever it is reached and needs nothing set in the environment.
+  if sudo ln -s "$(uv_tool_fm)" "$FM_SHIM"; then
+    fm_ok "linked $FM_SHIM -> $(uv_tool_fm)"
+    warn_unless_traversable
+  else
+    fm_warn "could not write $FM_SHIM — only this account has fm on PATH"
+  fi
 }
 
 do_uninstall() {
   local uv
+  # Before the binary it points at goes, so the machine is never left with a
+  # shim resolving to nothing.
+  remove_shim
+
   if ! uv="$(uv_bin)"; then
     fm_skip "uv not installed"
     return 0
@@ -153,6 +291,29 @@ do_uninstall() {
   # cannot know that it was the one that put it there.
   fm_info "uv left in place — remove it with: rm -rf ~/.local/bin/uv ~/.local/share/uv"
   fm_ok "fm CLI removed"
+}
+
+# Remove only the shim this step made. One pointing anywhere else is another
+# account's, and taking it away would leave everybody on the machine without the
+# CLI to undo a change they were never part of.
+remove_shim() {
+  if shim_is_ours; then
+    if ! fm_has_cmd sudo; then
+      # Said rather than swallowed: the binary underneath is about to go, and a
+      # shim left pointing at nothing is `fm: No such file or directory` for
+      # every account on the machine.
+      fm_warn "no sudo here — $FM_SHIM will point at nothing once the CLI is gone"
+      fm_info "remove it as root: rm -f $FM_SHIM"
+      return 0
+    fi
+    if sudo rm -f "$FM_SHIM"; then
+      fm_ok "removed $FM_SHIM"
+    else
+      fm_warn "could not remove $FM_SHIM — do it with: sudo rm -f $FM_SHIM"
+    fi
+  elif [ -e "$FM_SHIM" ]; then
+    fm_skip "$FM_SHIM points at another account's install"
+  fi
 }
 
 fm_dispatch "$@"

@@ -69,13 +69,13 @@ fm_log "machine identity card"
 # --- Writing ---------------------------------------------------------------
 
 fresh
-card init --role jetson --name fm-rec-01 --workspace /home/fm/fm >/dev/null
+card init --role jetson --name fm-rec-01 --workspace /opt/fm >/dev/null
 assert_eq "init writes schema_version" "1"           "$(field .schema_version)"
 assert_eq "init writes name"           "fm-rec-01"   "$(field .name)"
 assert_eq "init writes role"           "jetson"      "$(field .role)"
 assert_eq "init defaults fleet"        "prod"        "$(field .fleet)"
 assert_eq "init defaults transport"    "zenoh"       "$(field .transport)"
-assert_eq "init writes workspace"      "/home/fm/fm" "$(field .workspace)"
+assert_eq "init writes workspace"      "/opt/fm"     "$(field .workspace)"
 
 # The optional field is absent, not empty or null: a consumer testing for the
 # key must see it missing, and "workload": "" fails the card's own schema.
@@ -93,7 +93,7 @@ card init --fleet bench >/dev/null
 assert_eq "repair changes the field given"   "bench"     "$(field .fleet)"
 assert_eq "repair keeps name"                "fm-rec-01" "$(field .name)"
 assert_eq "repair keeps role"                "jetson"    "$(field .role)"
-assert_eq "repair keeps workspace"           "/home/fm/fm" "$(field .workspace)"
+assert_eq "repair keeps workspace"           "/opt/fm"   "$(field .workspace)"
 
 # --- Workload, the one optional field ---------------------------------------
 
@@ -123,6 +123,10 @@ assert_rc "bad transport refused" 2 card init --transport carrier-pigeon
 assert_rc "bad fleet refused"     2 card init --fleet "Prod"
 assert_rc "bad role refused"      2 card init --role toaster
 assert_rc "relative workspace refused" 2 card init --workspace relative/path
+# The workspace is the one card value that reaches `sudo mkdir`, so a path that
+# walks upward is refused rather than resolved.
+assert_rc "workspace with .. refused"  2 card init --workspace /opt/fm/../../etc
+assert_rc "workspace ending in .. refused" 2 card init --workspace /opt/fm/..
 assert_rc "unknown verb refused"  2 card bogus
 assert_rc "unknown flag refused"  2 card init --nonsense
 
@@ -239,6 +243,42 @@ assert_eq "an empty FM_HOME is not a choice" "/home/fm/fm" \
 fresh
 assert_eq "FM_HOME wins with no card at all" "/home/matt/fm" \
   "$(FM_HOME=/home/matt/fm fm_machine_workspace)"
+
+# --- Converging a card written before the workspace left home ----------------
+#
+# A workspace inside a home directory is readable by one account, and the card
+# names it for the whole host. Doctor says so rather than reporting the machine
+# healthy, and a repair run moves it — the one field init does not simply carry
+# forward.
+
+fresh
+card init --role jetson --name fm-rec-05 --workspace /home/fm/fm >/dev/null
+assert_eq "an explicit workspace in a home is written as given" "/home/fm/fm" "$(field .workspace)"
+assert_rc "doctor catches a workspace inside a home directory" 3 card doctor
+
+card init >/dev/null
+assert_eq "repair moves the card off a home directory" "/opt/fm" "$(field .workspace)"
+assert_rc "doctor is clean once the card has converged" 0 card doctor
+
+fresh
+card init --role jetson --name fm-rec-05 >/dev/null
+assert_eq "a new card takes the machine's own workspace" "/opt/fm" "$(field .workspace)"
+
+# --- Creating the workspace --------------------------------------------------
+#
+# fm_ensure_dir is what both the bootstrap and the workspace step call, and the
+# branch that matters on a real machine — /opt needing root — cannot be
+# exercised here without sudo. What is asserted is the half that runs
+# unprivileged: a writable parent is used directly, and a second call on a
+# directory that already exists changes nothing rather than failing.
+
+fm_ensure_dir "$TMP/ws"
+assert_eq "a writable parent is used without sudo" "yes" "$([ -d "$TMP/ws" ] && echo yes)"
+# GNU stat first, BSD second, never the other way round: on Linux `stat -f` is
+# filesystem status rather than a format string, so it succeeds with the wrong
+# output and the fallback never runs.
+assert_eq "the directory belongs to the caller" "$(id -un)" "$(stat -c '%U' "$TMP/ws" 2>/dev/null || stat -f '%Su' "$TMP/ws")"
+assert_rc "a second call on an existing directory is a no-op" 0 fm_ensure_dir "$TMP/ws"
 
 # Back to the card the next section reads.
 card init --role jetson --name fm-rec-02 >/dev/null

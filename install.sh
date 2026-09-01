@@ -194,7 +194,7 @@ fm_adopt_legacy_checkout() {
     return 0
   fi
   fm_log "moving the checkout from $legacy into the workspace"
-  mkdir -p "$(dirname "$FM_SETUP_DIR")"
+  fm_ensure_dir "$(dirname "$FM_SETUP_DIR")"
   mv "$legacy" "$FM_SETUP_DIR"
   ln -s "$FM_SETUP_DIR" "$legacy"
   fm_ok "checkout now at $FM_SETUP_DIR ($legacy is a symlink to it)"
@@ -222,7 +222,7 @@ fm_bootstrap_checkout() {
     git -C "$FM_SETUP_DIR" pull --quiet --ff-only origin "$FM_TAG" 2>/dev/null || true
   else
     fm_log "cloning $FM_REPO into $FM_SETUP_DIR"
-    mkdir -p "$(dirname "$FM_SETUP_DIR")"
+    fm_ensure_dir "$(dirname "$FM_SETUP_DIR")"
     git clone --quiet --branch "$FM_TAG" "$FM_GIT_URL" "$FM_SETUP_DIR"
     cloned_now=1
   fi

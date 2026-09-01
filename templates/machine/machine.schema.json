@@ -56,7 +56,7 @@
       "fleet": "prod",
       "transport": "zenoh",
       "workload": "recorder",
-      "workspace": "/home/fm/fm"
+      "workspace": "/opt/fm"
     }
   ]
 }

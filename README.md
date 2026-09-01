@@ -38,7 +38,7 @@ curl -fsSL https://raw.githubusercontent.com/first-motive/fm-setup/v0.1.16/insta
 less install.sh && bash install.sh --workstation
 ```
 
-The curl path clones this repo into the machine's workspace — `~/fm/fm-setup`
+The curl path clones this repo into the machine's workspace — `/opt/fm/fm-setup`
 unless the machine's identity card says otherwise — and hands over to the
 checkout, because the manifest and the steps live in the repo, and a provisioned
 machine needs them on disk to re-check itself later.
@@ -57,6 +57,21 @@ and it is where the `fm` CLI looks: a copy of this repo kept anywhere else is on
 `fm doctor` reports as *not cloned* on the machine that is running it. A checkout
 left at the old `~/.first-motive/fm-setup` is moved into the workspace on the
 next provisioning run, with a symlink left behind so existing paths still work.
+
+There are two workspaces on a shared machine, and the difference matters:
+
+| whose | where | named by |
+| --- | --- | --- |
+| the machine's | `/opt/fm`, group `fm`, mode 2775 | the card |
+| a person's | `~/fm` | their own `FM_HOME` |
+
+The machine's is what the card names and what services read, so it lives outside
+every home directory — a home is mode 700 on Ubuntu, and a workspace inside one
+is readable by exactly one account. A person's own outranks the card, which is
+why `fm setup-onboard` writes `FM_HOME` and nothing else has to. A machine
+provisioned before this split keeps `/home/fm/fm` until `fm machine init` moves
+its card; `machine doctor` says so in the meantime, and `/home/fm/fm` stays
+reachable afterwards through a symlink.
 
 ### What The Curl Path Trusts
 
@@ -291,7 +306,7 @@ derived from it rather than typed a second time somewhere else.
   "fleet": "prod",
   "transport": "zenoh",
   "workload": "recorder",
-  "workspace": "/home/fm/fm"
+  "workspace": "/opt/fm"
 }
 ```
 
@@ -451,7 +466,7 @@ Onboarding one person has three owners, in this order:
 
 ```
 tailnet ACL   →   administrator        →   the person
-maps them         ./run.sh add-user        ./run.sh onboard
+maps them         ./run.sh add-user        fm setup-onboard
 to a unix         account, fm group,       tools, workspace, sign-in
 account           /data, no sudo
 ```
@@ -500,16 +515,27 @@ Everything after the account belongs to the person whose account it is — the
 tools land in their home, and the credentials are theirs to type.
 
 ```bash
-git clone https://github.com/first-motive/fm-setup ~/fm/fm-setup
-cd ~/fm/fm-setup && ./run.sh onboard
+fm setup-onboard
 ```
+
+One command, and no checkout of your own. The `fm` CLI is on every account's
+`PATH` from `/usr/local/bin`, and it mounts this verb from the machine's own
+`/opt/fm/fm-setup` — which is readable to the whole `fm` group, so a newcomer
+with an empty home has both before they have installed anything.
 
 `onboard` uses no sudo and writes nothing outside the home directory. It puts
 `~/.local/bin` on `PATH`, installs uv and the `fm` CLI through the same step
 provisioning uses, installs Claude Code, creates `~/fm`, and writes `FM_HOME`
 into `~/.profile` — which is what makes every tool resolve *your* workspace
-rather than the machine card's, which names the administrator's home and is
-unreadable to anyone else.
+rather than the machine's.
+
+On a machine whose CLI is not system-wide yet, clone and run it from the
+checkout instead:
+
+```bash
+git clone https://github.com/first-motive/fm-setup ~/fm/fm-setup
+cd ~/fm/fm-setup && ./run.sh onboard
+```
 
 The last step is signing in as yourself, which no script can do for you:
 
@@ -611,7 +637,7 @@ where a gap in its package list is found by someone standing next to a board.
 
 | variable | effect |
 | --- | --- |
-| `FM_HOME` | your own workspace root; outranks the machine card, which names the administrator's |
+| `FM_HOME` | your own workspace root; outranks the machine card, which names the machine's |
 | `FM_SETUP_DIR` | where the curl path clones this repo (default: `fm-setup` inside the card's workspace) |
 | `FM_LIB_SHA256` | expected sha256 of a fetched `lib.sh`; a mismatch aborts the install |
 | `FM_SETUP_SHA` | commit the bootstrapped checkout must be at; a mismatch aborts before provisioning |
