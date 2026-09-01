@@ -203,7 +203,28 @@ FM_APT_BASE=(
 # Pinned, not left to `ubuntu-drivers autoinstall`. Isaac Sim tracks driver
 # branches and refuses to start on a too-new one, so the driver moves when we
 # decide it moves.
-FM_NVIDIA_DRIVER=nvidia-driver-580-open
+#
+# The list leads with Ubuntu's prebuilt kernel-module tracker, which Canonical
+# signs. Without it the driver metapackage pulls nvidia-dkms-*-open, which
+# builds the module on the host and signs it with the machine-owner key in
+# /var/lib/shim-signed/mok/MOK.der. That only loads if the matching certificate
+# is enrolled, and on a host where it is not, Secure Boot rejects the module at
+# the next boot and the GPU disappears — the driver looks installed and
+# nvidia-smi reports a version mismatch.
+#
+# So this is not belt-and-braces: it is the difference between a rebuilt
+# workstation that has a GPU and one that does not. The lasting alternative is
+# to enrol the host's MOK certificate, which needs a password typed at the
+# physical console during reboot and therefore cannot be automated here.
+# Verify a host with:
+#
+#   mokutil --list-enrolled | grep Subject
+#   openssl x509 -inform DER -in /var/lib/shim-signed/mok/MOK.der -noout -subject
+#
+FM_NVIDIA_APT=(
+  linux-modules-nvidia-580-open-generic
+  nvidia-driver-580-open
+)
 
 # Container GPU passthrough. All four packages pin to one version — they move in
 # lockstep and an unpinned mix breaks the runtime hook.
