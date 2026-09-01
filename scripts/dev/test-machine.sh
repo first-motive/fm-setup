@@ -274,7 +274,10 @@ assert_eq "a new card takes the machine's own workspace" "/opt/fm" "$(field .wor
 
 fm_ensure_dir "$TMP/ws"
 assert_eq "a writable parent is used without sudo" "yes" "$([ -d "$TMP/ws" ] && echo yes)"
-assert_eq "the directory belongs to the caller" "$(id -un)" "$(stat -f '%Su' "$TMP/ws" 2>/dev/null || stat -c '%U' "$TMP/ws")"
+# GNU stat first, BSD second, never the other way round: on Linux `stat -f` is
+# filesystem status rather than a format string, so it succeeds with the wrong
+# output and the fallback never runs.
+assert_eq "the directory belongs to the caller" "$(id -un)" "$(stat -c '%U' "$TMP/ws" 2>/dev/null || stat -f '%Su' "$TMP/ws")"
 assert_rc "a second call on an existing directory is a no-op" 0 fm_ensure_dir "$TMP/ws"
 
 # Back to the card the next section reads.
