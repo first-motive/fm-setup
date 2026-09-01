@@ -33,6 +33,9 @@ MACHINE="$FM_ROOT/scripts/run/machine.sh"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT INT TERM HUP
 export FM_MACHINE_FILE="$TMP/machine.json"
+# The workspace resolver reads FM_HOME first, so a developer who exports one
+# would fail every card-based case here for a reason that is not a bug.
+unset FM_HOME
 
 PASS=0
 FAIL=0
@@ -217,6 +220,28 @@ assert_eq "optional reader returns the value" "robot"    "$(fm_machine_workload)
 card init --workload none >/dev/null
 assert_eq "optional reader returns empty when absent" "" "$(fm_machine_workload)"
 assert_rc "required reader fails on a missing field" 1 fm_machine_get workload
+
+# --- The workspace, per person rather than per machine -----------------------
+#
+# A card names one workspace for the whole host, and on a shared machine that
+# path belongs to one account. FM_HOME is how everyone else says where theirs
+# is, and it has to win — otherwise a second person's checkouts resolve into a
+# home directory they cannot read.
+
+fresh
+card init --role jetson --name fm-rec-04 --workspace /home/fm/fm >/dev/null
+assert_eq "the card names the workspace" "/home/fm/fm" "$(fm_machine_workspace)"
+assert_eq "FM_HOME outranks the card" "/home/matt/fm" \
+  "$(FM_HOME=/home/matt/fm fm_machine_workspace)"
+assert_eq "an empty FM_HOME is not a choice" "/home/fm/fm" \
+  "$(FM_HOME='' fm_machine_workspace)"
+
+fresh
+assert_eq "FM_HOME wins with no card at all" "/home/matt/fm" \
+  "$(FM_HOME=/home/matt/fm fm_machine_workspace)"
+
+# Back to the card the next section reads.
+card init --role jetson --name fm-rec-02 >/dev/null
 
 # --- Doctor -----------------------------------------------------------------
 
