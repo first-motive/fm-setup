@@ -28,13 +28,13 @@ On a machine that already has the repo:
 On a fresh machine, pin the URL to a release tag:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/first-motive/fm-setup/v0.1.14/install.sh | bash -s -- --workstation
+curl -fsSL https://raw.githubusercontent.com/first-motive/fm-setup/v0.1.15/install.sh | bash -s -- --workstation
 ```
 
 To read it first:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/first-motive/fm-setup/v0.1.14/install.sh -o install.sh
+curl -fsSL https://raw.githubusercontent.com/first-motive/fm-setup/v0.1.15/install.sh -o install.sh
 less install.sh && bash install.sh --workstation
 ```
 
@@ -77,7 +77,7 @@ tag — a tag is a name and can be moved by anyone who can push; a commit sha is
 the content and cannot:
 
 ```bash
-TAG=v0.1.14
+TAG=v0.1.15
 SHA=<commit sha for that tag>
 LIB=<lib.sh sha256 for that tag>
 
