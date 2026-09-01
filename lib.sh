@@ -556,6 +556,13 @@ fm_machine_get_opt() {
 # and "is there a profile at all" are different questions.
 fm_machine_workload() { fm_machine_get_opt workload; }
 
+# fm_machine_robot — echo which robot this machine is, empty when it is none.
+#
+# Beside fm_machine_workload because it answers the same shape of question and
+# has the same empty answer: most machines are not robots, and asking one what
+# robot it is must not be an error.
+fm_machine_robot() { fm_machine_get_opt robot; }
+
 # fm_machine_namespace [NAME] — echo the ROS namespace derived from a machine
 # name, defaulting to this machine's.
 #
@@ -664,6 +671,15 @@ fm_machine_valid_workload() {
   [ -z "$1" ] && return 0
   _fm_in_list "$1" ${FM_MACHINE_WORKLOADS[@]+"${FM_MACHINE_WORKLOADS[@]}"} ||
     { fm_err "invalid workload: '$1' (expected one of: ${FM_MACHINE_WORKLOADS[*]}, or none)"; return 1; }
+}
+
+# Empty passes, because every card that is not a robot's carries no robot field.
+# `machine init` is what requires one on the `robot` role; this only judges the
+# value it was given.
+fm_machine_valid_robot() {
+  [ -z "$1" ] && return 0
+  _fm_in_list "$1" ${FM_MACHINE_ROBOTS[@]+"${FM_MACHINE_ROBOTS[@]}"} ||
+    { fm_err "invalid robot: '$1' (expected one of: ${FM_MACHINE_ROBOTS[*]})"; return 1; }
 }
 
 # fm_machine_valid_name NAME [ROLE] — check the name's shape, and when a role is

@@ -152,6 +152,58 @@ assert_rc "valid_name accepts a workstation name" 0 fm_machine_valid_name "fm-ws
 assert_rc "valid_name rejects a rig name for a workstation" 1 \
   fm_machine_valid_name "fm-rec-01" workstation
 
+# --- Robot, the field that says which robot this is -------------------------
+#
+# A robot is adopted onto its vendor's OS rather than flashed, so this field and
+# the `robot` role are the whole of what fm-setup knows about one. Everything
+# downstream reads it: fm-comms picks the anvil bridge profile from it, and the
+# robot agent picks its adapter from it.
+
+fresh
+card init --role robot --name fm-rob-01 --robot anvil-openarm-v2 \
+  --workspace /home/fm/fm >/dev/null
+assert_eq "robot written when given" "anvil-openarm-v2" "$(field .robot)"
+assert_eq "robot sits before workspace" \
+  "schema_version name role fleet transport robot workspace" \
+  "$(jq -r 'keys_unsorted | join(" ")' "$FM_MACHINE_FILE")"
+
+card init --transport dds-lan >/dev/null
+assert_eq "robot carries forward" "anvil-openarm-v2" "$(field .robot)"
+assert_eq "the robot reader returns the value" "anvil-openarm-v2" "$(fm_machine_robot)"
+
+card init --robot axol >/dev/null
+assert_eq "robot is replaced when given again" "axol" "$(field .robot)"
+
+# The abbreviation is part of the name, so a robot answers to fm-rob-<nn> and
+# nothing else — the same rule that keeps a jetson from calling itself fm-ws-01.
+assert_rc "valid_name accepts a robot name" 0 fm_machine_valid_name "fm-rob-01" robot
+assert_rc "valid_name rejects a rig name for a robot" 1 \
+  fm_machine_valid_name "fm-rec-01" robot
+
+fresh
+assert_rc "role robot with no robot refused" 2 \
+  card init --role robot --name fm-rob-01
+assert_rc "unknown robot refused" 2 \
+  card init --role robot --name fm-rob-01 --robot forklift
+assert_rc "robot on a jetson refused" 2 \
+  card init --role jetson --name fm-rec-01 --robot axol
+
+fresh
+card init --role jetson --name fm-rec-01 --workspace /home/fm/fm >/dev/null
+assert_eq "a card that is not a robot's carries no robot" "false" \
+  "$(jq 'has("robot")' "$FM_MACHINE_FILE")"
+assert_eq "the robot reader is empty on a machine that is not one" "" "$(fm_machine_robot)"
+
+jq '.robot = "forklift"' "$FM_MACHINE_FILE" >"$TMP/x" && mv "$TMP/x" "$FM_MACHINE_FILE"
+assert_rc "doctor catches an unknown robot" 3 card doctor
+
+jq '.robot = "axol"' "$FM_MACHINE_FILE" >"$TMP/x" && mv "$TMP/x" "$FM_MACHINE_FILE"
+assert_rc "doctor catches a robot on a role that is not one" 3 card doctor
+
+jq '.role = "robot" | .name = "fm-rob-01" | del(.robot)' "$FM_MACHINE_FILE" \
+  >"$TMP/x" && mv "$TMP/x" "$FM_MACHINE_FILE"
+assert_rc "doctor catches a robot card with no robot" 3 card doctor
+
 # --- Reading ----------------------------------------------------------------
 
 fresh

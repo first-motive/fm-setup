@@ -18,9 +18,9 @@
       "pattern": "^fm-[a-z]+-[0-9]{2}$"
     },
     "role": {
-      "description": "Which kind of machine this is. Selects the provisioning step list, the ROS distro, and the Ubuntu release fm-setup will accept. `mac` is provisioned by neither role — it appears here because a laptop still needs an identity to point at a workspace and pick a transport.",
+      "description": "Which kind of machine this is. Selects the provisioning step list, the ROS distro, and the Ubuntu release fm-setup will accept. `mac` and `robot` are provisioned by neither role — a laptop still needs an identity to point at a workspace and pick a transport, and a robot arrives on its vendor's own OS, adopted by `fm device adopt` rather than flashed.",
       "type": "string",
-      "enum": ["workstation", "jetson", "mac"]
+      "enum": ["workstation", "jetson", "mac", "robot"]
     },
     "fleet": {
       "description": "Which population this machine belongs to. Machines only ever discover, sync with, and update alongside machines in the same fleet, so a rig on a bench cannot be adopted by the production fleet by accident.",
@@ -36,6 +36,11 @@
       "description": "What this machine does in the stack, when it does one of the things that has a middleware profile. Optional, because it is genuinely not universal: a machine that runs no bridge needs no value, and a required field would force a meaningless one onto it. Absent means this machine hosts no workload. Present, it selects the comms bridge profile — the last per-host value that was still being typed into an env file, because `role` cannot tell a recorder rig from a processor rig when both are `jetson`. `router` is the exception that runs no bridge: it runs zenohd, the one process the whole fleet connects to. It is a workload and not a role because the machine hosting it is an ordinary mac or workstation that also does other work. `cockpit` is a Mac, whose bridge is the mirror of a rig's, and `workstation` is the GPU tower, whose bridge is the union of `robot` and `processor` because it runs both.",
       "type": "string",
       "enum": ["recorder", "processor", "robot", "workstation", "router", "cockpit"]
+    },
+    "robot": {
+      "description": "Which robot this machine is. Required on the `robot` role and absent on every other, because it is the field the rest of the fleet reads to know what it is talking to: fm-comms selects the anvil bridge profile from it, and the robot agent selects its adapter from it. `role` cannot answer that — an Anvil workcell and an Axol are both robots and share not one interface.",
+      "type": "string",
+      "enum": ["anvil-openarm-v2", "axol"]
     },
     "workspace": {
       "description": "Absolute path to the single parent directory holding every First Motive checkout on this machine. Readers must take the workspace from here and never assume a path: a hardcoded ~/fm_ros2 is what this field exists to delete. Absent on a client-mode machine, which has no workspace at all — such a machine has no identity card either.",
