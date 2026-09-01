@@ -163,7 +163,13 @@ resolve_fields() {
   # would mean a host converges on everything except the thing that keeps the
   # team out of its checkouts. An explicit --workspace still wins, including one
   # that puts it back.
-  if [ "$WORKSPACE_EXPLICIT" = 0 ] && workspace_in_home "$WORKSPACE"; then
+  #
+  # Not on a mac, where a workspace in the home is the right answer and the only
+  # one available. /opt/fm is made by 12-workspace.sh, which runs on Linux and on
+  # no mac; the mac role runs no steps at all. Converging there would point every
+  # tool at a directory nothing creates, on the one kind of host that has a
+  # single account and so never had the problem this converge exists to fix.
+  if [ "$ROLE" != mac ] && [ "$WORKSPACE_EXPLICIT" = 0 ] && workspace_in_home "$WORKSPACE"; then
     fm_warn "workspace $WORKSPACE is inside a home directory — moving the card to $FM_MACHINE_WORKSPACE_DEFAULT"
     WORKSPACE="$FM_MACHINE_WORKSPACE_DEFAULT"
   fi
@@ -423,8 +429,10 @@ do_doctor() {
   fi
   # Judged separately from whether it exists, because a workspace in a home
   # directory is wrong on a rig that has never booted and on one provisioned a
-  # year ago alike.
-  if workspace_in_home "$value"; then
+  # year ago alike. Right on a mac, though, which has one account and no step
+  # that could make a workspace anywhere else — so doctor must not call that a
+  # problem it can fix, having no fix to offer.
+  if [ "$ROLE" != mac ] && workspace_in_home "$value"; then
     fm_err "workspace $value is inside a home directory — only that account can read it"
     fm_info "run 'fm machine init' to move the card to $FM_MACHINE_WORKSPACE_DEFAULT"
     problems=$((problems + 1))
