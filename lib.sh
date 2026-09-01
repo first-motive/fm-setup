@@ -623,6 +623,35 @@ fm_setup_dir() {
   printf '%s/%s\n' "$(fm_machine_workspace)" "${FM_SETUP_CHECKOUT_NAME:-fm-setup}"
 }
 
+# Create DIR, becoming root only when its parent is not already ours to write,
+# and hand it to the caller afterwards.
+#
+# The machine's workspace lives at /opt/fm, outside every home directory, which
+# is what makes it readable to the whole team — and what means the account
+# provisioning the machine cannot create it unaided. Ownership moves to that
+# account in the same breath, so everything after this point (the clone, the
+# checkout symlink, a `git pull` months later) runs without sudo.
+#
+# Escalating only when the parent refuses is what keeps the same call correct on
+# a host whose card still names a path inside a home: there sudo is neither
+# needed nor spent, and the directory is not left owned by root.
+#
+# The path reaching sudo comes from the card or from FM_HOME, and both belong to
+# somebody who is already provisioning this machine with sudo — this creates no
+# reach they did not have. What it does refuse is a path that does not mean what
+# it reads as: fm_machine_valid_workspace rejects `..` before a card can carry
+# one, which is the only way the directory created lands somewhere other than
+# where the caller is looking.
+fm_ensure_dir() {
+  local dir="$1"
+  [ -d "$dir" ] && return 0
+  if [ -w "$(dirname "$dir")" ] || [ "$(id -u)" = 0 ]; then
+    mkdir -p "$dir"
+  else
+    sudo mkdir -p "$dir" && sudo chown "$(id -un)" "$dir"
+  fi
+}
+
 # Field validators, here rather than in the writer, because two callers now
 # produce cards: `machine init` on a running host and `flash` into a cloud-init
 # seed. A second copy of these rules would let the two disagree about what a
@@ -658,6 +687,15 @@ fm_machine_valid_workspace() {
   case "$1" in
     /*) ;;
     *) fm_err "invalid workspace: '$1' (must be an absolute path)"; return 1 ;;
+  esac
+  # `..` is refused rather than resolved. The workspace is the one value that
+  # reaches `sudo mkdir` — the machine's workspace lives outside every home, so
+  # creating it needs root — and a path that walks upward makes the directory
+  # that gets created somewhere other than the one the card appears to name.
+  # Nothing has a reason to write a workspace that way, so refusing costs
+  # nothing and leaves no path to normalise.
+  case "$1" in
+    */../*|*/..) fm_err "invalid workspace: '$1' (no '..' path segments)"; return 1 ;;
   esac
 }
 

@@ -158,7 +158,28 @@ FM_MACHINE_FLEET_DEFAULT=prod
 # One directory the owner can see and back up, rather than eight scattered
 # across a home directory — and the value readers take the workspace from, so
 # that no repo ever hardcodes ~/fm_ros2 again.
-FM_MACHINE_WORKSPACE_DEFAULT="$HOME/fm"
+#
+# Outside anybody's home on purpose. This is the *machine's* workspace, and the
+# card names it for the whole host — so when it sat at the administrator's
+# ~/fm it inherited that home's mode 700, and a second account resolving the
+# card landed in a directory it could not enter. `fm status` red, `fm
+# setup-onboard` unreachable, and the only workaround an FM_HOME export in
+# everyone's shell files. A person's own workspace is still their own, through
+# FM_HOME, which outranks the card; what changes here is that the machine's is
+# no longer somebody's.
+#
+# Group `fm`, mode 2775, created by 12-workspace.sh. A host already carrying a
+# card keeps whatever that card says until `machine init` rewrites it, so this
+# default does not move a running rig underneath itself.
+FM_MACHINE_WORKSPACE_DEFAULT=/opt/fm
+
+# Where the machine's workspace used to live, before it left the
+# administrator's home. Named so 12-workspace.sh can leave a symlink behind at
+# the old path: every shell file, note, and README a person wrote before the
+# move says ~/fm, and a path that answers is worth more than a correction.
+#
+# Read-only, like FM_SETUP_LEGACY_DIR. Nothing is ever written here.
+FM_MACHINE_WORKSPACE_LEGACY="$HOME/fm"
 
 # This repo's own directory name inside that workspace.
 #
