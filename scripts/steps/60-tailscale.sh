@@ -24,10 +24,11 @@ do_check() {
   fi
   fm_ok "tailscale $(tailscale version 2>/dev/null | head -1)"
   if tailscale status >/dev/null 2>&1; then
-    # `status --json` pretty-prints with a space after the colon, so the
-    # pattern must allow it or the identity extracts as empty.
+    # Read the JSON as JSON. A `grep | head -1` chain in an assignment under
+    # pipefail can abort the step with 141 when head closes the pipe early; jq
+    # is in the base packages, which step 10 installs before this one runs.
     local identity
-    identity="$(tailscale status --json 2>/dev/null | grep -o '"DNSName": *"[^"]*"' | head -1 | cut -d'"' -f4)"
+    identity="$(tailscale status --json --peers=false 2>/dev/null | jq -r '.Self.DNSName // empty')"
     fm_ok "joined: ${identity:-identity unavailable}"
   else
     fm_warn "installed but not joined to a tailnet"
