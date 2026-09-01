@@ -116,7 +116,7 @@ points back at the verb. What the verb delegates to:
 ```bash
 scripts/dev/cut-release.sh              # print the plan, change nothing
 scripts/dev/cut-release.sh --apply      # create and push the tag
-scripts/dev/cut-release.sh --set v0.2.0 # prepare the bump commit for a PR
+scripts/dev/cut-release.sh --set vX.Y.Z # prepare the bump commit for a PR
 ```
 
 The release is two halves. A tag a rig resolves at flash time is one; the
