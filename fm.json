@@ -17,6 +17,10 @@
       "script": "scripts/run/add-user.sh",
       "help": "create an account in the fm group, without sudo"
     },
+    "setup-onboard": {
+      "script": "scripts/run/onboard.sh",
+      "help": "set up your own account on this machine: uv, fm, Claude Code, workspace"
+    },
     "isaac-sim": {
       "script": "scripts/run/isaac-sim.sh",
       "help": "launch the Isaac Sim container, headless by default"
