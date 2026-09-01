@@ -577,8 +577,16 @@ fm_machine_namespace() {
 }
 
 # Echo the workspace directory every First Motive checkout on this machine lives
-# under: the card's `workspace` when the machine has a card, the manifest default
-# otherwise.
+# under: `FM_HOME` when the caller set one, the card's `workspace` when the
+# machine has a card, the manifest default otherwise.
+#
+# FM_HOME outranks the card because the card is one file for the whole host and
+# a workspace is per person. fm-ws-01's card pins /home/fm/fm, which is mode 750
+# and unreadable to everyone except fm, so a second account resolving from the
+# card alone lands in a directory it cannot enter — `fm status` red, bootstrap
+# unable to clone. The precedence is the one fm-tools already documents
+# (FM_HOME > card > config > ~), and the two resolvers agreeing is what lets a
+# person and the CLI say the same thing about where their checkouts are.
 #
 # Falling back rather than failing, unlike fm_machine_get, because this is the
 # answer to "where do checkouts go" and the loudest caller is a provisioning run
@@ -590,7 +598,11 @@ fm_machine_namespace() {
 # jq is checked rather than assumed: this is read during the curl bootstrap, on a
 # host where base-deps has not installed jq yet.
 fm_machine_workspace() {
-  local ws=""
+  local ws="${FM_HOME:-}"
+  if [ -n "$ws" ]; then
+    printf '%s\n' "$ws"
+    return 0
+  fi
   if fm_machine_exists && fm_has_cmd jq; then
     ws="$(fm_machine_get workspace 2>/dev/null || true)"
   fi

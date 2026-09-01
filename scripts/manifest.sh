@@ -390,6 +390,17 @@ FM_TOOLS_VERSION=v0.8.1
 FM_UV_VERSION=0.9.29
 FM_UV_INSTALLER_SHA256=
 
+# --- The org skill set -----------------------------------------------------
+
+# fm-ai holds the shared skills, agents, and hooks every First Motive session
+# runs with. `./run.sh onboard` clones it into the person's own workspace and
+# runs its installer, which links everything into their ~/.claude.
+#
+# Not pinned and not a step: it is per person, it is cloned over their own
+# GitHub credential, and its whole value is that it is current. A pin here would
+# hold everyone on the skills of the day their account was made.
+FM_AI_REPO=first-motive/fm-ai
+
 # --- People and data -------------------------------------------------------
 
 # Everyone who works on the machine is in this group, and /data is group-owned

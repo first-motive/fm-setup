@@ -420,7 +420,44 @@ in the role's array in `scripts/manifest.sh` as `id|file|default`.
 
 The repo holds no roster. The account that provisions a machine is its
 administrator and the only one with sudo; everyone else is added afterwards into
-the shared `fm` group, with no ability to change the host.
+the shared `fm` group, with no ability to change the host. Who is on a machine
+is answered by two live things — the tailnet ACL and the `fm` group — and by
+nothing in this repo, because a name in a committed file is stale the day
+someone joins or leaves.
+
+Onboarding one person has three owners, in this order:
+
+```
+tailnet ACL   →   administrator        →   the person
+maps them         ./run.sh add-user        ./run.sh onboard
+to a unix         account, fm group,       tools, workspace, sign-in
+account           /data, no sudo
+```
+
+### 1. The ACL Maps A Person To An Account
+
+Tailscale SSH decides who may log in as whom, and it needs to be told that
+`matt@ubundi.co.za` is the unix account `matt`. Without a rule naming the
+account, a new passwordless user cannot log in at all — the account exists and
+nothing can reach it. One `accept` rule per person:
+
+```jsonc
+{
+  "action": "accept",
+  "src":    ["matt@ubundi.co.za"],
+  "dst":    ["tag:ssh-server"],
+  "users":  ["matt"]
+}
+```
+
+`tag:ssh-server` is the tag the machines carry — confirm a host's own with
+`tailscale status --json | jq .Self.Tags` before writing a rule against it.
+
+The administrator's own account is reachable under `"action": "check"` instead,
+which re-authenticates before each session. Everything about who may log in
+lives here; this repo holds none of it.
+
+### 2. The Administrator Creates The Account
 
 ```bash
 ./run.sh add-user matt        # account + fm group + /data access, no sudo
@@ -429,6 +466,49 @@ sudo deluser --remove-home matt
 
 New accounts have no password and log in over Tailscale SSH. The machine's
 `CLAUDE.md` reaches them through `/etc/skel`.
+
+`bash scripts/steps/70-users.sh check` warns when a workstation's `fm` group
+holds nobody but the administrator. A rebuild takes every account with it, so
+that warning is the only thing on a freshly reinstalled machine that says the
+team is gone.
+
+### 3. The Person Onboards Themselves
+
+Everything after the account belongs to the person whose account it is — the
+tools land in their home, and the credentials are theirs to type.
+
+```bash
+git clone https://github.com/first-motive/fm-setup ~/fm/fm-setup
+cd ~/fm/fm-setup && ./run.sh onboard
+```
+
+`onboard` uses no sudo and writes nothing outside the home directory. It puts
+`~/.local/bin` on `PATH`, installs uv and the `fm` CLI through the same step
+provisioning uses, installs Claude Code, creates `~/fm`, and writes `FM_HOME`
+into `~/.profile` — which is what makes every tool resolve *your* workspace
+rather than the machine card's, which names the administrator's home and is
+unreadable to anyone else.
+
+The last step is signing in as yourself, which no script can do for you:
+
+```bash
+claude                        # then /login
+gh auth login                 # then re-run onboard for the org skills
+git config --global user.name "Your Name"
+git config --global user.email you@ubundi.co.za
+```
+
+Then open a new shell, or `. ~/.profile`, so `PATH` and `FM_HOME` take effect.
+Until you do, `fm` and `claude` are not on `PATH` in the shell you ran
+`onboard` from.
+
+Claude Code is installed unpinned, because it updates itself in place. The
+`fm` CLI is pinned in `scripts/manifest.sh`, because two machines provisioned
+months apart should agree about it.
+
+Cloning the org skill set needs GitHub auth `onboard` cannot supply. Run
+without it, `onboard` prints the two commands and exits 0; run it again after
+`gh auth login` and it finishes the job.
 
 ## Backups
 
@@ -509,6 +589,7 @@ where a gap in its package list is found by someone standing next to a board.
 
 | variable | effect |
 | --- | --- |
+| `FM_HOME` | your own workspace root; outranks the machine card, which names the administrator's |
 | `FM_SETUP_DIR` | where the curl path clones this repo (default: `fm-setup` inside the card's workspace) |
 | `FM_LIB_SHA256` | expected sha256 of a fetched `lib.sh`; a mismatch aborts the install |
 | `FM_SETUP_SHA` | commit the bootstrapped checkout must be at; a mismatch aborts before provisioning |

@@ -33,6 +33,36 @@ in_group()     { id -nG "$1" 2>/dev/null | tr ' ' '\n' | grep -qx "$2"; }
 # instead of degrading it, and the appliance timer runs this step unattended.
 admin_user() { printf '%s\n' "${FM_ADMIN_USER:-${SUDO_USER:-${USER:-$(id -un)}}}"; }
 
+# Say so when the workstation has nobody on it but its administrator.
+#
+# A rebuild wipes every account, and the accounts are the one thing this repo
+# deliberately does not hold: the roster is the group itself. So a reinstalled
+# workstation comes back green with a team of one, and nothing says the people
+# are gone — which is exactly how they were lost once already. This is the line
+# that says it.
+#
+# Workstation only. A jetson is an appliance reached over the tailnet, and a
+# rig with one account is what a rig is supposed to look like.
+team_of_one() { # admin
+  local role="${FM_ROLE:-$(fm_detect_role)}" others=() u
+  [ "$role" = "workstation" ] || return 0
+
+  while IFS= read -r u; do
+    [ "$u" = "$1" ] || others+=("$u")
+  done < <(fm_group_members "$FM_GROUP")
+
+  if [ "${#others[@]}" -eq 0 ]; then
+    # Phrased on membership rather than assuming it: an admin removed from the
+    # group leaves it empty, and "holds only fm" would then be untrue.
+    if in_group "$1" "$FM_GROUP"; then
+      fm_warn "$FM_GROUP holds only $1 — this workstation has no team on it"
+    else
+      fm_warn "$FM_GROUP is empty — this workstation has no team on it"
+    fi
+    fm_info "add people with: ./run.sh add-user <name>, then each runs ./run.sh onboard"
+  fi
+}
+
 do_check() {
   local admin members
   admin="$(admin_user)"
@@ -40,6 +70,7 @@ do_check() {
   if group_exists "$FM_GROUP"; then
     members="$(fm_group_members "$FM_GROUP" | tr '\n' ' ')"
     fm_ok "group $FM_GROUP: ${members:-no members}"
+    team_of_one "$admin"
   else
     fm_warn "group $FM_GROUP missing"
   fi
