@@ -24,6 +24,15 @@
 # scripts/manifest.sh, which this script never touches. A version-shaped string
 # appearing in install.sh or README.md is therefore this repo's own release by
 # construction, and --check enforces that invariant rather than assuming it.
+#
+# Before you bump: the tag this writes is what every provisioned host follows.
+# Within 15 minutes of the push, each one checks out the new revision and
+# converges its machine layer — apt, drivers, units. Read every commit the tag
+# will carry, not only your own, and check each one that touches the machine
+# against a running host. A revert is a machine change: an empty `git diff` back
+# to an earlier state proves the repo moved back, and says nothing about a host
+# someone fixed by hand in between. That exact reading took fmtower's GPU down on
+# 2026-09-01. fm-data's agent_docs/fmtower_workstation.md has the detail.
 
 set -euo pipefail
 
