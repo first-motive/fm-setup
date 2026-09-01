@@ -121,9 +121,15 @@ MACHINE_TRANSPORT="${FM_MACHINE_TRANSPORTS[0]}"
 # jetson defaults to recorder; a workstation runs no bridge and defaults to none,
 # which is the same answer `machine init` gives on a machine with no workload.
 MACHINE_WORKLOAD=""
-# One visible parent directory for every checkout, resolved once --user is
-# known. Consumers read this out of the card rather than assuming a path.
-MACHINE_WORKSPACE=""
+# One visible parent directory for every checkout. Consumers read this out of
+# the card rather than assuming a path.
+#
+# The machine's, not the first account's, which is why it no longer derives from
+# --user. A card is one file for the whole host, and a workspace inside a home
+# directory is readable by exactly one account — on a rig that is invisible until
+# the second person logs in and every fm command answers about somebody else's
+# checkouts.
+MACHINE_WORKSPACE="$FM_MACHINE_WORKSPACE_DEFAULT"
 NEW_HOSTNAME=""
 NEW_USER="$FM_FLASH_USER"
 WIFI_SSID=""
@@ -758,7 +764,6 @@ validate_request() {
   resolve_role || return 2
   require_sane_name hostname "$NEW_HOSTNAME" || return 2
   require_sane_name username "$NEW_USER" || return 2
-  MACHINE_WORKSPACE="/home/$NEW_USER/fm"
 
   # Every card field is checked here, against the same validators `machine init`
   # uses, before any of them is written into the seed. This is the one card

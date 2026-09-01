@@ -581,10 +581,11 @@ fm_machine_namespace() {
 # machine has a card, the manifest default otherwise.
 #
 # FM_HOME outranks the card because the card is one file for the whole host and
-# a workspace is per person. fm-ws-01's card pins /home/fm/fm, which is mode 750
-# and unreadable to everyone except fm, so a second account resolving from the
-# card alone lands in a directory it cannot enter — `fm status` red, bootstrap
-# unable to clone. The precedence is the one fm-tools already documents
+# a workspace is per person. The card names the machine's own, at /opt/fm; a
+# person working on the box wants their branches under their own home, and on a
+# host whose card still points inside a home directory — mode 700, unreadable to
+# everyone else — FM_HOME is the only thing standing between a second account
+# and a workspace it cannot enter. The precedence is the one fm-tools documents
 # (FM_HOME > card > config > ~), and the two resolvers agreeing is what lets a
 # person and the CLI say the same thing about where their checkouts are.
 #

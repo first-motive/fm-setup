@@ -244,6 +244,26 @@ fresh
 assert_eq "FM_HOME wins with no card at all" "/home/matt/fm" \
   "$(FM_HOME=/home/matt/fm fm_machine_workspace)"
 
+# --- Converging a card written before the workspace left home ----------------
+#
+# A workspace inside a home directory is readable by one account, and the card
+# names it for the whole host. Doctor says so rather than reporting the machine
+# healthy, and a repair run moves it — the one field init does not simply carry
+# forward.
+
+fresh
+card init --role jetson --name fm-rec-05 --workspace /home/fm/fm >/dev/null
+assert_eq "an explicit workspace in a home is written as given" "/home/fm/fm" "$(field .workspace)"
+assert_rc "doctor catches a workspace inside a home directory" 3 card doctor
+
+card init >/dev/null
+assert_eq "repair moves the card off a home directory" "/opt/fm" "$(field .workspace)"
+assert_rc "doctor is clean once the card has converged" 0 card doctor
+
+fresh
+card init --role jetson --name fm-rec-05 >/dev/null
+assert_eq "a new card takes the machine's own workspace" "/opt/fm" "$(field .workspace)"
+
 # --- Creating the workspace --------------------------------------------------
 #
 # fm_ensure_dir is what both the bootstrap and the workspace step call, and the
