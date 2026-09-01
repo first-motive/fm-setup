@@ -377,9 +377,14 @@ FM_GROUP=fm
 
 # Shared storage. Recordings and dataset releases are irreplaceable and belong
 # here rather than in a home directory, where a user removal would take them.
+# `recordings-retired` holds takes withdrawn from the upload and processing
+# path. It is a sibling of `recordings` rather than a directory inside it so a
+# retired take leaves upload discovery, which globs sidecars at the recordings
+# root.
 FM_DATA_DIR=/data
 FM_DATA_SUBDIRS=(
   recordings
+  recordings-retired
   dataset-releases
   runs
   models
@@ -388,8 +393,12 @@ FM_DATA_SUBDIRS=(
 # What `./run.sh backup` copies to external storage before a wipe: the things
 # that cannot be re-made. `models` is absent on purpose — weights are downloads,
 # and treating them as precious turns a backup nobody runs into the plan.
+# `recordings-retired` is here because a retired take is still a recording. It
+# is usually retired for a defect that blocks its upload, so it is the take most
+# likely to hold only one copy.
 FM_BACKUP_SOURCES=(
   recordings
+  recordings-retired
   dataset-releases
   runs
 )
