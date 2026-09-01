@@ -564,6 +564,14 @@ Cloning the org skill set needs GitHub auth `onboard` cannot supply. Run
 without it, `onboard` prints the two commands and exits 0; run it again after
 `gh auth login` and it finishes the job.
 
+The re-run is `/opt/fm/fm-setup/run.sh onboard`, not `fm setup-onboard`. The
+CLI mounts a repo's verbs from the workspace it resolves, and the first run
+writes `FM_HOME` — so from the next shell onwards that workspace is yours, which
+holds no `fm-setup` and has no reason to. The machine's checkout is readable by
+everyone, so calling it by path always works. The seam closes if `fm` falls back
+to the card's workspace for a repo your own does not carry; that lives in
+fm-tools.
+
 ## Backups
 
 Before a wipe, copy what cannot be re-made and prove the copy is good:

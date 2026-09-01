@@ -7,9 +7,15 @@
 # One command, with no checkout of your own. The machine's workspace lives at
 # /opt/fm where everyone can read it, and the fm CLI is on every account's PATH
 # from /usr/local/bin, so the CLI mounts this verb from the machine's own
-# fm-setup and a newcomer never clones anything to get started. `./run.sh
-# onboard` from a checkout is the same script, and the fallback on a host whose
-# CLI is not system-wide yet.
+# fm-setup and a newcomer never clones anything to get started.
+#
+# That verb is reachable exactly once, which is worth knowing before it puzzles
+# somebody. The CLI mounts a repo's verbs from the workspace it resolves; for an
+# account with nothing set that is the card's, and `fm setup-onboard` is there.
+# This script then writes FM_HOME, and from the next shell onwards the resolved
+# workspace is the person's own — which holds no fm-setup, and needs none. The
+# verb is gone, and every re-run this script prints names the machine's checkout
+# directly instead. `./run.sh onboard` is the same script by another road.
 #
 # `add-user` is the administrator's half: an account, the fm group, /data. This
 # is the other half, and the person it belongs to runs it themselves. Nothing
@@ -232,7 +238,7 @@ install_fm_ai() {
 
   if ! fm_has_cmd gh; then
     fm_warn "gh not installed — skipping fm-ai"
-    fm_info "install it, sign in, then run this again: fm setup-onboard"
+    fm_info "install it, sign in, then run this again: $FM_ROOT/run.sh onboard"
     return 0
   fi
 
@@ -240,7 +246,7 @@ install_fm_ai() {
     fm_warn "not signed in to GitHub — skipping fm-ai"
     fm_info "sign in, then run this again:"
     fm_info "  gh auth login"
-    fm_info "  fm setup-onboard"
+    fm_info "  $FM_ROOT/run.sh onboard"
     return 0
   fi
 
@@ -264,7 +270,7 @@ install_fm_ai() {
     # Non-fatal for the same reason the GitHub gate is: the rest of this run is
     # still worth having, and a re-run is what finishes an incomplete one. An
     # abort here would leave the sign-in checklist unprinted.
-    fm_warn "fm-ai's installer failed — re-run fm setup-onboard once it is fixed"
+    fm_warn "fm-ai's installer failed — re-run $FM_ROOT/run.sh onboard once it is fixed"
   fi
   return 0
 }
@@ -273,11 +279,20 @@ install_fm_ai() {
 
 # The last four things are credentials, and every one of them is personal and
 # interactive. A script cannot do them for anybody, so it says so and stops.
+#
+# The re-run is spelled as a path rather than as `fm setup-onboard`, because by
+# the time anybody reads this the verb has stopped existing for them. The CLI
+# mounts a repo's verbs from the workspace it resolves, and this run has just
+# written FM_HOME — which points at the person's own workspace, where there is
+# no fm-setup checkout and no reason for one. The machine's checkout is readable
+# by everybody, so calling it directly always works. fm-tools falling back to
+# the card's workspace for a repo the person does not have would remove the
+# seam; until then this line is honest and the one-liner would not be.
 checklist() {
   echo
   fm_log "sign in as yourself"
   fm_info "1. claude          then /login"
-  fm_info "2. gh auth login   then re-run fm setup-onboard for the org skills"
+  fm_info "2. gh auth login   then re-run $FM_ROOT/run.sh onboard for the org skills"
   fm_info "3. git config --global user.name \"Your Name\""
   fm_info "4. git config --global user.email you@ubundi.co.za"
   echo
