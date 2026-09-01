@@ -62,7 +62,7 @@ There are two workspaces on a shared machine, and the difference matters:
 
 | whose | where | named by |
 | --- | --- | --- |
-| the machine's | `/opt/fm`, group `fm`, mode 2775 | the card |
+| the machine's | `/opt/fm`, group `fm`, mode 3775 | the card |
 | a person's | `~/fm` | their own `FM_HOME` |
 
 The machine's is what the card names and what services read, so it lives outside

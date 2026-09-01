@@ -168,7 +168,7 @@ FM_MACHINE_FLEET_DEFAULT=prod
 # FM_HOME, which outranks the card; what changes here is that the machine's is
 # no longer somebody's.
 #
-# Group `fm`, mode 2775, created by 12-workspace.sh. A host already carrying a
+# Group `fm`, mode 3775, created by 12-workspace.sh. A host already carrying a
 # card keeps whatever that card says until `machine init` rewrites it, so this
 # default does not move a running rig underneath itself.
 FM_MACHINE_WORKSPACE_DEFAULT=/opt/fm
@@ -417,11 +417,11 @@ FM_TOOLS_VERSION=v0.8.1
 # a home directory would otherwise install into one.
 #
 # Beside the workspace rather than inside it, which is the part that is not
-# cosmetic. /opt/fm is group `fm`, mode 2775 and no sticky bit, so any member
-# can delete a directory there whoever owns it and leave a symlink in its place
-# — and the next provisioning run would install through that symlink as root and
-# then open its target to the whole machine. /opt is root-owned, so nothing but
-# root creates this path.
+# cosmetic. /opt/fm is group-writable by the whole team, so a path inside it is
+# a path the team can arrange — and root installs through this one. The sticky
+# bit stops a member deleting an entry that is not theirs, which closes the swap
+# once the directory exists, and leaves the window before it does. /opt is
+# root-owned, so nothing but root ever creates this path.
 FM_CLI_TOOL_DIR=/opt/fm-tools
 FM_CLI_BIN_DIR=/usr/local/bin
 
