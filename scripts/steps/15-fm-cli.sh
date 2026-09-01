@@ -13,12 +13,19 @@
 # it only makes sure uv exists first, which fm-tools requires but does not
 # install.
 #
-# uv puts tools under the invoking user's home, so the install itself is
-# per-user. On top of that this step links /usr/local/bin/fm at the binary uv
-# wrote, because a newcomer with an empty home has no ~/.local/bin on PATH and
-# nothing to run: the CLI is how they onboard, so it cannot be the thing that
-# waits until they have onboarded. One link means one pinned version for the
-# whole box and upgrades that only the administrator can make.
+# Installed twice, deliberately.
+#
+# Once under the invoking account's home, which is where uv puts a tool and what
+# `fm setup-onboard` gives a person. Once for the machine, root-owned in
+# /opt/fm-tools with the command at /usr/local/bin/fm — because a newcomer with
+# an empty home has nothing on PATH and nothing to run, and the CLI is how they
+# onboard. It cannot be the thing that waits until they have onboarded.
+#
+# The machine-wide copy is its own install rather than a link to somebody's,
+# for a reason worth stating once: a uv tool binary is a symlink into
+# ~/.local/share/uv, and its venv names an interpreter uv chose — under sudo,
+# one in /root at mode 700. A link to it is readable, executable, and still
+# unrunnable by every account but the owner's.
 
 set -euo pipefail
 
@@ -45,80 +52,59 @@ uv_bin() {
   return 1
 }
 
-# Where a system-wide `fm` lives.
-FM_SHIM=/usr/local/bin/fm
+# The machine-wide command, and the tool tree behind it.
+FM_MACHINE_FM="$FM_CLI_BIN_DIR/fm"
 
-# This account's uv tool binary — the thing the shim points at. uv writes tool
-# entry points here whether or not the directory is on PATH, which is the same
-# reason uv_bin looks there directly.
-uv_tool_fm() { printf '%s\n' "$HOME/.local/bin/fm"; }
-
-# Return success when the shim is the one this account installed. Both sides are
-# resolved before they are compared, because a shim installed from another
-# account is that person's pin and this step may neither move nor remove it.
-shim_is_ours() {
-  [ -L "$FM_SHIM" ] && [ "$(readlink -f "$FM_SHIM")" = "$(readlink -f "$(uv_tool_fm)")" ]
+# Return success when the machine-wide fm is the one this step installs, rather
+# than something else that happens to answer to the same name. Resolved before
+# comparing, because it is a symlink uv writes into the bin directory.
+machine_fm_is_ours() {
+  case "$(readlink -f "$FM_MACHINE_FM" 2>/dev/null)" in
+    "$FM_CLI_TOOL_DIR"/*) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
-# The shim resolves into this account's home, and Ubuntu creates a home at mode
-# 750: every other account then gets "Permission denied" from a link that looks
-# perfectly healthy to the person who made it. Said out loud, never fixed here —
-# a home directory belongs to the person living in it, not to this step.
+# Refuse a path that anyone but its owner can write.
 #
-# Both directories the link resolves through, because either one closed to
-# others stops the same command in the same way.
-warn_unless_traversable() {
-  local dir mode
-  for dir in "$HOME" "$(dirname "$(uv_tool_fm)")"; do
-    mode="$(stat -c '%a' "$dir" 2>/dev/null)" || continue
-    # 0001 is the other-execute bit, which on a directory is the right to enter it.
-    if [ $(( 8#$mode & 0001 )) -eq 0 ]; then
-      fm_warn "$dir is mode $mode — every other account gets 'Permission denied' from $FM_SHIM"
-      fm_info "its owner makes the shim usable for the team with: chmod o+x $dir"
-    fi
-  done
-}
-
-# Fail when anyone but the owner can write a directory the shim resolves
-# through.
-#
-# The shim makes one account's binary the `fm` every other account runs. If a
-# second person can write $HOME or ~/.local/bin — a home left group-writable on
-# a machine where the whole team is in one group — they can replace that binary,
-# and it then runs as whoever typed `fm`. The link would hand a shared group a
-# way to execute code as each other, which is precisely the boundary the fm
-# group exists to keep.
-#
-# Checked rather than fixed, and checked immediately before the link is made:
-# these are somebody's own directories, and a step that silently tightened them
-# would be changing a home it does not own.
-shim_target_is_private() {
-  local dir mode
-  for dir in "$HOME" "$(dirname "$(uv_tool_fm)")"; do
-    mode="$(stat -c '%a' "$dir" 2>/dev/null)" || continue
-    # 0022 is the group-write and other-write bits, and nothing else.
-    if [ $(( 8#$mode & 0022 )) -ne 0 ]; then
-      fm_warn "$dir is mode $mode — anyone who can write it decides what every account's fm runs"
-      fm_info "not linking $FM_SHIM; make it private first: chmod go-w $dir"
-      return 1
-    fi
-  done
+# Used on what is about to be executed as root. Group- and world-write are both
+# refused: on a machine where the whole team shares one group, group-write is
+# the shape that actually occurs, and it hands every member the root the
+# administrator holds.
+refuse_writable_by_others() { # path
+  local mode
+  mode="$(stat -c '%a' "$1" 2>/dev/null)" || return 0
+  # 0022 is the group-write and other-write bits, and nothing else.
+  if [ $(( 8#$mode & 0022 )) -ne 0 ]; then
+    fm_warn "$1 is mode $mode — not running it as root while others can write it"
+    fm_info "its owner makes it safe with: chmod go-w $1"
+    return 1
+  fi
 }
 
 do_check() {
   check_user_install
-  check_shim
+  check_machine_install
   return 0
 }
 
-check_shim() {
-  if shim_is_ours; then
-    fm_ok "$FM_SHIM -> $(uv_tool_fm)"
-    warn_unless_traversable
-  elif [ -e "$FM_SHIM" ]; then
-    fm_warn "$FM_SHIM points at another install ($(readlink -f "$FM_SHIM")), not this account's"
-  else
-    fm_warn "no $FM_SHIM — an account that has installed nothing has no fm on PATH"
+check_machine_install() {
+  if ! [ -e "$FM_MACHINE_FM" ]; then
+    fm_warn "no $FM_MACHINE_FM — an account that has installed nothing has no fm on PATH"
+    return 0
+  fi
+  if ! machine_fm_is_ours; then
+    fm_warn "$FM_MACHINE_FM resolves to $(readlink -f "$FM_MACHINE_FM"), outside $FM_CLI_TOOL_DIR"
+    return 0
+  fi
+  fm_ok "$FM_MACHINE_FM -> $(readlink -f "$FM_MACHINE_FM")"
+
+  # The one failure that looks like success from the administrator's own shell:
+  # every account can see the command, and only the account that installed it
+  # can run it. Reported by asking the question that matters — is it executable
+  # by others — rather than by reading modes back one directory at a time.
+  if [ ! -r "$FM_MACHINE_FM" ]; then
+    fm_warn "$FM_MACHINE_FM is not readable — the rest of the team cannot run it"
   fi
 }
 
@@ -221,66 +207,83 @@ do_install() {
     fm_info "not on PATH in this shell yet; open a new one, then: fm status"
   fi
 
-  install_shim
+  install_machine_wide "$uv"
 }
 
-# Link /usr/local/bin at this account's uv tool binary, so every account on the
-# box has fm on PATH.
+# Install the CLI once for the whole machine, root-owned and outside every home.
 #
-# Every obstacle here is a skip rather than a failure: the per-user install above
-# has already succeeded by the time this runs, and an administrator who cannot
-# write /usr/local/bin still has a working CLI. A step that went red at this
-# point would report a machine as unprovisioned over a convenience.
-install_shim() {
-  if shim_is_ours; then
-    fm_ok "$FM_SHIM -> $(uv_tool_fm)"
-    warn_unless_traversable
-    return 0
-  fi
+# Its own install rather than a link to the one above. A link into a home is a
+# command the team cannot run: the home is mode 750, the tool binary is a
+# symlink into ~/.local/share/uv, and the venv's shebang names an interpreter
+# that uv had put under the installing account's home as well — three private
+# directories deep, each of which turns `fm` into "Permission denied" for
+# everybody else while looking perfectly healthy to its owner. Nothing here
+# resolves through a home at all.
+#
+# Every obstacle is a skip rather than a failure: the per-user install above has
+# already succeeded, and an administrator who cannot write /usr/local/bin still
+# has a working CLI. A step that went red here would report a machine as
+# unprovisioned over a convenience.
+install_machine_wide() { # uv
+  local uv="$1"
 
-  if [ -e "$FM_SHIM" ]; then
-    # Somebody else installed this one, and their pin is the one the box is
-    # running. Overwriting it would move every other account onto this account's
-    # CLI without anyone asking for that.
-    fm_warn "$FM_SHIM already points at another install ($(readlink -f "$FM_SHIM")) — leaving it"
-    fm_info "whoever owns that link removes it; this account can then take the pin"
+  if [ -e "$FM_MACHINE_FM" ] && ! machine_fm_is_ours; then
+    # Something else owns this name. Replacing it would change what every
+    # account on the box runs, which is not this step's call to make.
+    fm_warn "$FM_MACHINE_FM resolves to $(readlink -f "$FM_MACHINE_FM"), outside $FM_CLI_TOOL_DIR — leaving it"
     return 0
   fi
 
   if ! fm_has_cmd sudo; then
-    fm_skip "no sudo here — $FM_SHIM not linked, so only this account has fm on PATH"
+    fm_skip "no sudo here — no $FM_MACHINE_FM, so only this account has fm on PATH"
     return 0
   fi
 
   # Writing into /usr/local/bin decides which CLI the whole machine runs, so it
   # is asked for rather than assumed, and an unattended run declines and says so.
-  fm_warn "$FM_SHIM makes this account's pinned CLI the one every account on the box runs"
-  if ! fm_confirm "Link $FM_SHIM to $(uv_tool_fm)?"; then
-    fm_skip "system-wide fm declined — each account installs its own with: fm setup-onboard"
+  fm_warn "$FM_MACHINE_FM is the fm every account on this box runs, upgraded only by an administrator"
+  if ! fm_confirm "Install the pinned CLI to $FM_CLI_TOOL_DIR and link $FM_MACHINE_FM?"; then
+    fm_skip "machine-wide fm declined — each account installs its own with: fm setup-onboard"
     return 0
   fi
 
-  # After the prompt rather than before it, so the gap between deciding the
-  # target is private and linking to it is not however long somebody took to
-  # answer a question.
-  shim_target_is_private || return 0
+  # uv runs as root here, so a uv anybody else can write is a way to be root.
+  # That is not hypothetical on a box where the team shares a group: uv installs
+  # itself into ~/.local/bin, and a home created under umask 002 leaves that
+  # directory group-writable. The account this runs as already has sudo; every
+  # other member of its group does not, and must not gain it here.
+  refuse_writable_by_others "$uv" || return 0
+  refuse_writable_by_others "$(dirname "$uv")" || return 0
 
-  # A symlink rather than a wrapper script: a uv tool binary is a self-contained
-  # entry point naming its own venv interpreter, so it resolves to the right
-  # Python from wherever it is reached and needs nothing set in the environment.
-  if sudo ln -s "$(uv_tool_fm)" "$FM_SHIM"; then
-    fm_ok "linked $FM_SHIM -> $(uv_tool_fm)"
-    warn_unless_traversable
-  else
-    fm_warn "could not write $FM_SHIM — only this account has fm on PATH"
+  # A path anybody but root can replace is a path root must not install through.
+  # /opt is root-owned, so this only fires when somebody has been at it by hand.
+  if [ -L "$FM_CLI_TOOL_DIR" ]; then
+    fm_warn "$FM_CLI_TOOL_DIR is a symlink to $(readlink -f "$FM_CLI_TOOL_DIR") — not installing through it"
+    fm_info "inspect it, then remove it as root: rm -f $FM_CLI_TOOL_DIR"
+    return 0
   fi
+
+  # --python pins the venv to the system interpreter. Left to itself uv builds
+  # against the interpreter it manages, which under sudo lands in /root at mode
+  # 700 — and the shebang points straight at it, so the binary is unrunnable by
+  # anyone but root however open its own mode is.
+  if ! sudo env "UV_TOOL_DIR=$FM_CLI_TOOL_DIR" "UV_TOOL_BIN_DIR=$FM_CLI_BIN_DIR" \
+       "$uv" tool install --force --python "$FM_CLI_PYTHON" "$(fm_tools_spec)"; then
+    fm_warn "could not install the machine-wide CLI — only this account has fm on PATH"
+    return 0
+  fi
+
+  # uv creates the tree under the invoking umask, which is root's. Read and
+  # traverse for everyone is the whole point of installing it here, so it is set
+  # rather than hoped for. Capital X adds execute to directories and to files
+  # that already carry it, never to a data file.
+  sudo chmod -R a+rX "$FM_CLI_TOOL_DIR"
+  fm_ok "$FM_MACHINE_FM -> $(readlink -f "$FM_MACHINE_FM")"
 }
 
 do_uninstall() {
   local uv
-  # Before the binary it points at goes, so the machine is never left with a
-  # shim resolving to nothing.
-  remove_shim
+  remove_machine_wide
 
   if ! uv="$(uv_bin)"; then
     fm_skip "uv not installed"
@@ -293,26 +296,41 @@ do_uninstall() {
   fm_ok "fm CLI removed"
 }
 
-# Remove only the shim this step made. One pointing anywhere else is another
-# account's, and taking it away would leave everybody on the machine without the
-# CLI to undo a change they were never part of.
-remove_shim() {
-  if shim_is_ours; then
-    if ! fm_has_cmd sudo; then
-      # Said rather than swallowed: the binary underneath is about to go, and a
-      # shim left pointing at nothing is `fm: No such file or directory` for
-      # every account on the machine.
-      fm_warn "no sudo here — $FM_SHIM will point at nothing once the CLI is gone"
-      fm_info "remove it as root: rm -f $FM_SHIM"
-      return 0
-    fi
-    if sudo rm -f "$FM_SHIM"; then
-      fm_ok "removed $FM_SHIM"
-    else
-      fm_warn "could not remove $FM_SHIM — do it with: sudo rm -f $FM_SHIM"
-    fi
-  elif [ -e "$FM_SHIM" ]; then
-    fm_skip "$FM_SHIM points at another account's install"
+# Remove only the machine-wide install this step made. A command of the same
+# name resolving anywhere else belongs to whoever put it there, and taking it
+# away would leave everybody on the box without the CLI to undo a change they
+# were never part of.
+#
+# The whole tool tree goes with the link. Leaving /opt/fm-tools behind would be
+# a pinned CLI nothing points at, which the next install would silently reuse.
+remove_machine_wide() {
+  if [ ! -e "$FM_MACHINE_FM" ] && [ ! -d "$FM_CLI_TOOL_DIR" ]; then
+    fm_skip "no machine-wide fm"
+    return 0
+  fi
+  if [ -e "$FM_MACHINE_FM" ] && ! machine_fm_is_ours; then
+    fm_skip "$FM_MACHINE_FM resolves outside $FM_CLI_TOOL_DIR"
+    return 0
+  fi
+  # A tree with no command in front of it is not something this step can claim.
+  # An install that died between writing the tree and writing the link leaves
+  # exactly this, and so does a hand-made one — and the two are indistinguishable
+  # from here. Named rather than deleted, because `sudo rm -rf` on a guess is the
+  # one move an uninstall cannot take back.
+  if [ ! -e "$FM_MACHINE_FM" ] && [ -d "$FM_CLI_TOOL_DIR" ]; then
+    fm_warn "$FM_CLI_TOOL_DIR exists with no $FM_MACHINE_FM in front of it — leaving it"
+    fm_info "remove it as root once you have looked: rm -rf $FM_CLI_TOOL_DIR"
+    return 0
+  fi
+  if ! fm_has_cmd sudo; then
+    fm_warn "no sudo here — $FM_MACHINE_FM left in place"
+    fm_info "remove it as root: rm -rf $FM_MACHINE_FM $FM_CLI_TOOL_DIR"
+    return 0
+  fi
+  if sudo rm -rf "$FM_MACHINE_FM" "$FM_CLI_TOOL_DIR"; then
+    fm_ok "removed $FM_MACHINE_FM and $FM_CLI_TOOL_DIR"
+  else
+    fm_warn "could not remove $FM_MACHINE_FM — do it with: sudo rm -rf $FM_MACHINE_FM $FM_CLI_TOOL_DIR"
   fi
 }
 

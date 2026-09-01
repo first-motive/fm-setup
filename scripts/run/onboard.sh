@@ -185,11 +185,11 @@ EOF
 # here would be the copy that drifts.
 #
 # Run non-interactively, which is not about being unattended: that step also
-# offers to link /usr/local/bin/fm for the whole machine, and NONINTERACTIVE is
-# how its fm_confirm declines. Onboarding is somebody setting up their own
-# account, usually without sudo at all, and a password prompt for a link they
+# offers to install the machine-wide CLI at /usr/local/bin/fm, and NONINTERACTIVE
+# is how its fm_confirm declines. Onboarding is somebody setting up their own
+# account, usually without sudo at all, and a password prompt for an install they
 # cannot make and did not ask for is the wrong end of the one-command promise.
-# The administrator makes that link, through install.sh.
+# The administrator makes that one, through install.sh.
 install_fm_cli() {
   fm_log "uv and the fm CLI"
   NONINTERACTIVE=1 bash "$FM_ROOT/scripts/steps/15-fm-cli.sh" install

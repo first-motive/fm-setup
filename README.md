@@ -523,6 +523,12 @@ One command, and no checkout of your own. The `fm` CLI is on every account's
 `/opt/fm/fm-setup` — which is readable to the whole `fm` group, so a newcomer
 with an empty home has both before they have installed anything.
 
+That CLI is root-owned, installed once into `/opt/fm-tools` against the system
+Python. Nothing about it resolves through anybody's home: a home is mode 750
+here, and a `fm` that reached into one would be a command the rest of the team
+could see and could not run. Upgrading it is an administrator's job, which is
+what keeps one pinned version on the box rather than nine drifting.
+
 `onboard` uses no sudo and writes nothing outside the home directory. It puts
 `~/.local/bin` on `PATH`, installs uv and the `fm` CLI through the same step
 provisioning uses, installs Claude Code, creates `~/fm`, and writes `FM_HOME`
