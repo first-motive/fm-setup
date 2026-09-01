@@ -101,17 +101,39 @@ git show "$TAG:lib.sh" | shasum -a 256
 
 ### Cutting A Release
 
-The tag above appears in exactly one machine-readable place — `install.sh`'s
-`FM_TAG` — because `install.sh` is the only file that ever arrives on its own,
-piped into a shell with no checkout behind it to read a version from. `run.sh`
-and the flash seed derive it from there at runtime; the curl one-liners in this
-file and in `install.sh`'s header are text a human pastes, so they are generated
-from it instead and CI fails a pull request where they disagree.
+The front door is `fm release`, not a script in this repo. It checks that CI is
+green on the commit a tag would land on before anything is tagged, and only then
+delegates to `scripts/dev/cut-release.sh` here:
+
+```bash
+fm release --repo fm-setup                    # is the next tag safe to cut?
+fm release --repo fm-setup --cut -- --apply   # gate, then cut and push the tag
+```
+
+Calling the script directly skips that gate, which is why a hook blocks it and
+points back at the verb. What the verb delegates to:
+
+```bash
+scripts/dev/cut-release.sh              # print the plan, change nothing
+scripts/dev/cut-release.sh --apply      # create and push the tag
+scripts/dev/cut-release.sh --set vX.Y.Z # prepare the bump commit for a PR
+```
+
+The release is two halves. A tag a rig resolves at flash time is one; the
+version written into the files a human pastes from is the other.
+
+The tag appears in exactly one machine-readable place — `install.sh`'s `FM_TAG` —
+because `install.sh` is the only file that ever arrives on its own, piped into a
+shell with no checkout behind it to read a version from. `run.sh` and the flash
+seed derive it from there at runtime; the curl one-liners in this file and in
+`install.sh`'s header are text a human pastes, so they are generated from it
+instead and CI fails a pull request where they disagree. `release-tag.sh` owns
+that half, and `cut-release.sh` reads it rather than repeating it:
 
 ```bash
 scripts/dev/release-tag.sh              # what is pinned now
 scripts/dev/release-tag.sh --check      # what CI checks
-scripts/dev/release-tag.sh --set vX.Y.Z # bump, then commit and tag
+scripts/dev/release-tag.sh --set vX.Y.Z # bump the pinned version, for a PR
 ```
 
 ### Converging An Appliance
