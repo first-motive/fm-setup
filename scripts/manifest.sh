@@ -402,6 +402,38 @@ FM_ROS_RMW_REQUIRED=(
 FM_TOOLS_REPO=first-motive/fm-tools
 FM_TOOLS_VERSION=v0.8.1
 
+# Where the machine-wide copy of the CLI lives, and the command every account
+# reaches it by.
+#
+# Outside every home, for the same reason the workspace is. A `fm` on
+# /usr/local/bin that resolves back into one person's home is a command the rest
+# of the team cannot run: a home is mode 750 here, and the tool binary is a
+# symlink into ~/.local/share/uv, so each directory on that path is another way
+# for it to break. Root-owned under /opt is reachable by everyone and depends on
+# nobody's permissions.
+#
+# A literal path rather than the card's workspace: this is read while deciding
+# whether the machine has a usable CLI at all, and a host whose card still names
+# a home directory would otherwise install into one.
+#
+# Beside the workspace rather than inside it, which is the part that is not
+# cosmetic. /opt/fm is group `fm`, mode 2775 and no sticky bit, so any member
+# can delete a directory there whoever owns it and leave a symlink in its place
+# — and the next provisioning run would install through that symlink as root and
+# then open its target to the whole machine. /opt is root-owned, so nothing but
+# root creates this path.
+FM_CLI_TOOL_DIR=/opt/fm-tools
+FM_CLI_BIN_DIR=/usr/local/bin
+
+# The interpreter the machine-wide venv is built against.
+#
+# Ubuntu's own python3, not the one uv downloads. uv puts a managed interpreter
+# under the invoking user's home — /root/.local/share/uv/python at mode 700 when
+# the install runs under sudo — and the venv's shebang points straight at it, so
+# every other account gets "Permission denied" from a binary whose own mode is
+# 0755. The system interpreter is world-readable and is not going anywhere.
+FM_CLI_PYTHON=/usr/bin/python3
+
 # uv installs the tool. It is not in Ubuntu's archive, so it comes from Astral's
 # installer, pinned to a version rather than "latest" for the same reason.
 #
