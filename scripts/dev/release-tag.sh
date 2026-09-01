@@ -39,6 +39,16 @@ TAGGED_FILES=(install.sh README.md)
 # Anything shaped like a release: a leading v, then digits and dots. Loose on
 # purpose — a copy written as v0.1 or v0.1.8.1 must still be caught, because the
 # failure being prevented is a stale tag, not a malformed one.
+#
+# The leading guard is what stops it being too loose. A version-shaped token
+# inside an identifier is not a release: `anvil-openarm-v2` is a robot, and
+# without the guard --check called it drift and --set would have rewritten it to
+# `anvil-openarm-v0.1.13`. A real tag is always preceded by a delimiter — a
+# slash in a URL, an equals sign in the assignment, a space in prose — never by
+# a letter or a digit. A hyphen is both: `${FM_TAG:-v0.1.13}` is the assignment
+# this whole script exists to read, and `anvil-openarm-v2` is not a tag, so a
+# hyphen counts as a delimiter only when what precedes it is not alphanumeric.
+TAG_LEAD='(^|[^A-Za-z0-9-]|[^A-Za-z0-9]-)'
 TAG_PATTERN='v[0-9][0-9.]*'
 
 usage() {
@@ -54,8 +64,13 @@ EOF
 }
 
 # Echo every version-shaped token in a file that is not the tag itself.
+#
+# The match carries its leading delimiter, which is stripped back off here so
+# the caller reports the tag rather than "/v0.1.9".
 drift_in() { # file tag
-  grep -o "$TAG_PATTERN" "$1" | grep -vx "$2" || true
+  grep -oE "$TAG_LEAD$TAG_PATTERN" "$1" \
+    | sed -E "s/^[^v]*//" \
+    | grep -vx "$2" || true
 }
 
 do_check() {
@@ -88,7 +103,11 @@ do_set() { # new-tag
     # Written through a temp file rather than `sed -i`, whose in-place flag
     # takes a mandatory suffix argument on BSD sed and none on GNU sed. This
     # script is run from a developer's macOS laptop as often as from CI.
-    sed "s/$TAG_PATTERN/$new/g" "$FM_ROOT/$file" >"$tmp"
+    # The same guard the check uses, with the delimiter put back through \1 so
+    # the rewrite replaces the tag and not the character in front of it.
+    # `#` as the delimiter, not `|`: the guard itself contains an alternation,
+    # and a `|` delimiter ends the expression inside it.
+    sed -E "s#$TAG_LEAD$TAG_PATTERN#\\1$new#g" "$FM_ROOT/$file" >"$tmp"
     if cmp -s "$tmp" "$FM_ROOT/$file"; then
       fm_skip "$file already at $new"
       rm -f "$tmp"
