@@ -445,10 +445,13 @@ nothing can reach it. One `accept` rule per person:
 {
   "action": "accept",
   "src":    ["matt@ubundi.co.za"],
-  "dst":    ["tag:fm-workstation"],
+  "dst":    ["tag:ssh-server"],
   "users":  ["matt"]
 }
 ```
+
+`tag:ssh-server` is the tag the machines carry — confirm a host's own with
+`tailscale status --json | jq .Self.Tags` before writing a rule against it.
 
 The administrator's own account is reachable under `"action": "check"` instead,
 which re-authenticates before each session. Everything about who may log in
