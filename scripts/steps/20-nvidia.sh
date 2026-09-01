@@ -17,7 +17,9 @@ _here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 fm_require_linux
 
-has_gpu() { lspci 2>/dev/null | grep -qi nvidia; }
+# No `grep -q`: quitting early sends lspci SIGPIPE, and under pipefail the
+# pipeline then reports 141 — a present GPU read as absent.
+has_gpu() { lspci 2>/dev/null | grep -i nvidia >/dev/null; }
 
 driver_loaded() { fm_has_cmd nvidia-smi && nvidia-smi >/dev/null 2>&1; }
 
