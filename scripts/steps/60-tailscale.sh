@@ -24,7 +24,11 @@ do_check() {
   fi
   fm_ok "tailscale $(tailscale version 2>/dev/null | head -1)"
   if tailscale status >/dev/null 2>&1; then
-    fm_ok "joined: $(tailscale status --json 2>/dev/null | grep -o '"DNSName":"[^"]*"' | head -1 | cut -d'"' -f4)"
+    # `status --json` pretty-prints with a space after the colon, so the
+    # pattern must allow it or the identity extracts as empty.
+    local identity
+    identity="$(tailscale status --json 2>/dev/null | grep -o '"DNSName": *"[^"]*"' | head -1 | cut -d'"' -f4)"
+    fm_ok "joined: ${identity:-identity unavailable}"
   else
     fm_warn "installed but not joined to a tailnet"
   fi
