@@ -2,7 +2,14 @@
 #
 # onboard — set up your own account on a machine somebody else provisioned.
 #
-#   ./run.sh onboard
+#   fm setup-onboard
+#
+# One command, with no checkout of your own. The machine's workspace lives at
+# /opt/fm where everyone can read it, and the fm CLI is on every account's PATH
+# from /usr/local/bin, so the CLI mounts this verb from the machine's own
+# fm-setup and a newcomer never clones anything to get started. `./run.sh
+# onboard` from a checkout is the same script, and the fallback on a host whose
+# CLI is not system-wide yet.
 #
 # `add-user` is the administrator's half: an account, the fm group, /data. This
 # is the other half, and the person it belongs to runs it themselves. Nothing
@@ -14,9 +21,9 @@
 #   ~/.local/bin       on PATH, where uv and Claude Code both install
 #   uv + the fm CLI    delegated to the fm-cli step, not repeated here
 #   claude             Claude Code, unpinned — see below
-#   ~/fm               your workspace, with FM_HOME in ~/.fm-profile so every
-#                      tool resolves it instead of the machine card's, which
-#                      names the administrator's home and is unreadable to you
+#   ~/fm               your workspace, with FM_HOME in ~/.fm-profile. The card
+#                      names the machine's workspace, which is shared; yours is
+#                      your own, and FM_HOME outranks the card for that reason
 #   ~/fm/fm-ai         the org skill set, when GitHub auth is already in place
 #
 # Claude Code is deliberately not pinned. It updates itself in place, so a
@@ -53,8 +60,8 @@ FM_AI_DIR="$WORKSPACE/fm-ai"
 # when it is interactive without being one, which is every tmux pane, every
 # `bash` subshell, and every VS Code Remote terminal. In those, PATH lacked
 # ~/.local/bin — `claude: command not found` on a machine where Claude Code was
-# installed — and FM_HOME was unset, so `fm` fell back to the card and resolved
-# the administrator's workspace, which the person cannot read.
+# installed — and FM_HOME was unset, so `fm` fell back to the card and answered
+# about the machine's checkouts rather than the person's own.
 #
 # A file of its own rather than two copies of the exports: one place to change,
 # and a re-run rewrites it wholesale instead of appending to a list nobody
@@ -66,8 +73,8 @@ usage() {
   cat <<'EOF'
 onboard — set up your own account on a First Motive machine
 
-Usage: ./run.sh onboard
-       ./run.sh onboard --help
+Usage: fm setup-onboard
+       fm setup-onboard --help
 
 Installs uv, the fm CLI, and Claude Code into your home directory, creates your
 workspace, and clones the org skill set if you are already signed in to GitHub.
@@ -123,9 +130,10 @@ valid_workspace() { # path
 }
 
 # FM_HOME rather than a machine card edit: the card is one file for the whole
-# host and says where the administrator's checkouts are, at a mode nobody else
-# can read. FM_HOME is per person, and lib.sh reads it before the card for
-# exactly this case.
+# host, and what it names is the machine's shared workspace at /opt/fm — the
+# right answer for a service and the wrong one for a person, who wants their own
+# branches under their own home. FM_HOME is per person, and lib.sh reads it
+# before the card for exactly this case.
 ensure_workspace() {
   valid_workspace "$WORKSPACE" || return 1
   mkdir -p "$WORKSPACE"
@@ -146,7 +154,7 @@ ensure_workspace() {
 # an account onboarded before this change converges instead of carrying both.
 ensure_shell_env() {
   cat >"$SHELL_ENV" <<EOF
-# Managed by fm-setup — written by \`./run.sh onboard\`, replaced on every run.
+# Managed by fm-setup — written by \`fm setup-onboard\`, replaced on every run.
 # Put your own settings in ~/.profile or ~/.bashrc instead; edits here are lost.
 
 case ":\$PATH:" in
@@ -175,9 +183,16 @@ EOF
 # and the CLI from a pinned tag, and it is already per-user — it uses no sudo
 # and uv installs into the invoking account's home. A second copy of that logic
 # here would be the copy that drifts.
+#
+# Run non-interactively, which is not about being unattended: that step also
+# offers to link /usr/local/bin/fm for the whole machine, and NONINTERACTIVE is
+# how its fm_confirm declines. Onboarding is somebody setting up their own
+# account, usually without sudo at all, and a password prompt for a link they
+# cannot make and did not ask for is the wrong end of the one-command promise.
+# The administrator makes that link, through install.sh.
 install_fm_cli() {
   fm_log "uv and the fm CLI"
-  bash "$FM_ROOT/scripts/steps/15-fm-cli.sh" install
+  NONINTERACTIVE=1 bash "$FM_ROOT/scripts/steps/15-fm-cli.sh" install
 }
 
 # --- Claude Code ------------------------------------------------------------
@@ -217,7 +232,7 @@ install_fm_ai() {
 
   if ! fm_has_cmd gh; then
     fm_warn "gh not installed — skipping fm-ai"
-    fm_info "install it, sign in, then run this again: ./run.sh onboard"
+    fm_info "install it, sign in, then run this again: fm setup-onboard"
     return 0
   fi
 
@@ -225,7 +240,7 @@ install_fm_ai() {
     fm_warn "not signed in to GitHub — skipping fm-ai"
     fm_info "sign in, then run this again:"
     fm_info "  gh auth login"
-    fm_info "  ./run.sh onboard"
+    fm_info "  fm setup-onboard"
     return 0
   fi
 
@@ -249,7 +264,7 @@ install_fm_ai() {
     # Non-fatal for the same reason the GitHub gate is: the rest of this run is
     # still worth having, and a re-run is what finishes an incomplete one. An
     # abort here would leave the sign-in checklist unprinted.
-    fm_warn "fm-ai's installer failed — re-run ./run.sh onboard once it is fixed"
+    fm_warn "fm-ai's installer failed — re-run fm setup-onboard once it is fixed"
   fi
   return 0
 }
@@ -262,7 +277,7 @@ checklist() {
   echo
   fm_log "sign in as yourself"
   fm_info "1. claude          then /login"
-  fm_info "2. gh auth login   then re-run ./run.sh onboard for the org skills"
+  fm_info "2. gh auth login   then re-run fm setup-onboard for the org skills"
   fm_info "3. git config --global user.name \"Your Name\""
   fm_info "4. git config --global user.email you@ubundi.co.za"
   echo
