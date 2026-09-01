@@ -264,6 +264,17 @@ fresh
 card init --role jetson --name fm-rec-05 >/dev/null
 assert_eq "a new card takes the machine's own workspace" "/opt/fm" "$(field .workspace)"
 
+# A mac is the exception, and the one host where converging would break things:
+# it has a single account, and /opt/fm is made by a step that runs on Linux and
+# on no mac. Its workspace belongs in the home and doctor must not call that a
+# problem, having no fix to offer for it.
+
+fresh
+card init --role mac --name fm-mac-01 --workspace /Users/nish/fm >/dev/null
+card init >/dev/null
+assert_eq "a repair leaves a mac's workspace in the home" "/Users/nish/fm" "$(field .workspace)"
+assert_rc "doctor accepts a mac workspace in the home" 0 card doctor
+
 # --- Creating the workspace --------------------------------------------------
 #
 # fm_ensure_dir is what both the bootstrap and the workspace step call, and the
