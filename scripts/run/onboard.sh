@@ -14,7 +14,7 @@
 #   ~/.local/bin       on PATH, where uv and Claude Code both install
 #   uv + the fm CLI    delegated to the fm-cli step, not repeated here
 #   claude             Claude Code, unpinned — see below
-#   ~/fm               your workspace, with FM_HOME in ~/.profile so every
+#   ~/fm               your workspace, with FM_HOME in ~/.fm-profile so every
 #                      tool resolves it instead of the machine card's, which
 #                      names the administrator's home and is unreadable to you
 #   ~/fm/fm-ai         the org skill set, when GitHub auth is already in place
@@ -41,8 +41,26 @@ FM_ROOT="$(cd "$_here/../.." && pwd)"
 
 LOCAL_BIN="$HOME/.local/bin"
 PROFILE="$HOME/.profile"
+BASHRC="$HOME/.bashrc"
 WORKSPACE="${FM_HOME:-$HOME/fm}"
 FM_AI_DIR="$WORKSPACE/fm-ai"
+
+# One file holds what this script adds to a shell, and the shell files only
+# source it.
+#
+# Writing the exports straight into ~/.profile was enough for a login shell and
+# for nothing else: bash reads ~/.profile when it is a login shell and ~/.bashrc
+# when it is interactive without being one, which is every tmux pane, every
+# `bash` subshell, and every VS Code Remote terminal. In those, PATH lacked
+# ~/.local/bin — `claude: command not found` on a machine where Claude Code was
+# installed — and FM_HOME was unset, so `fm` fell back to the card and resolved
+# the administrator's workspace, which the person cannot read.
+#
+# A file of its own rather than two copies of the exports: one place to change,
+# and a re-run rewrites it wholesale instead of appending to a list nobody
+# prunes.
+SHELL_ENV="$HOME/.fm-profile"
+SHELL_ENV_LINE=". \"\$HOME/.fm-profile\""
 
 usage() {
   cat <<'EOF'
@@ -81,20 +99,18 @@ ensure_local_bin() {
     *":$LOCAL_BIN:"*) ;;
     *) PATH="$LOCAL_BIN:$PATH"; export PATH ;;
   esac
-  # shellcheck disable=SC2016  # $HOME is written into ~/.profile, not expanded here
-  fm_ensure_line "$PROFILE" 'export PATH="$HOME/.local/bin:$PATH"'
   fm_ok "$LOCAL_BIN on PATH"
 }
 
 # --- Workspace --------------------------------------------------------------
 
-# A workspace path this script is willing to write into ~/.profile.
+# A workspace path this script is willing to write into ~/.fm-profile.
 #
 # Absolute is the card's own rule, so it comes from the card's validator rather
 # than a second copy of it. The character check is this script's addition: the
-# path is written into a profile as `export FM_HOME="…"`, and inside double
-# quotes a `$(…)` or a backtick in the value would be code every future login
-# shell runs. The value comes from the caller's own environment, which makes it
+# path is written into that file as `export FM_HOME="…"`, and inside double
+# quotes a `$(…)` or a backtick in the value would be code every future shell
+# runs. The value comes from the caller's own environment, which makes it
 # their own foot at worst — and a mistyped path that silently becomes a command
 # is worth refusing whoever typed it.
 valid_workspace() { # path
@@ -113,9 +129,44 @@ valid_workspace() { # path
 ensure_workspace() {
   valid_workspace "$WORKSPACE" || return 1
   mkdir -p "$WORKSPACE"
-  fm_ensure_line "$PROFILE" "export FM_HOME=\"$WORKSPACE\""
   export FM_HOME="$WORKSPACE"
-  fm_ok "workspace $WORKSPACE (FM_HOME in $PROFILE)"
+  fm_ok "workspace $WORKSPACE"
+}
+
+# --- What a shell inherits --------------------------------------------------
+
+# Write ~/.fm-profile, then make both shell files source it.
+#
+# The PATH entry is guarded at runtime rather than written once, because both
+# files can run in a single shell — a login bash reads ~/.profile, which on
+# Ubuntu sources ~/.bashrc — and an unguarded prepend would stack a duplicate
+# entry on every nesting.
+#
+# The earlier version's two raw exports are stripped from ~/.profile first, so
+# an account onboarded before this change converges instead of carrying both.
+ensure_shell_env() {
+  cat >"$SHELL_ENV" <<EOF
+# Managed by fm-setup — written by \`./run.sh onboard\`, replaced on every run.
+# Put your own settings in ~/.profile or ~/.bashrc instead; edits here are lost.
+
+case ":\$PATH:" in
+  *":\$HOME/.local/bin:"*) ;;
+  *) PATH="\$HOME/.local/bin:\$PATH" ;;
+esac
+export PATH
+export FM_HOME="$WORKSPACE"
+EOF
+
+  # shellcheck disable=SC2016  # the literal line the earlier version wrote
+  fm_strip_line "$PROFILE" 'export PATH="$HOME/.local/bin:$PATH"'
+  # By shape, not by text: a run with a different workspace than last time would
+  # never match its own earlier line, and both exports would survive.
+  fm_strip_matching "$PROFILE" '^export FM_HOME='
+
+  fm_ensure_line "$PROFILE" "$SHELL_ENV_LINE"
+  fm_ensure_line "$BASHRC"  "$SHELL_ENV_LINE"
+
+  fm_ok "shell environment in $SHELL_ENV, sourced from ~/.profile and ~/.bashrc"
 }
 
 # --- uv and the fm CLI ------------------------------------------------------
@@ -215,7 +266,7 @@ checklist() {
   fm_info "3. git config --global user.name \"Your Name\""
   fm_info "4. git config --global user.email you@ubundi.co.za"
   echo
-  fm_info "open a new shell (or: . $PROFILE) so PATH and FM_HOME take effect"
+  fm_info "open a new shell (or: . $SHELL_ENV) so PATH and FM_HOME take effect"
 }
 
 main() {
@@ -232,6 +283,7 @@ main() {
 
   ensure_local_bin
   ensure_workspace
+  ensure_shell_env
   install_fm_cli
   install_claude
   install_fm_ai
