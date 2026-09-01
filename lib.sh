@@ -787,11 +787,30 @@ fm_ensure_line() {
 # world-writable directory lets a local attacker pre-plant a symlink and redirect
 # the write. Same directory keeps the final mv atomic; the mode is copied over so
 # the rewrite cannot loosen permissions.
-fm_strip_line() {
-  local file="$1" line="$2" tmp
+fm_strip_line() { _fm_strip "$1" -vxF -- "$2"; }
+
+# fm_strip_matching FILE ERE — remove every line of FILE matching ERE.
+#
+# The prefix form of the above, for a line whose value is not known in advance.
+# `export FM_HOME="…"` is the case: onboard writes one, and a re-run with a
+# different workspace cannot find its own earlier line by exact text. Stripping
+# by shape converges; stripping by text leaves a dead export behind.
+fm_strip_matching() { _fm_strip "$1" -vE -- "$2"; }
+
+# _fm_strip FILE GREP_ARGS… — rewrite FILE through grep, atomically.
+#
+# The scratch file comes from mktemp inside the target's own directory, not from
+# a predictable "$file.tmp": these steps run as root, and a predictable name in a
+# world-writable directory lets a local attacker pre-plant a symlink and redirect
+# the write. Same directory keeps the final mv atomic; the mode is copied over so
+# the rewrite cannot loosen permissions.
+#
+# A grep that matches nothing leaves the file alone rather than emptying it.
+_fm_strip() {
+  local file="$1" tmp; shift
   [ -f "$file" ] || return 0
   tmp="$(mktemp "$(dirname "$file")/.fm-strip.XXXXXX")" || return 1
-  if grep -vxF "$line" "$file" >"$tmp"; then
+  if grep "$@" "$file" >"$tmp"; then
     chmod --reference="$file" "$tmp" 2>/dev/null || chmod "$(stat -f '%Lp' "$file" 2>/dev/null || echo 644)" "$tmp"
     mv "$tmp" "$file"
   else
