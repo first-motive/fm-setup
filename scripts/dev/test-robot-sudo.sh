@@ -100,6 +100,69 @@ else
   printf '  ↷ visudo not installed (skip)\n'
 fi
 
+contains "$RULE" "/usr/local/sbin/fm-comms-set"
+check $? "the fleet-env writer is granted"
+
+
+# --- the writer itself -------------------------------------------------------
+
+WRITER="$FM_ROOT/templates/fm-comms-set"
+FLEET_ENV="$TMP/fm-comms.env"
+printf '# a comment an operator reads\nFM_ROS_DOMAIN_ID=0\nROS_DOMAIN_ID=0\nFM_ROUTER_ENDPOINT=tcp/router:7447\n' >"$FLEET_ENV"
+
+run_writer() { FM_COMMS_ENV="$FLEET_ENV" bash "$WRITER" "$@"; }
+
+if run_writer FM_ROS_DOMAIN_ID 3 >/dev/null 2>&1; then
+  ok "the writer sets a domain"
+else
+  bad "the writer sets a domain"
+fi
+
+# The installer keeps both spellings equal — the bridge unit exports one and the
+# rendered config reads the other. Setting one alone is the silent defect.
+if grep -q '^FM_ROS_DOMAIN_ID=3$' "$FLEET_ENV" && grep -q '^ROS_DOMAIN_ID=3$' "$FLEET_ENV"; then
+  ok "one domain write sets both spellings"
+else
+  bad "one domain write sets both spellings"
+fi
+
+if grep -q '^FM_ROUTER_ENDPOINT=tcp/router:7447$' "$FLEET_ENV" \
+  && grep -q '^# a comment an operator reads$' "$FLEET_ENV"; then
+  ok "every other line survives a write"
+else
+  bad "every other line survives a write"
+fi
+
+if run_writer FM_DDS_IFACE wlp8s0 >/dev/null 2>&1 && grep -q '^FM_DDS_IFACE=wlp8s0$' "$FLEET_ENV"; then
+  ok "the writer sets an interface"
+else
+  bad "the writer sets an interface"
+fi
+
+if run_writer FM_ROS_DOMAIN_ID 3 >/dev/null 2>&1 \
+  && [ "$(grep -c '^FM_ROS_DOMAIN_ID=' "$FLEET_ENV")" = "1" ]; then
+  ok "a repeated write leaves one assignment"
+else
+  bad "a repeated write leaves one assignment"
+fi
+
+for bad_case in "FM_ROS_DOMAIN_ID 999" "FM_ROS_DOMAIN_ID three" "FM_DDS_IFACE 'not an iface'" \
+  "FM_ROUTER_ENDPOINT tcp/evil:7447" "PATH /tmp/evil"; do
+  # shellcheck disable=SC2086
+  if run_writer $bad_case >/dev/null 2>&1; then
+    bad "the writer refuses: $bad_case"
+  else
+    ok "the writer refuses: $bad_case"
+  fi
+done
+
+if run_writer FM_DDS_IFACE >/dev/null 2>&1; then
+  bad "the writer needs both a key and a value"
+else
+  ok "the writer needs both a key and a value"
+fi
+
+
 # --- what it refuses ---------------------------------------------------------
 
 if bash "$VERB" --dry-run --user "root; rm -rf /" >/dev/null 2>&1; then
