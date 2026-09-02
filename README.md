@@ -577,6 +577,51 @@ everyone, so calling it by path always works. The seam closes if `fm` falls back
 to the card's workspace for a repo your own does not carry; that lives in
 fm-tools.
 
+## Robots
+
+A robot is the one machine this repo does not provision. It arrives on the
+vendor's OS with the vendor's accounts, and `fm device adopt` layers five things
+onto it — so there is no step chain for a robot, and what it needs from here is
+one verb.
+
+```bash
+./run.sh robot-sudo                 # grant it to the account running this
+./run.sh robot-sudo --user anvil    # or to another account
+./run.sh robot-sudo --dry-run       # print the rule, write nothing
+./run.sh robot-sudo --remove        # take it away
+```
+
+Deploying a new agent is `git pull` in a checkout the account already owns, then
+one `systemctl restart` it does not. That restart is the only reason a password
+gets typed on a robot, and typing it is what stops `fm device update` from
+working unattended. So the rule this writes names those units, those verbs, and
+nothing else:
+
+```
+/etc/sudoers.d/fm-robot-services
+
+  <user> ALL=(root) NOPASSWD: \
+      /usr/bin/systemctl start|stop|restart|status|is-active fm-robot-agent
+      /usr/bin/systemctl start|stop|restart|status|is-active fm-zenoh-bridge
+```
+
+The account can restart the fleet's own services and cannot become root. On a
+workcell Anvil and Almond are still responsible for, that distinction is the
+point — `ALL=(ALL) NOPASSWD:ALL` here would hand a fleet account the run of
+somebody else's machine.
+
+Commands are matched by absolute path, because that is the only form sudo
+matches, and the units are spelled out rather than globbed: `fm-*` would also
+cover whatever unit somebody adds under that prefix next, and a grant that
+widens on its own is not a grant anybody reviewed. `daemon-reload` is absent for
+the same reason — it re-reads the vendor's unit files too, and no deploy needs
+it.
+
+The generated rule is checked with `visudo -c` before it is installed, and again
+in CI, because a malformed file in `/etc/sudoers.d` breaks sudo for every account
+on the host, including the one that would have to repair it. Confirm what an
+account may do with `sudo -l -U <name>`.
+
 ## Backups
 
 Before a wipe, copy what cannot be re-made and prove the copy is good:

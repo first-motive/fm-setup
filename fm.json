@@ -17,6 +17,10 @@
       "script": "scripts/run/add-user.sh",
       "help": "create an account in the fm group, without sudo"
     },
+    "setup-robot-sudo": {
+      "script": "scripts/run/robot-sudo.sh",
+      "help": "let the fleet restart its own services on a robot, without a password"
+    },
     "setup-onboard": {
       "script": "scripts/run/onboard.sh",
       "help": "set up your own account on this machine: uv, fm, Claude Code, workspace"
