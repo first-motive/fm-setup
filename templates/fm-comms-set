@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+#
+# fm-comms-set — set one fleet transport key in /etc/fm-comms.env, as root.
+#
+#   fm-comms-set FM_ROS_DOMAIN_ID 3
+#   fm-comms-set FM_DDS_IFACE wlp8s0
+#
+# Installed to /usr/local/sbin by fm-setup's robot-sudo verb, which also grants
+# the robot's account permission to run this one path without a password.
+#
+# It exists because of a split the agent cannot cross on its own. The Anvil's
+# domain and interface live in two files — the loader's `.env.config`, owned by
+# the account the agent runs as, and this one, owned by root because two systemd
+# units read it. The agent writes both or neither; without this it could write
+# neither, and a paired write failed at staging with EACCES.
+#
+# The alternative was handing that account write access to the whole file, or
+# root outright. This is the narrow version: three keys, values checked against
+# what each one can hold, one file, atomic replace. Nothing here takes a path, a
+# filename, or a command — so a caller that reaches this can change three values
+# and nothing else on the host.
+
+set -euo pipefail
+
+TARGET="${FM_COMMS_ENV:-/etc/fm-comms.env}"
+
+# The keys the fleet's own transport uses, and therefore the only ones this
+# writes. `FM_ROS_DOMAIN_ID` and `ROS_DOMAIN_ID` are kept equal by the installer
+# — the bridge unit exports one and the rendered config reads the other — so
+# setting either sets both, which is what stops them drifting apart.
+DOMAIN_KEYS=(FM_ROS_DOMAIN_ID ROS_DOMAIN_ID)
+IFACE_KEY=FM_DDS_IFACE
+
+# ROS 2 allows 0-232: the RTPS port mapping leaves room for no more.
+MAX_DOMAIN_ID=232
+
+# An interface name as the kernel limits it: IFNAMSIZ is 16 bytes including the
+# terminator, and nothing else is a legal name.
+IFACE_PATTERN='^[A-Za-z0-9._-]{1,15}$'
+
+usage() {
+  cat <<'EOF'
+fm-comms-set — set one fleet transport key in /etc/fm-comms.env
+
+Usage: fm-comms-set FM_ROS_DOMAIN_ID <0-232>
+       fm-comms-set FM_DDS_IFACE <interface>
+
+Writes nothing else, reads no path from the caller, and replaces the file
+atomically. Setting the domain sets both spellings of it, because the installer
+keeps them equal.
+EOF
+}
+
+fail() { printf 'fm-comms-set: %s\n' "$*" >&2; exit 1; }
+
+# Rewrite one assignment in the file's text, leaving every other byte alone.
+#
+# The file is the vendor-neutral fleet file, and it carries comments an operator
+# reads. A key that was commented out stays commented out and gains a live
+# assignment below it, because uncommenting a line would change what the file
+# says about why it was off.
+replaced() {
+  local text="$1" key="$2" value="$3"
+  printf '%s\n' "$text" | grep -v "^${key}=" || true
+  printf '%s=%s\n' "$key" "$value"
+}
+
+main() {
+  case "${1:-}" in
+    -h|--help) usage; return 0 ;;
+  esac
+  [ "$#" -eq 2 ] || { usage; return 2; }
+
+  local key="$1" value="$2" text updated
+  case "$key" in
+    FM_ROS_DOMAIN_ID|ROS_DOMAIN_ID)
+      case "$value" in
+        ''|*[!0-9]*) fail "$key is an integer" ;;
+      esac
+      [ "$value" -le "$MAX_DOMAIN_ID" ] || fail "$key is between 0 and $MAX_DOMAIN_ID"
+      ;;
+    "$IFACE_KEY")
+      [[ "$value" =~ $IFACE_PATTERN ]] || fail "$value is not an interface name"
+      ;;
+    *)
+      fail "$key is not a key this writes (FM_ROS_DOMAIN_ID, ROS_DOMAIN_ID, $IFACE_KEY)"
+      ;;
+  esac
+
+  [ -f "$TARGET" ] || fail "$TARGET does not exist; is fm-comms installed?"
+  text="$(cat "$TARGET")"
+
+  if [ "$key" = "$IFACE_KEY" ]; then
+    updated="$(replaced "$text" "$IFACE_KEY" "$value")"
+  else
+    # Both spellings, always. The installer keeps them equal, and a caller that
+    # set one of them would leave the bridge and the graph on different domains
+    # — which is the silent defect this whole path exists to prevent.
+    updated="$text"
+    local domain_key
+    for domain_key in "${DOMAIN_KEYS[@]}"; do
+      updated="$(replaced "$updated" "$domain_key" "$value")"
+    done
+  fi
+
+  # Atomic: written beside the target, then renamed within the same directory,
+  # so a reader never sees a half-written fleet file.
+  local tmp
+  tmp="$(mktemp "${TARGET}.XXXXXX")"
+  printf '%s\n' "$updated" >"$tmp"
+  chmod 0644 "$tmp"
+  mv -f "$tmp" "$TARGET"
+  printf 'fm-comms-set: %s=%s\n' "$key" "$value"
+}
+
+main "$@"

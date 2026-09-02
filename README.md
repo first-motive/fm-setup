@@ -603,7 +603,22 @@ nothing else:
   <user> ALL=(root) NOPASSWD: \
       /usr/bin/systemctl start|stop|restart|status|is-active fm-robot-agent
       /usr/bin/systemctl start|stop|restart|status|is-active fm-zenoh-bridge
+      /usr/local/sbin/fm-comms-set
 ```
+
+`fm-comms-set` is installed by the same verb. The Anvil's domain and interface
+live in two files — the loader's `.env.config`, owned by the account the agent
+runs as, and `/etc/fm-comms.env`, owned by root because two systemd units read
+it. The agent writes both or neither, so without a way across that line a paired
+write fails at staging and the two are left disagreeing, which is exactly what
+the pairing exists to prevent.
+
+The writer takes a key and a value, accepts three keys
+(`FM_ROS_DOMAIN_ID`, `ROS_DOMAIN_ID`, `FM_DDS_IFACE`), checks each value, and
+reads no path from its caller. Setting the domain sets both spellings, because
+the installer keeps them equal. An account that reaches it can change three
+values and nothing else on the host — which is why the grant names that path
+rather than the file, or root.
 
 The account can restart the fleet's own services and cannot become root. On a
 workcell Anvil and Almond are still responsible for, that distinction is the

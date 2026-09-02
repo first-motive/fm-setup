@@ -51,6 +51,19 @@ FM_UNITS=(fm-robot-agent fm-zenoh-bridge)
 # which asks for a password like any other install.
 FM_VERBS=(start stop restart status is-active)
 
+#: The writer that lets the agent keep the fleet file in step with the loader's.
+#: The Anvil's domain and interface live in two files — the loader's
+#: `.env.config`, owned by the account the agent runs as, and /etc/fm-comms.env,
+#: owned by root because two systemd units read it. The agent writes both or
+#: neither, so without this a paired write fails at staging with EACCES and the
+#: two are stuck disagreeing, which is the defect the pairing exists to prevent.
+#:
+#: Granting this one path rather than the file itself: the writer takes a key and
+#: a value, accepts three keys, checks each value, and reads no path from its
+#: caller. An account that reaches it can change three values and nothing else.
+WRITER_SOURCE="$FM_ROOT/templates/fm-comms-set"
+WRITER="/usr/local/sbin/fm-comms-set"
+
 usage() {
   cat <<'EOF'
 robot-sudo — let the fleet restart its own services here, without a password
@@ -63,7 +76,8 @@ Usage: ./run.sh robot-sudo [--user <name>] [--dry-run] [--remove]
   --remove        delete the rule
 
 Grants NOPASSWD for start/stop/restart/status/is-active on fm-robot-agent and
-fm-zenoh-bridge, and nothing else. Verify what an account may do with:
+fm-zenoh-bridge, plus the fleet-env writer at /usr/local/sbin/fm-comms-set, and
+nothing else. Verify what an account may do with:
 
   sudo -l -U <name>
 EOF
@@ -112,6 +126,7 @@ rule_text() {
       allowed+=("$systemctl $verb $unit")
     done
   done
+  allowed+=("$WRITER")
 
   cat <<EOF
 # Written by fm-setup's robot-sudo verb. Do not edit by hand: re-run
@@ -141,6 +156,16 @@ EOF
 # including the one that would have to fix it. So it is written to a temp file,
 # checked with `visudo -c`, and only then moved into place — the check is the
 # whole reason this is not two lines of `tee`.
+# Put the writer on the host before the rule that names it.
+#
+# A sudoers rule pointing at a path that does not exist grants nothing and fails
+# at the moment somebody needs it, so the file lands first and the rule second.
+install_writer() {
+  [ -f "$WRITER_SOURCE" ] || { fm_err "writer not found at $WRITER_SOURCE"; return 1; }
+  sudo install -m 0755 -o root -g root "$WRITER_SOURCE" "$WRITER"
+  fm_ok "installed $WRITER"
+}
+
 install_rule() {
   local user="$1" systemctl="$2" tmp
   tmp="$(mktemp)"
@@ -162,12 +187,18 @@ install_rule() {
 }
 
 remove_rule() {
-  if [ ! -e "$SUDOERS_FILE" ]; then
+  if [ -e "$SUDOERS_FILE" ]; then
+    sudo rm -f "$SUDOERS_FILE"
+    fm_ok "removed $SUDOERS_FILE"
+  else
     fm_ok "$SUDOERS_FILE is already absent"
-    return 0
   fi
-  sudo rm -f "$SUDOERS_FILE"
-  fm_ok "removed $SUDOERS_FILE"
+  # The writer goes with the grant. Left behind it is a root-owned script no
+  # account may run, which reads as something still in force.
+  if [ -e "$WRITER" ]; then
+    sudo rm -f "$WRITER"
+    fm_ok "removed $WRITER"
+  fi
 }
 
 main() {
@@ -223,6 +254,7 @@ main() {
     fm_warn "declined; $SUDOERS_FILE unchanged"
     return 1
   fi
+  install_writer || return 1
   install_rule "$user" "$systemctl"
 }
 
