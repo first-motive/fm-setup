@@ -92,8 +92,11 @@ report_etc() {
     fm_skip "/etc history (etckeeper not installed)"
     return 0
   fi
+  # No `| head`: closing the pipe early can send git SIGPIPE, and under pipefail
+  # an assignment then aborts the audit with 141. sed quits after the same
+  # twenty lines without closing anything.
   local dirty
-  dirty="$(sudo git -C /etc status --porcelain 2>/dev/null | head -20)"
+  dirty="$(sudo git -C /etc status --porcelain 2>/dev/null | sed -n '1,20p')"
   if [ -z "$dirty" ]; then
     fm_ok "/etc: committed"
     return 0
