@@ -30,6 +30,7 @@
 #   ~/fm               your workspace, with FM_HOME in ~/.fm-profile. The card
 #                      names the machine's workspace, which is shared; yours is
 #                      your own, and FM_HOME outranks the card for that reason
+#   ~/AGENTS.md        a personal SSH first-read, printed once at login
 #   ~/fm/fm-ai         the org skill set, when GitHub auth is already in place
 #
 # Claude Code is deliberately not pinned. It updates itself in place, so a
@@ -83,8 +84,9 @@ Usage: fm setup-onboard
        fm setup-onboard --help
 
 Installs uv, the fm CLI, and Claude Code into your home directory, creates your
-workspace, and clones the org skill set if you are already signed in to GitHub.
-No sudo, nothing outside your home directory. Safe to run twice.
+workspace, installs the SSH first-read, and clones the org skill set if you are
+already signed in to GitHub. No sudo, nothing outside your home directory. Safe
+to run twice.
 EOF
 }
 
@@ -181,6 +183,16 @@ EOF
   fm_ensure_line "$BASHRC"  "$SHELL_ENV_LINE"
 
   fm_ok "shell environment in $SHELL_ENV, sourced from ~/.profile and ~/.bashrc"
+}
+
+# --- SSH first-read --------------------------------------------------------
+
+# A login shell shows the machine router before the prompt, matching the Bongi
+# host's first-read without adding output to `ssh host command`, local shells,
+# tmux panes, or VS Code Remote terminals. The installer preserves a personal
+# AGENTS.md and refuses an occupied hook path.
+install_ssh_first_read() {
+  bash "$FM_ROOT/scripts/internal/install-ssh-first-read.sh"
 }
 
 # --- uv and the fm CLI ------------------------------------------------------
@@ -314,6 +326,7 @@ main() {
   ensure_local_bin
   ensure_workspace
   ensure_shell_env
+  install_ssh_first_read
   install_fm_cli
   install_claude
   install_fm_ai

@@ -128,12 +128,13 @@ Pick the narrowest prefix that fits. If a change spans two, split the commit.
 
 ## Tests
 
-Run both before opening a PR:
+Run these checks before opening a PR:
 
 ```bash
-shellcheck install.sh run.sh lib.sh scripts/manifest.sh scripts/*/*.sh
+shellcheck install.sh run.sh lib.sh scripts/manifest.sh scripts/*/*.sh templates/*.sh
 FM_SELFTEST=1 bash install.sh
 ./scripts/dev/test-ledger.sh
+./scripts/dev/test-ssh-first-read.sh
 ```
 
 ## Onboarding

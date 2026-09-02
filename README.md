@@ -408,7 +408,9 @@ No system-level change outside a step in this repo.
 If a machine needs a package, a sysctl, a udev rule, or a user, it goes in a
 step and gets committed. The consequence is that the scripts are the
 documentation: a prose description of a machine drifts, a script that provisions
-it cannot. This applies to people and to AI agents equally — see `CLAUDE.md`.
+it cannot. This applies to people and to AI agents equally. The managed
+`CLAUDE.md` holds the full rule, and personal onboarding prints `~/AGENTS.md`
+at SSH login as its first-read router.
 
 ## Layout
 
@@ -533,7 +535,10 @@ what keeps one pinned version on the box rather than nine drifting.
 `~/.local/bin` on `PATH`, installs uv and the `fm` CLI through the same step
 provisioning uses, installs Claude Code, creates `~/fm`, and writes `FM_HOME`
 into `~/.profile` — which is what makes every tool resolve *your* workspace
-rather than the machine's.
+rather than the machine's. It also installs a personal `~/AGENTS.md` and a
+login-only hook that prints its first 35 lines during interactive SSH login.
+Non-SSH shells and remote commands stay quiet. An existing personal
+`~/AGENTS.md` is preserved and becomes the displayed first-read.
 
 On a machine whose CLI is not system-wide yet, clone and run it from the
 checkout instead:
