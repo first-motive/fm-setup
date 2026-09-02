@@ -29,6 +29,7 @@ WORKSTATION_STEPS=(
   "etckeeper|05-etckeeper.sh|on"
   "base-deps|10-base-deps.sh|on"
   "workspace|12-workspace.sh|on"
+  "data-root|13-data-root.sh|on"
   "fm-cli|15-fm-cli.sh|on"
   "nvidia|20-nvidia.sh|on"
   "no-snap|25-no-snap.sh|on"
@@ -68,6 +69,39 @@ JETSON_STEPS=(
   "tailscale|60-tailscale.sh|on"
 )
 
+# Ubuntu 26.04 on a cloud GPU instance: the training host.
+#
+# The same release as the workstation, because it reuses the workstation's GPU
+# steps and those package pins are the ones that release carries. A trainer is a
+# workstation with the parts nobody sitting at a screen would want removed:
+# there is no display, so no browser and no snap policy to hold; and no sensors
+# on it, so no ROS, no DDS buffers, and no sim.
+#
+# What is left is the training host itself — the driver, containers with GPU
+# passthrough, uv and the fm CLI (fm-cli installs both), the data tree, and
+# fm-policy. Every one of those steps is shared with the workstation except
+# fm-policy, which nothing else needs.
+#
+# `fm_detect_role` cannot find this role: a cloud instance carries no marker
+# that distinguishes it from a tower with a GPU in it. A trainer is provisioned
+# with `--trainer` and thereafter says so on its card, which is what the
+# converge path reads.
+TRAINER_STEPS=(
+  "system-update|00-system-update.sh|on"
+  "etckeeper|05-etckeeper.sh|on"
+  "base-deps|10-base-deps.sh|on"
+  "workspace|12-workspace.sh|on"
+  "data-root|13-data-root.sh|on"
+  "fm-cli|15-fm-cli.sh|on"
+  "fm-policy|17-fm-policy.sh|on"
+  "nvidia|20-nvidia.sh|on"
+  "docker|30-docker.sh|on"
+  "nvidia-container|35-nvidia-container-toolkit.sh|on"
+  "tailscale|60-tailscale.sh|on"
+  "users|70-users.sh|on"
+  "agent-ruleset|80-agent-ruleset.sh|on"
+)
+
 # --- Machine identity ------------------------------------------------------
 #
 # One file per machine says what that machine is, and everything host-shaped is
@@ -95,11 +129,11 @@ FM_MACHINE_SCHEMA_VERSION=1
 # to know what it may rely on.
 FM_MACHINE_SCHEMA=templates/machine/machine.schema.json
 
-# Roles a card may declare. The two provisioning roles plus `mac` and `robot`,
+# Roles a card may declare. The three provisioning roles plus `mac` and `robot`,
 # which fm-setup never provisions — a laptop still needs a name, a fleet, and a
 # workspace to point at, and a robot arrives on its vendor's own OS, adopted by
 # `fm device adopt` rather than flashed.
-FM_MACHINE_ROLES=(workstation jetson mac robot)
+FM_MACHINE_ROLES=(workstation jetson trainer mac robot)
 
 # Middleware profiles a card may declare. zenoh is the supported path; dds-lan
 # is the labelled escape hatch for hardware that has not been through the
@@ -138,6 +172,7 @@ FM_MACHINE_WORKLOADS=(recorder processor robot workstation router cockpit)
 FM_MACHINE_NAME_ABBREV=(
   "jetson|rec"
   "workstation|ws"
+  "trainer|trn"
   "mac|mac"
   "robot|rob"
 )
@@ -212,8 +247,13 @@ FM_SETUP_LEGACY_DIR="$HOME/.first-motive/fm-setup"
 # 22.04 machine waiting to be re-imaged provisions as a workstation, adds the ROS
 # apt source successfully, and then dies on `ros-lyrical-*` packages that do not
 # exist for jammy — leaving a half-provisioned host rather than a refusal.
+#
+# The trainer targets the workstation's release rather than whatever a cloud
+# image happens to offer, because it installs the workstation's GPU packages and
+# those pins exist for one release only.
 FM_OS_CODENAME_WORKSTATION=resolute
 FM_OS_CODENAME_JETSON=jammy
+FM_OS_CODENAME_TRAINER=resolute
 
 # --- Base packages ---------------------------------------------------------
 
@@ -496,6 +536,44 @@ FM_BACKUP_SOURCES=(
   dataset-releases
   runs
 )
+
+# The machine's own data tree, inside the workspace the card names, laid out by
+# 13-data-root.sh. Every machine that holds episodes has the same one, so a path
+# in a manifest, a training config, or somebody's notes means the same thing on
+# all of them.
+#
+# Machine-owned, and that is the whole distinction: nothing in it is a repo and
+# nothing in it is synced. It sits beside the checkouts rather than under /data
+# because the card already names one directory for the host and a second root
+# outside it is a second thing to find, mount, and back up. FM_DATA_DIR above is
+# the older shared tree on fm-ws-01; it stays where it is, because moving live
+# recordings is a migration and not a manifest edit.
+#
+# A name rather than an absolute path: the parent comes from the card, and this
+# file must not be the second place a workspace is written down.
+FM_DATA_ROOT_NAME=data
+
+# Parents first, so one loop can create a nested entry after the directory that
+# holds it. What each is for is in 13-data-root.sh's header, where somebody
+# looking at the tree on a machine will go.
+FM_DATA_ROOT_SUBDIRS=(
+  recordings
+  processed
+  annotations
+  releases
+  staged
+  staged/episodes
+  staged/lerobot
+  hf
+  policies
+)
+
+# The training repo a trainer exists to run, cloned into the workspace by
+# 17-fm-policy.sh. Unpinned, like FM_AI_REPO and for the same reason: it is
+# worked on, and a tag here would hold every trainer at the state of the day it
+# was built. Which commit trained a model is the run's business.
+FM_POLICY_REPO=first-motive/fm-policy
+FM_POLICY_CHECKOUT_NAME=fm-policy
 
 # --- Isaac Sim -------------------------------------------------------------
 

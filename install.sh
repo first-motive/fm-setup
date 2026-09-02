@@ -7,6 +7,7 @@
 #
 #   ./install.sh --workstation            provision the GPU workstation
 #   ./install.sh --jetson                 provision the Jetson capture rig
+#   ./install.sh --trainer                provision the cloud GPU training host
 #   ./install.sh --workstation --check    report state, change nothing
 #   ./install.sh --workstation --list     list the role's steps
 #   ./install.sh uninstall --jetson       reverse what is reversible
@@ -144,9 +145,11 @@ Usage: ./install.sh [install|uninstall] [options]
   install      run the role's steps (default)
   uninstall    reverse the role's steps, in reverse order
 
-Role (default: detected from the hardware):
+Role (default: detected from the hardware; never trainer — a cloud GPU
+instance looks exactly like a tower, so it has to be named):
   --workstation     Ubuntu 26.04 GPU box — training, annotation, sim
   --jetson          Ubuntu 22.04 Jetson Orin Nano — capture rig
+  --trainer         Ubuntu 26.04 cloud GPU instance — training only
 
 Options:
   --check           report each step's state, change nothing
@@ -257,14 +260,14 @@ fm_bootstrap_checkout() {
   fm_ok "checkout ready at $FM_SETUP_DIR"
 }
 
-# Run --list and a dry-run install for both roles. Proves the script survives the
+# Run --list and a dry-run install for every role. Proves the script survives the
 # curl-pipe path, and that every manifest entry resolves to a real step file,
 # without provisioning anything. CI sets FM_SELFTEST=1.
 fm_selftest() {
   local here role id file missing=0
   here="$(fm_script_dir)"
   fm_log "self-test: manifest resolves, dry run for every role"
-  for role in workstation jetson; do
+  for role in workstation jetson trainer; do
     fm_list_steps "$role"
     while IFS='|' read -r id file _; do
       if [ ! -f "$here/scripts/steps/$file" ]; then
@@ -299,6 +302,7 @@ main() {
       install|uninstall) cmd="$1"; shift ;;
       --workstation)     role="workstation"; shift ;;
       --jetson)          role="jetson"; shift ;;
+      --trainer)         role="trainer"; shift ;;
       --check)           mode_flag="check"; shift ;;
       --list)            list=1; shift ;;
       --only)            fm_collect FM_ONLY "${2:-}"; shift 2 ;;

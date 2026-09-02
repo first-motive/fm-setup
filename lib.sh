@@ -968,7 +968,8 @@ fm_steps_for() {
   case "$role" in
     workstation) for entry in "${WORKSTATION_STEPS[@]:-}"; do [ -n "$entry" ] && printf '%s\n' "$entry"; done ;;
     jetson)      for entry in "${JETSON_STEPS[@]:-}";      do [ -n "$entry" ] && printf '%s\n' "$entry"; done ;;
-    *) fm_err "unknown role: $role (use workstation|jetson)"; return 1 ;;
+    trainer)     for entry in "${TRAINER_STEPS[@]:-}";     do [ -n "$entry" ] && printf '%s\n' "$entry"; done ;;
+    *) fm_err "unknown role: $role (use workstation|jetson|trainer)"; return 1 ;;
   esac
 }
 
@@ -979,7 +980,8 @@ fm_role_codename() {
   case "$role" in
     workstation) printf '%s\n' "${FM_OS_CODENAME_WORKSTATION:-}" ;;
     jetson)      printf '%s\n' "${FM_OS_CODENAME_JETSON:-}" ;;
-    *) fm_err "unknown role: $role (use workstation|jetson)"; return 1 ;;
+    trainer)     printf '%s\n' "${FM_OS_CODENAME_TRAINER:-}" ;;
+    *) fm_err "unknown role: $role (use workstation|jetson|trainer)"; return 1 ;;
   esac
 }
 # fm_require_role_os ROLE [STRICT] — refuse a role the running OS cannot satisfy.
