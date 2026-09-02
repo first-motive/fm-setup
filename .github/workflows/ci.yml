@@ -31,7 +31,7 @@ jobs:
       - name: Install shellcheck
         run: sudo apt-get update && sudo apt-get install -y shellcheck
       - name: Lint every script
-        run: shellcheck install.sh run.sh lib.sh scripts/manifest.sh scripts/update.sh scripts/*/*.sh
+        run: shellcheck install.sh run.sh lib.sh scripts/manifest.sh scripts/update.sh scripts/*/*.sh templates/*.sh
 
   selftest:
     runs-on: ubuntu-latest
@@ -140,6 +140,16 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
       - name: Exercise the apt ledger
         run: ./scripts/dev/test-ledger.sh
+
+  # Personal onboarding owns the SSH first-read. This holds its two boundaries:
+  # a repeated run converges without replacing personal instructions, and only
+  # an interactive SSH login prints the router.
+  ssh-first-read:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - name: Exercise the personal SSH first-read
+        run: ./scripts/dev/test-ssh-first-read.sh
 
   # The path a fresh machine actually takes: install.sh arrives over a pipe with
   # no file on disk, fetches lib.sh, verifies it, clones the repo, and hands over
