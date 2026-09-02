@@ -141,6 +141,17 @@ jobs:
       - name: Exercise the apt ledger
         run: ./scripts/dev/test-ledger.sh
 
+  # The one verb here that widens sudo. It writes into /etc/sudoers.d on a robot
+  # the vendor still supports, and a malformed file there breaks sudo for every
+  # account on the host — including the one that would have to repair it. So the
+  # rule it generates is parsed by visudo in CI rather than on the workcell.
+  robot-sudo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - name: Exercise the robot service sudo rule
+        run: ./scripts/dev/test-robot-sudo.sh
+
   # Personal onboarding owns the SSH first-read. This holds its two boundaries:
   # a repeated run converges without replacing personal instructions, and only
   # an interactive SSH login prints the router.
