@@ -70,7 +70,10 @@ do_install() {
     fm_ok "$POLICY_DIR cloned"
   else
     fm_warn "could not clone $FM_POLICY_REPO — the rest of this role is unaffected"
-    fm_info "authenticate, then re-run: ./install.sh --trainer --only fm-policy"
+    # Named for the role being installed, not for one of them. This step runs on
+    # the workstation as well as the trainer, and a hint that says --trainer on a
+    # workstation is a command the operator pastes and watches fail.
+    fm_info "authenticate, then re-run: ./install.sh --${FM_ROLE:-workstation} --only fm-policy"
   fi
 }
 
