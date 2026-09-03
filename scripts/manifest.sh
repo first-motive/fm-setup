@@ -23,7 +23,8 @@
 
 # --- Step registries -------------------------------------------------------
 
-# Ubuntu 26.04 on the GPU workstation: training, annotation, and sim.
+# Ubuntu 26.04 on the GPU workstation: training, annotation, sim, and the
+# inference a robot connects back to.
 WORKSTATION_STEPS=(
   "system-update|00-system-update.sh|on"
   "etckeeper|05-etckeeper.sh|on"
@@ -31,6 +32,11 @@ WORKSTATION_STEPS=(
   "workspace|12-workspace.sh|on"
   "data-root|13-data-root.sh|on"
   "fm-cli|15-fm-cli.sh|on"
+  # The same step the trainer runs, for a different reason. A trainer exists to
+  # train; a workstation is also the host a robot names as its inference server —
+  # fm-rob-02 points its `inference.server_host` at this machine — so the policy
+  # layer has to be present here to serve a run, not only to produce one.
+  "fm-policy|17-fm-policy.sh|on"
   "nvidia|20-nvidia.sh|on"
   "no-snap|25-no-snap.sh|on"
   "docker|30-docker.sh|on"
