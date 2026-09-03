@@ -22,8 +22,12 @@ _here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 fm_require_linux
 
-KEYRING=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
-SOURCES=/etc/apt/sources.list.d/nvidia-container-toolkit.list
+# Overridable for the reason FM_DEVICE_TREE is: the fingerprint check below is
+# what stands between this machine and four packages installed as root off a
+# downloaded key, and a test that cannot write to /usr/share or /etc can only
+# ever assert that check on a host it is allowed to provision.
+KEYRING="${FM_NVIDIA_KEYRING:-/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg}"
+SOURCES="${FM_NVIDIA_SOURCES:-/etc/apt/sources.list.d/nvidia-container-toolkit.list}"
 
 do_check() {
   if [ -f "$SOURCES" ]; then fm_ok "toolkit apt repo present"; else fm_warn "toolkit apt repo missing"; fi
@@ -54,6 +58,23 @@ add_repo() {
     fm_err "the NVIDIA keyring came back empty — check the network and re-run"
     return 1
   fi
+
+  # The key is checked by fingerprint, not taken on TLS alone: it signs the four
+  # packages this step installs as root, and a repo signed by the wrong key
+  # installs whatever it likes. `sudo gpg` because the keyring is root's.
+  local fpr
+  fpr="$(sudo gpg --show-keys --with-colons "$KEYRING" 2>/dev/null | awk -F: '/^fpr:/ { print $10; exit }')"
+  if [ "$fpr" != "$FM_NVIDIA_KEY_FPR" ]; then
+    fm_err "NVIDIA signing key fingerprint mismatch"
+    fm_err "  expected $FM_NVIDIA_KEY_FPR"
+    fm_err "  actual   ${fpr:-<unreadable>}"
+    fm_err "  if NVIDIA rotated the key, re-derive the fingerprint and update"
+    fm_err "  FM_NVIDIA_KEY_FPR in scripts/manifest.sh — do not bypass this check"
+    sudo rm -f "$KEYRING"
+    return 1
+  fi
+  fm_ok "signing key matches the pinned fingerprint"
+
   curl -fsSL https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
     | sed "s#deb https://#deb [signed-by=$KEYRING] https://#g" \
     | sudo tee "$SOURCES" >/dev/null

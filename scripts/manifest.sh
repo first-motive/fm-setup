@@ -306,6 +306,13 @@ FM_NVIDIA_CONTAINER_APT=(
   libnvidia-container1
 )
 
+# The toolkit repo's signing key, pinned by fingerprint rather than trusted on
+# TLS alone. It signs packages this step installs as root, so a repo signed by
+# the wrong key installs whatever it likes. Re-read it after a key rotation with:
+#   curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
+#     | gpg --show-keys --with-colons | awk -F: '/^fpr:/ { print $10; exit }'
+FM_NVIDIA_KEY_FPR=C95B321B61E88C1809C4F759DDCAE044F796ECB0
+
 # Image used by the documented GPU smoke test.
 FM_CUDA_SMOKE_IMAGE=nvidia/cuda:12.8.0-base-ubuntu22.04
 
@@ -604,6 +611,29 @@ FM_ISAAC_ACCEPT_EULA=Y
 FM_ISAAC_PRIVACY_CONSENT=Y
 
 # --- Networking ------------------------------------------------------------
+
+# Tailscale publishes an installer script rather than a repo we add ourselves,
+# and that script runs as root. So it is fetched to a file and checksummed
+# before it is run, and it is told which version to install.
+#
+# Upstream serves one unversioned URL and rewrites it in place, so this checksum
+# goes stale on any edit Tailscale makes to the script. Re-derive it and update
+# this constant:
+#   curl -fsSL https://tailscale.com/install.sh | sha256sum
+#
+# Required, where FM_UV_INSTALLER_SHA256 is optional and left empty. That is not
+# an inconsistency: uv's installer is fetched from a versioned URL, so the
+# version is itself the pin and a checksum only narrows it. Tailscale has one
+# URL whose contents change under it, so the checksum is the only thing that
+# says which script ran as root. An empty value here would leave the step
+# trusting TLS alone, which is what it was written to stop.
+#
+# The version is a deb version in Tailscale's own apt repo, which keeps its back
+# catalogue, so a pin that has been overtaken still resolves. Like FM_UV_VERSION
+# it decides what a machine with no tailscale gets; it is not a demand that
+# every machine converge on it.
+FM_TAILSCALE_VERSION=1.102.3
+FM_TAILSCALE_INSTALLER_SHA256=805e85ed6f6f81a7ea2e70d52d47e7d5290863299e5c922b2787d71aa312f22e
 
 # CycloneDDS asks for a 128 MB socket receive buffer and treats a shortfall as
 # fatal. 134217728 = 128 MiB.
