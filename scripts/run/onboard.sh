@@ -56,7 +56,31 @@ FM_ROOT="$(cd "$_here/../.." && pwd)"
 LOCAL_BIN="$HOME/.local/bin"
 PROFILE="$HOME/.profile"
 BASHRC="$HOME/.bashrc"
-WORKSPACE="${FM_HOME:-$HOME/fm}"
+# The account that owns the machine's workspace is the machine, not a person on
+# it, and a personal workspace is the wrong thing to hand it: the card's
+# workspace is where its checkouts, its services and its data root already are.
+# Giving it ~/fm instead pointed every verb at an empty directory — on fm-ws-01,
+# after the checkouts moved under the card's workspace, `fm doctor` reported
+# every repo "not cloned" while all of them sat one directory away.
+#
+# Anyone else onboarding on the same machine still gets their own tree, which is
+# the case this script was written for.
+service_account_workspace() {
+  local workspace owner
+  workspace="$(FM_HOME='' fm_machine_workspace)" || return 1
+  [ -d "$workspace" ] || return 1
+  owner="$(stat -c '%U' "$workspace" 2>/dev/null)" || return 1
+  [ "$owner" = "$(id -un)" ] || return 1
+  printf '%s\n' "$workspace"
+}
+
+if [ -n "${FM_HOME:-}" ]; then
+  WORKSPACE="$FM_HOME"
+elif WORKSPACE="$(service_account_workspace)"; then
+  :
+else
+  WORKSPACE="$HOME/fm"
+fi
 FM_AI_DIR="$WORKSPACE/fm-ai"
 
 # One file holds what this script adds to a shell, and the shell files only
