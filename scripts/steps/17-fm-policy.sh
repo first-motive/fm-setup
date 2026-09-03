@@ -47,7 +47,37 @@ do_check() {
   return 0
 }
 
+# Who the checkout belongs to: the workspace's own owner, falling back to the
+# account that invoked sudo, then to whoever is running.
+#
+# It is not root, and that is the point. install.sh runs under sudo, so a clone
+# left as-is runs as root — which owns no GitHub credential, and would leave a
+# root-owned tree inside a group-writable workspace for a repo whose whole
+# premise is that it is somebody's working tree.
+workspace_owner() {
+  local workspace
+  workspace="$(fm_machine_workspace)"
+  if [ -d "$workspace" ]; then
+    stat -c '%U' "$workspace" 2>/dev/null && return 0
+  fi
+  printf '%s\n' "${SUDO_USER:-${USER:-$(id -un)}}"
+}
+
+# as_workspace_owner CMD… — run a command as that account, or plainly when it is
+# already the one running. Mirrors as_owner in 80-agent-ruleset.sh.
+as_workspace_owner() {
+  local owner
+  owner="$(workspace_owner)"
+  if [ "$owner" = "$(id -un)" ]; then
+    "$@"
+  else
+    sudo -u "$owner" "$@"
+  fi
+}
+
 do_install() {
+  local owner
+  owner="$(workspace_owner)"
   if [ -d "$POLICY_DIR/.git" ]; then
     fm_ok "$POLICY_DIR already cloned"
     fm_info "bring it forward deliberately with: git -C $POLICY_DIR pull"
@@ -63,14 +93,19 @@ do_install() {
   fm_require_cmd git || return 1
   fm_ensure_dir "$(dirname "$POLICY_DIR")"
 
-  fm_log "cloning $FM_POLICY_REPO into $POLICY_DIR"
+  fm_log "cloning $FM_POLICY_REPO into $POLICY_DIR (as $owner)"
   # GIT_TERMINAL_PROMPT=0 so a host with no credential fails in a second rather
   # than sitting on a username prompt for the rest of an unattended provision.
-  if GIT_TERMINAL_PROMPT=0 git clone --quiet "$POLICY_URL" "$POLICY_DIR"; then
+  if as_workspace_owner env GIT_TERMINAL_PROMPT=0 git clone --quiet "$POLICY_URL" "$POLICY_DIR"; then
     fm_ok "$POLICY_DIR cloned"
   else
     fm_warn "could not clone $FM_POLICY_REPO — the rest of this role is unaffected"
-    fm_info "authenticate, then re-run: ./install.sh --trainer --only fm-policy"
+    # Named for the role being installed, and for the account the clone runs as.
+    # This repo is private, and install.sh runs under sudo, so a credential held
+    # by the operator's own login is not the one git sees: the clone is done as
+    # the workspace's owner, which is the account that has to be authenticated.
+    fm_info "authenticate as $owner (gh auth login), then re-run:"
+    fm_info "  ./install.sh --${FM_ROLE:-workstation} --only fm-policy"
   fi
 }
 

@@ -121,6 +121,37 @@ assert_eq "uninstall leaves the checkout in place" "true" \
 assert_eq "uninstall leaves uncommitted work in place" "uncommitted work" \
   "$(cat "$CHECKOUT/scratch.txt")"
 
+# --- the clone runs as the workspace's owner, never as root ------------------
+#
+# install.sh runs under sudo, so a clone left as-is runs as root. Root owns no
+# GitHub credential, and this repo is private — on fm-ws-01 that failed with
+# "could not read Username for 'https://github.com'" while the operator's own
+# account was authenticated the whole time. A root-owned checkout would also be
+# the wrong thing to leave behind for a repo that is somebody's working tree.
+
+rm -rf "$CHECKOUT"
+fake_bin="$TMP/bin"
+mkdir -p "$fake_bin"
+# Records who the clone would have run as, and refuses to reach the network.
+cat > "$fake_bin/git" <<'FAKEGIT'
+#!/usr/bin/env bash
+for arg in "$@"; do
+  if [ "$arg" = "clone" ]; then
+    printf '%s\n' "$(id -un)" > "$FM_TEST_CLONE_USER_FILE"
+    exit 1
+  fi
+done
+exec /usr/bin/git "$@"
+FAKEGIT
+chmod +x "$fake_bin/git"
+
+export FM_TEST_CLONE_USER_FILE="$TMP/clone-user"
+PATH="$fake_bin:$PATH" step install >/dev/null 2>&1 || true
+
+assert_eq "the clone runs as the workspace's owner" "$(stat -c '%U' "$WORKSPACE")" \
+  "$(cat "$FM_TEST_CLONE_USER_FILE" 2>/dev/null)"
+unset FM_TEST_CLONE_USER_FILE
+
 # --- Result ----------------------------------------------------------------
 
 echo
