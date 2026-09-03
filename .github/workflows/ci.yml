@@ -143,6 +143,17 @@ jobs:
       - name: Exercise the machine data root
         run: ./scripts/dev/test-data-root.sh
 
+  # Two accounts on one machine want two different workspaces, and the account
+  # that owns the machine's is the machine. Handing it a personal one points
+  # every verb at an empty directory, which is what fm-ws-01 reported after its
+  # checkouts moved under the card's workspace.
+  onboard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - name: Exercise the onboard workspace resolution
+        run: ./scripts/dev/test-onboard.sh
+
   # The trainer's fm-policy checkout is somebody's working tree, and an
   # uncommitted branch on a training host is the copy nothing else has. What is
   # checked is that the step never writes over what it finds: an occupied path is
