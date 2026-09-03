@@ -4,12 +4,17 @@ Machine provisioning for First Motive. One repo defines what a First Motive host
 is, so any machine can be rebuilt from a clean install without anyone
 remembering what was done to the last one.
 
-Two roles:
+Three roles:
 
 ```
 workstation   Ubuntu 26.04, RTX GPU   training, annotation, sim
 jetson        Ubuntu 22.04, Orin Nano capture rig
+trainer       Ubuntu 26.04, cloud GPU training only
 ```
+
+`trainer` is the one role hardware detection cannot find — a cloud GPU instance
+looks exactly like a tower — so it is named once with `--trainer` and recorded
+on the machine's card, which every converge afterwards reads.
 
 fm-setup owns the **machine** layer — drivers, container runtime, ROS 2, users,
 kernel tuning. [`fm_ros2`](https://github.com/first-motive/fm-ros2) owns the
@@ -432,8 +437,8 @@ templates/              files a step deploys onto the machine
 └─ machine/             the identity card's schema — the cross-repo contract
 ```
 
-Roles share `scripts/steps/` rather than owning a directory each, so a step both
-machines need is written once and listed in both registries.
+Roles share `scripts/steps/` rather than owning a directory each, so a step more
+than one role needs is written once and listed in each registry.
 
 ## Steps
 
@@ -637,6 +642,39 @@ in CI, because a malformed file in `/etc/sudoers.d` breaks sudo for every accoun
 on the host, including the one that would have to repair it. Confirm what an
 account may do with `sudo -l -U <name>`.
 
+## The Data Root
+
+Every machine that holds episodes lays out the same tree inside the workspace
+its card names, so a path in a manifest, a training config, or somebody's notes
+means the same thing on all of them:
+
+```
+<workspace>/data/
+├─ recordings/     raw MCAP episodes off the rigs
+├─ processed/      manifests and clean RLDS
+├─ annotations/    labels and annotation run directories
+├─ releases/       dataset release packs
+├─ staged/         B2 stage-ins (episodes/, lerobot/)
+├─ hf/             HF_HOME cache — datasets and weights, evictable
+└─ policies/       per-run training output
+```
+
+Every directory is group `fm`, mode 3775 — group write so the team shares one
+tree, setgid so an episode written by one person stays usable by the next,
+sticky so removing an entry needs ownership of it.
+
+The tree is machine-owned: nothing in it is a repo and nothing in it is synced.
+It is resolved from the identity card and never from `FM_HOME`, because a
+machine has one data tree that the whole team and every service share, while
+`FM_HOME` is a person's own workspace.
+
+Both of those are tested, because the converge timer lays the tree out unattended
+on every tag and the recordings in it are what nobody can re-make:
+
+```bash
+./scripts/dev/test-data-root.sh   # temp workspace, no root
+```
+
 ## Backups
 
 Before a wipe, copy what cannot be re-made and prove the copy is good:
@@ -663,7 +701,7 @@ it. `scripts/dev/rehearse.sh` runs a role's package steps inside a container of
 its target release:
 
 ```bash
-./scripts/dev/rehearse.sh             # both roles
+./scripts/dev/rehearse.sh             # every role
 ./scripts/dev/rehearse.sh jetson      # 22.04 aarch64
 ```
 
@@ -680,7 +718,7 @@ repo's newest `v*` tag moves. `scripts/dev/converge-check.sh` runs that entry
 point in a container:
 
 ```bash
-./scripts/dev/converge-check.sh             # both roles
+./scripts/dev/converge-check.sh             # every role
 ./scripts/dev/converge-check.sh jetson      # one role
 ```
 

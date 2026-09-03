@@ -6,6 +6,10 @@
 # opening on the LAN. Authentication is interactive by design: it hands out
 # access to the machine, so an unattended run prints the command and stops
 # rather than joining a tailnet on its own.
+#
+# The vendor's installer runs as root, so it is fetched to a file, checksummed
+# against the manifest pin, and told which version to install. A pipe straight
+# into sh leaves nothing for a check to hold.
 
 set -euo pipefail
 
@@ -36,14 +40,48 @@ do_check() {
   return 0
 }
 
+# Fetch, verify, and run Tailscale's installer. Split out so this function owns
+# the temp file's whole life, matching install_uv in 15-fm-cli.sh.
+install_tailscale() {
+  local script rc=0
+  script="$(mktemp)"
+
+  # One place creates the temp file and one place removes it, matching
+  # install_uv in 15-fm-cli.sh. Not a `trap … RETURN`: that trap is not scoped
+  # to the function that sets it, so it fires again when the caller returns.
+  _install_tailscale_inner "$script" || rc=$?
+  rm -f "$script"
+  return "$rc"
+}
+
+_install_tailscale_inner() {
+  local script="$1"
+
+  curl -fsSL --proto '=https' https://tailscale.com/install.sh -o "$script" \
+    || { fm_err "could not fetch the tailscale installer"; return 1; }
+
+  if ! fm_verify_checksum "$script" "$FM_TAILSCALE_INSTALLER_SHA256"; then
+    fm_err "tailscale rewrites this installer in place, so any edit upstream lands here"
+    fm_err "re-derive the checksum and update FM_TAILSCALE_INSTALLER_SHA256 in"
+    fm_err "scripts/manifest.sh, after reading the script — do not bypass this check:"
+    fm_err "  curl -fsSL https://tailscale.com/install.sh | sha256sum"
+    return 1
+  fi
+  fm_ok "tailscale installer checksum verified"
+
+  # The vendor's documented path: the installer adds the apt repo for this
+  # distro release and installs the daemon. TAILSCALE_VERSION is the
+  # installer's own knob for pinning the package it lands.
+  TAILSCALE_VERSION="$FM_TAILSCALE_VERSION" sh "$script" \
+    || { fm_err "the tailscale installer failed"; return 1; }
+}
+
 do_install() {
   if fm_has_cmd tailscale; then
     fm_ok "tailscale already installed ($(tailscale version | head -1))"
   else
-    fm_log "installing tailscale"
-    # Tailscale's own installer adds the apt repo for this distro release and
-    # installs the daemon. It is the vendor's documented path.
-    curl -fsSL https://tailscale.com/install.sh | sh
+    fm_log "installing tailscale $FM_TAILSCALE_VERSION"
+    install_tailscale || return 1
     # The vendor's installer adds its own apt repo and installs from it, so
     # there is no fm_apt_install call to diff. The package it lands is the one
     # named here.

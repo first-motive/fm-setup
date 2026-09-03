@@ -2,7 +2,7 @@
 #
 # converge-check.sh — run the entry point the appliance timer runs, in a container.
 #
-#   ./scripts/dev/converge-check.sh              both roles
+#   ./scripts/dev/converge-check.sh              every role
 #   ./scripts/dev/converge-check.sh jetson       one role
 #
 # `scripts/update.sh` is what fm_ros2's appliance-update timer executes, as root,
@@ -44,7 +44,7 @@ converge-check.sh — run scripts/update.sh --check in a container of the target
 
 Usage: ./scripts/dev/converge-check.sh [role...]
 
-  role   workstation | jetson   (default: both)
+  role   workstation | jetson | trainer   (default: all)
 
 Env: FM_CONVERGE_IMAGE, FM_REHEARSE_PLATFORM
 EOF
@@ -100,12 +100,12 @@ main() {
   esac
   while [ $# -gt 0 ]; do
     case "$1" in
-      workstation|jetson) roles+=("$1") ;;
+      workstation|jetson|trainer) roles+=("$1") ;;
       *) fm_err "unknown role: $1"; usage >&2; return 1 ;;
     esac
     shift
   done
-  [ ${#roles[@]} -gt 0 ] || roles=(workstation jetson)
+  [ ${#roles[@]} -gt 0 ] || roles=(workstation jetson trainer)
 
   fm_require_cmd docker
 

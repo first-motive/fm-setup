@@ -18,9 +18,9 @@
       "pattern": "^fm-[a-z]+-[0-9]{2}$"
     },
     "role": {
-      "description": "Which kind of machine this is. Selects the provisioning step list, the ROS distro, and the Ubuntu release fm-setup will accept. `mac` and `robot` are provisioned by neither role — a laptop still needs an identity to point at a workspace and pick a transport, and a robot arrives on its vendor's own OS, adopted by `fm device adopt` rather than flashed.",
+      "description": "Which kind of machine this is. Selects the provisioning step list, the ROS distro, and the Ubuntu release fm-setup will accept. `trainer` is a cloud GPU instance that only trains: the workstation without a display, sensors, or ROS. It is the one provisioning role hardware detection cannot find, because a cloud instance and a tower look the same, so a trainer is named on the command line once and says so here afterwards. `mac` and `robot` are provisioned by no role — a laptop still needs an identity to point at a workspace and pick a transport, and a robot arrives on its vendor's own OS, adopted by `fm device adopt` rather than flashed.",
       "type": "string",
-      "enum": ["workstation", "jetson", "mac", "robot"]
+      "enum": ["workstation", "jetson", "trainer", "mac", "robot"]
     },
     "fleet": {
       "description": "Which population this machine belongs to. Machines only ever discover, sync with, and update alongside machines in the same fleet, so a rig on a bench cannot be adopted by the production fleet by accident.",

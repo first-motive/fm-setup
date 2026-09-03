@@ -38,7 +38,7 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
       # Proves every manifest entry resolves to a real step file, and that a dry
-      # run walks both roles. Provisions nothing.
+      # run walks every role. Provisions nothing.
       - name: install.sh self-test
         run: FM_SELFTEST=1 FM_NO_MODIFY_PATH=1 bash install.sh
       - name: manifest declares every verb
@@ -83,7 +83,7 @@ jobs:
   #
   # A tag cut is the one action here with no undo, so the path it triggers is the
   # one that most needs a check. This runs the real entry point in a container,
-  # for both roles, carded and uncarded. `--check` is read-only, which is how it
+  # for every role, carded and uncarded. `--check` is read-only, which is how it
   # can cover all fourteen steps where a rehearsal can only afford three.
   converge:
     runs-on: ubuntu-latest
@@ -129,6 +129,32 @@ jobs:
       - name: Exercise the machine identity card
         run: ./scripts/dev/test-machine.sh
 
+  # The data root is where every episode this company owns lands, and the
+  # recordings in it are the one thing on a machine nobody can re-make. Two of
+  # its properties are worth a check that runs: it is laid out unattended by the
+  # converge timer on every tag, so a second run must be a no-op; and it resolves
+  # its path from the identity card alone, because FM_HOME is per person and a
+  # data root that follows whoever is logged in splits the recordings across two
+  # paths that both look correct. Runs against a temp workspace — no root.
+  data-root:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - name: Exercise the machine data root
+        run: ./scripts/dev/test-data-root.sh
+
+  # The trainer's fm-policy checkout is somebody's working tree, and an
+  # uncommitted branch on a training host is the copy nothing else has. What is
+  # checked is that the step never writes over what it finds: an occupied path is
+  # left alone, a re-run does not move an existing checkout, and uninstall
+  # removes nothing. The clone itself needs a credential, so it is not exercised.
+  fm-policy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - name: Exercise the trainer's fm-policy checkout
+        run: ./scripts/dev/test-fm-policy.sh
+
   # The ledger decides what an uninstall may remove from a provisioned machine,
   # so its bug is measured in packages someone did not ask to lose. No runner has
   # a machine to prove that on, and rehearsing a removal in a container proves
@@ -140,6 +166,19 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
       - name: Exercise the apt ledger
         run: ./scripts/dev/test-ledger.sh
+
+  # Two steps act as root on something they downloaded: 35 installs four packages
+  # from a repo whose signing key it fetches, and 60 runs Tailscale's installer.
+  # Both are pinned — the key by fingerprint, the script by SHA256 — and an
+  # unexercised pin is one nobody knows is still wired up. Faked rather than
+  # rehearsed: what has to hold is the refusal, and a job that reaches the real
+  # upstream would fail on a key rotation instead of reporting one.
+  supply-chain:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - name: Exercise the pinned key and installer
+        run: ./scripts/dev/test-supply-chain.sh
 
   # The one verb here that widens sudo. It writes into /etc/sudoers.d on a robot
   # the vendor still supports, and a malformed file there breaks sudo for every

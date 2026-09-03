@@ -146,15 +146,23 @@ else
   bad "a repeated write leaves one assignment"
 fi
 
-for bad_case in "FM_ROS_DOMAIN_ID 999" "FM_ROS_DOMAIN_ID three" "FM_DDS_IFACE 'not an iface'" \
-  "FM_ROUTER_ENDPOINT tcp/evil:7447" "PATH /tmp/evil"; do
-  # shellcheck disable=SC2086
-  if run_writer $bad_case >/dev/null 2>&1; then
-    bad "the writer refuses: $bad_case"
+# One case per call rather than a list of strings split on whitespace: a value
+# that contains a space is the case worth testing, and word splitting turned its
+# quotes into literal characters — so `'not an iface'` reached the writer as
+# three arguments and was refused for the wrong reason.
+refuses() { # key value…
+  if run_writer "$@" >/dev/null 2>&1; then
+    bad "the writer refuses: $*"
   else
-    ok "the writer refuses: $bad_case"
+    ok "the writer refuses: $*"
   fi
-done
+}
+
+refuses FM_ROS_DOMAIN_ID 999
+refuses FM_ROS_DOMAIN_ID three
+refuses FM_DDS_IFACE "not an iface"
+refuses FM_ROUTER_ENDPOINT tcp/evil:7447
+refuses PATH /tmp/evil
 
 if run_writer FM_DDS_IFACE >/dev/null 2>&1; then
   bad "the writer needs both a key and a value"

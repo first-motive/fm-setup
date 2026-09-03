@@ -64,7 +64,7 @@ role_flag() {
   fi
   [ -n "$role" ] || role="$(fm_detect_role)"
   case "$role" in
-    workstation|jetson) printf -- '--%s\n' "$role" ;;
+    workstation|jetson|trainer) printf -- '--%s\n' "$role" ;;
     mac) fm_err "this machine's card says role 'mac' — fm-setup provisions no macOS host"; return 1 ;;
     *) fm_err "unknown role '$role' — fix the card with 'fm machine init'"; return 1 ;;
   esac

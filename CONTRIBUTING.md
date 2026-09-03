@@ -135,6 +135,20 @@ shellcheck install.sh run.sh lib.sh scripts/manifest.sh scripts/*/*.sh templates
 FM_SELFTEST=1 bash install.sh
 ./scripts/dev/test-ledger.sh
 ./scripts/dev/test-ssh-first-read.sh
+./scripts/dev/test-supply-chain.sh
+```
+
+Two pins in `scripts/manifest.sh` are maintained by hand and go stale when
+upstream rotates: `FM_NVIDIA_KEY_FPR`, the fingerprint of the key signing the
+container toolkit repo, and `FM_TAILSCALE_INSTALLER_SHA256`, the checksum of the
+installer script Tailscale serves at one unversioned URL. A provision that stops
+on either prints the command to re-derive it. Read what changed before updating
+the constant — that is the whole point of the check.
+
+```bash
+curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
+  | gpg --show-keys --with-colons | awk -F: '/^fpr:/ { print $10; exit }'
+curl -fsSL https://tailscale.com/install.sh | sha256sum
 ```
 
 ## Onboarding

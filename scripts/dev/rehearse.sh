@@ -2,7 +2,7 @@
 #
 # rehearse — run a role's package steps inside a container of its target distro.
 #
-#   ./scripts/dev/rehearse.sh              both roles
+#   ./scripts/dev/rehearse.sh              every role
 #   ./scripts/dev/rehearse.sh jetson       one role
 #   ./scripts/dev/rehearse.sh --steps base-deps,ros2 workstation
 #
@@ -37,11 +37,17 @@ FM_REHEARSE_PLATFORM="${FM_REHEARSE_PLATFORM:-linux/arm64}"
 REHEARSALS=(
   "jetson|ubuntu:22.04|$FM_REHEARSE_PLATFORM"
   "workstation|ubuntu:26.04|$FM_REHEARSE_PLATFORM"
+  "trainer|ubuntu:26.04|$FM_REHEARSE_PLATFORM"
 )
 
 # Steps whose failure inside a container would mean nothing: docker needs a
 # daemon, tailscale and udev need the host, isaac-sim needs a GPU, users and
 # agent-ruleset need real accounts.
+#
+# One list for every role rather than one each, so the trainer — which has no
+# sensors and therefore no ROS — reports `no step 'ros2' in role 'trainer'` and
+# rehearses the rest. That warning is the list being honest about a role, not a
+# fault to fix.
 DEFAULT_STEPS="base-deps,fm-cli,ros2"
 
 usage() {
@@ -50,10 +56,10 @@ rehearse — run a role's package steps in a container of its target distro
 
 Usage: ./scripts/dev/rehearse.sh [options] [role...]
 
-  role            workstation | jetson   (default: both)
+  role            workstation | jetson | trainer   (default: all)
 
 Options:
-  --steps a,b,c   step ids to run (default: base-deps,ros2)
+  --steps a,b,c   step ids to run (default: base-deps,fm-cli,ros2)
   --keep          leave the container running for inspection
   -h, --help      show this help
 
@@ -101,7 +107,7 @@ main() {
       --steps)   steps="${2:-}"; shift 2 ;;
       --keep)    keep=1; shift ;;
       -h|--help) usage; return 0 ;;
-      workstation|jetson) roles+=("$1"); shift ;;
+      workstation|jetson|trainer) roles+=("$1"); shift ;;
       *) fm_err "unknown argument: $1"; usage; return 1 ;;
     esac
   done

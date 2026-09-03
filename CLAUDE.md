@@ -50,4 +50,4 @@ FM_SELFTEST=1 bash install.sh
 ```
 
 The self-test proves every manifest entry resolves to a real step file and that
-a dry run walks both roles.
+a dry run walks every role.
