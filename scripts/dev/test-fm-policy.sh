@@ -152,6 +152,45 @@ assert_eq "the clone runs as the workspace's owner" "$(stat -c '%U' "$WORKSPACE"
   "$(cat "$FM_TEST_CLONE_USER_FILE" 2>/dev/null)"
 unset FM_TEST_CLONE_USER_FILE
 
+# --- the step leaves a policy layer, not just a directory --------------------
+#
+# A checkout without the project's venv has no `fm policy` to run, which is the
+# whole reason the workstation and trainer roles carry it. On fm-ws-01 the clone
+# succeeded and the verb was still missing, because the step stopped at git.
+
+rm -rf "$CHECKOUT"
+git init --quiet "$CHECKOUT"
+git -C "$CHECKOUT" -c user.email=test@example.com -c user.name=test \
+  commit --quiet --allow-empty -m "init"
+# Stands in for the project's own installer, which needs uv and the network.
+cat > "$CHECKOUT/install.sh" <<'FAKEINSTALL'
+#!/usr/bin/env bash
+mkdir -p "$(dirname "$0")/.venv"
+printf '%s\n' "$(id -un)" > "$(dirname "$0")/.venv/installed-by"
+FAKEINSTALL
+chmod +x "$CHECKOUT/install.sh"
+
+fake_uv="$TMP/uvbin"
+mkdir -p "$fake_uv"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$fake_uv/uv"
+chmod +x "$fake_uv/uv"
+
+PATH="$fake_uv:$PATH" step install >/dev/null 2>&1 || true
+
+assert_eq "an existing checkout gets its venv resolved" "true" \
+  "$([ -d "$CHECKOUT/.venv" ] && echo true || echo false)"
+assert_eq "the venv is resolved as the workspace's owner" "$(stat -c '%U' "$WORKSPACE")" \
+  "$(cat "$CHECKOUT/.venv/installed-by" 2>/dev/null)"
+
+assert_rc "check exits 0 with a venv present" 0 step check
+
+rm -rf "$CHECKOUT/.venv"
+out="$(step check 2>&1)"
+case "$out" in
+  *"no .venv"*) ok "check names a checkout that cannot run" ;;
+  *) bad "check did not mention the missing venv" ;;
+esac
+
 # --- Result ----------------------------------------------------------------
 
 echo
