@@ -119,6 +119,20 @@ check_user_install() {
 
   if fm_path="$(command -v fm 2>/dev/null)"; then
     fm_ok "fm on PATH ($fm_path)"
+    # A per-account install sits earlier on PATH than the machine-wide one, so a
+    # stale one shadows it silently and every verb added since is simply absent.
+    # On fm-ws-01 that was a 0.8.1 in ~/.local/bin hiding the 0.12.0 in
+    # /usr/local/bin: `fm policy` reported "invalid choice" while `fm commands`
+    # — read through the newer binary — listed it. Compare the two and say so.
+    if [ "$fm_path" != "$FM_MACHINE_FM" ] && [ -x "$FM_MACHINE_FM" ]; then
+      local mine theirs
+      mine="$("$fm_path" --version 2>/dev/null | awk '{print $2}')"
+      theirs="$("$FM_MACHINE_FM" --version 2>/dev/null | awk '{print $2}')"
+      if [ -n "$mine" ] && [ -n "$theirs" ] && [ "$mine" != "$theirs" ]; then
+        fm_warn "$fm_path is fm $mine and shadows $FM_MACHINE_FM, which is fm $theirs"
+        fm_info "refresh this account's copy with: fm setup-onboard"
+      fi
+    fi
   elif [ -x "$HOME/.local/bin/fm" ]; then
     fm_warn "fm installed but not on PATH — run: uv tool update-shell, then restart the shell"
   else
