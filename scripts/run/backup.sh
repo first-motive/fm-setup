@@ -7,10 +7,9 @@
 #   ./run.sh backup --verify /mnt/ssd     re-verify an existing backup
 #   ./run.sh backup --restore /mnt/ssd    copy it back to /data, then verify
 #
-# What is backed up is what cannot be re-made: recordings, dataset releases, and
-# run evidence. Model weights, caches, and container images are left out on
-# purpose — they are downloads, and treating them as precious turns a 40-minute
-# backup into an all-day one nobody runs.
+# Back up recordings, derived evidence, archive receipts, and training outputs.
+# Downloaded weights in hf/ and fm-data-runs/_model-views/ stay out. models/ and
+# policies/ hold checkpoints, so both are retained.
 #
 # The manifest is plain `sha256sum -c` format, so it stays readable and
 # verifiable with no tooling from this repo. A backup nobody verified is a
@@ -27,6 +26,7 @@ FM_ROOT="$(cd "$_here/../.." && pwd)"
 
 MANIFEST=MANIFEST.sha256
 META=MANIFEST.meta
+BACKUP_SUFFIX=""
 
 # Regular files and directories only.
 #
@@ -49,6 +49,7 @@ Usage: ./run.sh backup [options] <destination>
   --verify      verify an existing backup against its manifest, copy nothing
   --restore     copy the backup back to /data, then verify what landed
   --dry-run     show what would be copied, change nothing
+  --workspace-data  use the machine card's workspace/data tree instead of legacy /data
   -h, --help    show this help
 
 The destination is a mount point, e.g. /mnt/ssd. A subdirectory named after this
@@ -68,7 +69,7 @@ backup_root() {
       fm_err "refusing to build a path from hostname '$host'"
       return 1 ;;
   esac
-  printf '%s/fm-backup-%s\n' "$1" "$host"
+  printf '%s/fm-backup-%s%s\n' "$1" "$host" "$BACKUP_SUFFIX"
 }
 
 # List anything in a tree that is not a plain file or directory, plus anything
@@ -134,7 +135,7 @@ do_copy() {
     # Permissions, hard links, ACLs, and xattrs are kept; ids stay numeric so a
     # restore onto a rebuilt machine does not remap ownership to whoever holds
     # that name now.
-    rsync "${RSYNC_FLAGS[@]}" "$FM_DATA_DIR/$sub" "$root/"
+    rsync "${RSYNC_FLAGS[@]}" --relative "$FM_DATA_DIR/./$sub" "$root/"
   done < <(present_sources)
 
   write_manifest "$root"
@@ -235,13 +236,14 @@ do_restore() {
 }
 
 main() {
-  local mode="copy" dry=0 dest=""
+  local mode="copy" dry=0 dest="" workspace_data=0
 
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --verify)  mode="verify"; shift ;;
       --restore) mode="restore"; shift ;;
       --dry-run) dry=1; shift ;;
+      --workspace-data) workspace_data=1; shift ;;
       -h|--help) usage; return 0 ;;
       -*) fm_err "unknown option: $1"; usage; return 1 ;;
       *) dest="$1"; shift ;;
@@ -257,6 +259,18 @@ main() {
   fm_require_linux
   fm_require_cmd rsync
   fm_require_cmd sha256sum
+
+  if [ "$workspace_data" = 1 ]; then
+    FM_DATA_DIR="$(FM_HOME='' fm_machine_workspace)/$FM_DATA_ROOT_NAME"
+    BACKUP_SUFFIX=-workspace-data
+    case "$FM_DATA_DIR" in
+      /*) ;;
+      *) fm_err 'machine workspace must be absolute'; return 1 ;;
+    esac
+    case "/$FM_DATA_DIR/" in
+      */../*) fm_err 'machine workspace cannot contain ..'; return 1 ;;
+    esac
+  fi
 
   [ -d "$dest" ] || { fm_err "destination is not a directory: $dest"; return 1; }
 

@@ -685,9 +685,31 @@ Before a wipe, copy what cannot be re-made and prove the copy is good:
 ./run.sh backup --restore /mnt/ssd    # copy back to /data, group reapplied
 ```
 
-Recordings, dataset releases, and run evidence are copied. Model weights and
-caches are not — they are downloads, and treating them as precious turns a
-backup nobody runs into the plan.
+The backup includes recordings, processed outputs, annotations and reviews,
+release packs, training outputs in `models/` and `policies/`, and archive
+ledgers and operator evidence. Nested receipt paths are preserved. Downloaded
+weights in `hf/` and `fm-data-runs/_model-views/` are excluded.
+
+For the newer data tree, add `--workspace-data` to each command. Its root comes
+from the machine card's workspace, independent of `FM_HOME`. These backups use
+a separate `-workspace-data` directory so they cannot mix with legacy `/data`
+backups. No command moves the live data tree.
+
+### Configure The Archive
+
+The users step declares the legacy shared directories; the data-root step
+declares the workspace data tree. Both preserve data on uninstall. Service
+installation stays in `fm-ros2`, through `fm install fm-ros2 --processor --service`.
+The installer derives uploader roots from the processor environment and
+preserves explicit values on repeat runs.
+
+Before enabling derived uploads, approve the retention rule and the scopes in
+[fm-data's archive contract](https://github.com/first-motive/fm-data/blob/main/fm_data_archive/ARCHIVE_LAYOUT.md).
+Keep the reader and writer credentials in their separate mode-600 service
+environment files on the processor. Run `fm archive preflight --json` there.
+Only then explicitly enable `FM_ARCHIVE_UPLOADER_DERIVED_ENABLED` through the
+approved host-change workflow. Local deletion stays disabled. An install or
+release does not grant either approval.
 
 The manifest is plain `sha256sum -c` format at the backup root, readable without
 anything from this repo. The copy path verifies before reporting success, and

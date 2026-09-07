@@ -93,11 +93,17 @@ do_check() {
     fm_warn "other accounts with sudo: ${others[*]}"
   fi
 
-  if [ -d "$FM_DATA_DIR" ]; then
-    fm_ok "$FM_DATA_DIR $(stat -c '%U:%G %a' "$FM_DATA_DIR")"
-  else
-    fm_warn "$FM_DATA_DIR missing"
-  fi
+  local sub dir
+  for sub in "" "${FM_DATA_SUBDIRS[@]}"; do
+    dir="${FM_DATA_DIR}${sub:+/$sub}"
+    if [ ! -d "$dir" ]; then
+      fm_warn "$dir missing"
+    elif [ "$(stat -c '%G %a' "$dir")" != "$FM_GROUP 2775" ]; then
+      fm_warn "$dir is $(stat -c '%U:%G %a' "$dir"), wanted group $FM_GROUP and mode 2775"
+    else
+      fm_ok "$dir $(stat -c '%U:%G %a' "$dir")"
+    fi
+  done
   return 0
 }
 
