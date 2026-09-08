@@ -66,12 +66,19 @@ resolved() { # path
 
 # Does this checkout hold anything the fm group cannot write?
 #
-# Directories only, and group ownership for everything. Git writes new files
-# into a directory rather than editing them in place, and it deliberately
-# creates loose objects read-only — so grading files on the write bit would
-# report every healthy checkout as broken and re-chmod it on every run.
+# Files as well as directories. A directory-only grade looks sufficient and is
+# not: git rewrites some files in place rather than replacing them, and
+# .git/FETCH_HEAD is one of them, so a fetch by anybody but the owner still dies
+# on "Permission denied" inside a directory it can write.
+#
+# Group-writable files are what a shared repository is meant to look like —
+# core.sharedRepository=group has git create them 664 rather than 644 — so this
+# grade converges instead of fighting git.
+#
+# Symlinks are skipped: their mode is not theirs to carry, and chmod would
+# follow them out of the checkout.
 checkout_needs_repair() { # path
-  [ -n "$(find "$1" \( ! -group "$FM_GROUP" -o \( -type d ! -perm -g+w \) \) -print -quit 2>/dev/null)" ]
+  [ -n "$(find "$1" \( ! -group "$FM_GROUP" -o \( ! -type l ! -perm -g+w \) \) -print -quit 2>/dev/null)" ]
 }
 
 do_check() {
@@ -165,10 +172,15 @@ ensure_workspace_dir() {
 # from refs that had stopped moving. A check that cannot look answers from
 # memory, which is worse than a check that fails.
 #
-# core.sharedRepository is the durable half. It is git's own switch for a
-# repository more than one account writes to, and it makes git create its files
-# group-writable from then on, whoever runs the command. The chmod repairs what
-# already exists; this stops the next clone needing a repair at all.
+# Three things, because two of them were not enough. The group is applied to
+# everything; every file and directory gets the group write bit, since git
+# rewrites .git/FETCH_HEAD in place and a writable directory around a 644 file
+# does not help; and directories get setgid, so what anybody creates next stays
+# in the group rather than needing this repair again.
+#
+# core.sharedRepository is the durable half: git's own switch for a repository
+# more than one account writes to, which has it create files group-writable from
+# then on, whoever ran the command.
 #
 # Gated on a scan, because the repair walks the tree: a converged workspace
 # costs one find per checkout and changes nothing.
@@ -191,11 +203,12 @@ ensure_checkouts_writable() {
     checkout_needs_repair "$checkout" || { fm_ok "  $name is group-writable"; continue; }
 
     if chgrp -R "$FM_GROUP" "$checkout" 2>/dev/null &&
-       find "$checkout" -type d -exec chmod g+ws {} + 2>/dev/null; then
-      fm_ok "  repaired $name (group $FM_GROUP, group-writable directories)"
+       chmod -R g+w "$checkout" 2>/dev/null &&
+       find "$checkout" -type d -exec chmod g+s {} + 2>/dev/null; then
+      fm_ok "  repaired $name (group $FM_GROUP, group-writable)"
     else
       fm_warn "  $name is not writable by the $FM_GROUP group, and this account cannot fix it"
-      fm_info "  sudo chgrp -R $FM_GROUP $checkout && sudo find $checkout -type d -exec chmod g+ws {} +"
+      fm_info "  sudo chgrp -R $FM_GROUP $checkout && sudo chmod -R g+w $checkout && sudo find $checkout -type d -exec chmod g+s {} +"
     fi
   done
 }
