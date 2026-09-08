@@ -155,6 +155,29 @@ assert_eq "uninstall leaves the tree in place" "true" \
 
 # --- Result ----------------------------------------------------------------
 
+fm_require_cmd rsync
+BACKUP="$FM_ROOT/scripts/run/backup.sh"
+mkdir -p "$TMP/backup" "$DATA/models" "$DATA/fm-data-runs/archive-uploader" "$DATA/fm-data-runs/operator-evidence"
+printf 'review\n' >"$DATA/annotations/review.json"
+printf 'receipt\n' >"$DATA/staged/archive-uploader/receipt.json"
+printf 'legacy receipt\n' >"$DATA/fm-data-runs/archive-uploader/receipt.json"
+printf 'budget\n' >"$DATA/fm-data-runs/operator-evidence/budget.json"
+printf 'checkpoint\n' >"$DATA/models/checkpoint.bin"
+printf 'download\n' >"$DATA/hf/weights.bin"
+assert_rc "workspace backup dry run succeeds" 0 bash "$BACKUP" --workspace-data --dry-run "$TMP/backup"
+assert_eq "backup dry run creates nothing" "0" "$(find "$TMP/backup" -type f | wc -l | tr -d ' ')"
+assert_rc "workspace backup succeeds" 0 bash "$BACKUP" --workspace-data "$TMP/backup"
+SAVED="$TMP/backup/fm-backup-$(hostname -s)-workspace-data"
+for saved in annotations/review.json staged/archive-uploader/receipt.json \
+  fm-data-runs/archive-uploader/receipt.json fm-data-runs/operator-evidence/budget.json models/checkpoint.bin; do
+  assert_rc "$saved survives backup at its original relative path" 0 cmp "$DATA/$saved" "$SAVED/$saved"
+done
+assert_eq "downloaded weights are excluded" "false" "$([ -e "$SAVED/hf" ] && echo true || echo false)"
+assert_rc "repeat backup succeeds" 0 bash "$BACKUP" --workspace-data "$TMP/backup"
+assert_rc "backup verifies" 0 bash "$BACKUP" --workspace-data --verify "$TMP/backup"
+printf 'corrupt\n' >>"$SAVED/annotations/review.json"
+assert_rc "corrupt review is refused" 1 bash "$BACKUP" --workspace-data --verify "$TMP/backup"
+
 echo
 if [ "$FAIL" -eq 0 ]; then
   fm_ok "$PASS passed"

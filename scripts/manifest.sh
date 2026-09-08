@@ -532,22 +532,39 @@ FM_DATA_DIR=/data
 FM_DATA_SUBDIRS=(
   recordings
   recordings-retired
+  processed
+  annotations
   dataset-releases
+  releases
   runs
   models
+  policies
+  staged
+  staged/archive-uploader
+  fm-data-runs
+  fm-data-runs/archive-uploader
+  fm-data-runs/operator-evidence
 )
 
-# What `./run.sh backup` copies to external storage before a wipe: the things
-# that cannot be re-made. `models` is absent on purpose — weights are downloads,
-# and treating them as precious turns a backup nobody runs into the plan.
+# Back up raw takes, derived evidence, training outputs, and archive receipts.
+# Downloaded weights belong in hf/ or fm-data-runs/_model-views/ and stay out.
+# models/ can contain governed checkpoints and must not be treated as a cache.
 # `recordings-retired` is here because a retired take is still a recording. It
 # is usually retired for a defect that blocks its upload, so it is the take most
 # likely to hold only one copy.
 FM_BACKUP_SOURCES=(
   recordings
   recordings-retired
+  processed
+  annotations
   dataset-releases
+  releases
   runs
+  models
+  policies
+  staged/archive-uploader
+  fm-data-runs/archive-uploader
+  fm-data-runs/operator-evidence
 )
 
 # The machine's own data tree, inside the workspace the card names, laid out by
@@ -577,6 +594,7 @@ FM_DATA_ROOT_SUBDIRS=(
   staged
   staged/episodes
   staged/lerobot
+  staged/archive-uploader
   hf
   policies
 )
