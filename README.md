@@ -78,6 +78,17 @@ provisioned before this split keeps `/home/fm/fm` until `fm machine init` moves
 its card; `machine doctor` says so in the meantime, and `/home/fm/fm` stays
 reachable afterwards through a symlink.
 
+Mode 3775 hands a new checkout the right group and no write bit, so a clone made
+under the default umask of 022 is one only its cloner can update — and the
+symptom is quiet. `git fetch` fails on `.git/FETCH_HEAD` for everybody else,
+while `fm doctor` keeps reporting the repo up to date from refs that stopped
+moving. The workspace step repairs that: each checkout is set to group `fm`,
+group-writable files and directories, setgid on the directories so the next
+file lands the same way, and `core.sharedRepository=group` so git keeps
+creating them that way. Files, not only directories — git rewrites
+`.git/FETCH_HEAD` in place, so a writable directory around a `644` file changes
+nothing. `--check` names a checkout the group cannot write.
+
 ### What The Curl Path Trusts
 
 Piping a script into a shell means the script decides what to verify, so it can
