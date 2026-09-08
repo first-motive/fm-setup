@@ -97,8 +97,16 @@ FM_AI_DIR="$WORKSPACE/fm-ai"
 # A file of its own rather than two copies of the exports: one place to change,
 # and a re-run rewrites it wholesale instead of appending to a list nobody
 # prunes.
+#
+# Sourcing it is two lines, not one, because the two shell files are read
+# differently. ~/.profile runs top to bottom, so the plain form appended to it
+# is enough. ~/.bashrc returns on its fourth line when the shell is not
+# interactive, so the line goes above that guard instead — and it is guarded on
+# the file existing, because a bashrc that now runs for every shell must not
+# start failing them all if somebody deletes ~/.fm-profile.
 SHELL_ENV="$HOME/.fm-profile"
 SHELL_ENV_LINE=". \"\$HOME/.fm-profile\""
+BASHRC_LINE="[ -f \"\$HOME/.fm-profile\" ] && . \"\$HOME/.fm-profile\""
 
 usage() {
   cat <<'EOF'
@@ -108,7 +116,8 @@ Usage: fm setup-onboard
        fm setup-onboard --help
 
 Installs uv, the fm CLI, and Claude Code into your home directory, creates your
-workspace, installs the SSH first-read, and clones the org skill set if you are
+workspace, wires your shell, tells git the machine's shared checkouts are safe
+to read, installs the SSH first-read, and clones the org skill set if you are
 already signed in to GitHub. No sudo, nothing outside your home directory. Safe
 to run twice.
 EOF
@@ -184,6 +193,9 @@ ensure_workspace() {
 #
 # The earlier version's two raw exports are stripped from ~/.profile first, so
 # an account onboarded before this change converges instead of carrying both.
+# Its ~/.bashrc line is stripped for the same reason: it sat at the bottom of
+# the file, below the guard that returns for a non-interactive shell, so it ran
+# for a prompt and for nothing else.
 ensure_shell_env() {
   cat >"$SHELL_ENV" <<EOF
 # Managed by fm-setup — written by \`fm setup-onboard\`, replaced on every run.
@@ -204,9 +216,68 @@ EOF
   fm_strip_matching "$PROFILE" '^export FM_HOME='
 
   fm_ensure_line "$PROFILE" "$SHELL_ENV_LINE"
-  fm_ensure_line "$BASHRC"  "$SHELL_ENV_LINE"
+
+  # Above the guard, not below it. `ssh host command`, CI and an agent all get a
+  # non-interactive bash, which reads ~/.bashrc and returns before a line at the
+  # bottom — leaving those shells without ~/.local/bin (no uv, no claude) and
+  # without FM_HOME, so `fm` answered about the machine's workspace while the
+  # same command in a prompt answered about the person's. One account, two
+  # contradicting `fm doctor` reports, neither of them wrong.
+  fm_strip_line "$BASHRC" "$SHELL_ENV_LINE"
+  fm_ensure_first_line "$BASHRC" "$BASHRC_LINE"
 
   fm_ok "shell environment in $SHELL_ENV, sourced from ~/.profile and ~/.bashrc"
+}
+
+# --- The machine's checkouts ------------------------------------------------
+
+# Tell git that the machine's own checkouts are not somebody's trap.
+#
+# The shared workspace belongs to the service account, and git refuses a
+# repository owned by another user: "detected dubious ownership", no branch, no
+# config, no status. The refusal is right in general — a repo somebody else owns
+# can run their hooks as you — and wrong for exactly this case, where the other
+# account is the machine and the group is how the workspace is shared at all.
+#
+# It fails quietly, which is the part that bites. `fm doctor` reads each
+# checkout's `core.hooksPath` to grade the push guard; against a refused repo it
+# reads an empty string and reports six configured guards as off. Every hour
+# spent on that is an hour spent on a guard that was never off.
+#
+# Per checkout, not `safe.directory *`: the blanket value trusts every
+# repository this account will ever read, including one cloned into /tmp by
+# something else.
+trust_shared_checkouts() {
+  local shared checkout name trusted
+
+  shared="$(FM_HOME='' fm_machine_workspace 2>/dev/null)" || return 0
+  [ -d "$shared" ] || return 0
+  # The account that owns the workspace has nothing to trust: git only refuses
+  # what somebody else owns.
+  [ "$(stat -c '%U' "$shared" 2>/dev/null)" != "$(id -un)" ] || return 0
+  fm_has_cmd git || { fm_warn "git not installed — the machine's checkouts stay untrusted"; return 0; }
+
+  fm_log "trusting the machine's checkouts in $shared"
+  trusted="$(git config --global --get-all safe.directory 2>/dev/null || true)"
+  if printf '%s\n' "$trusted" | grep -qxF '*'; then
+    fm_ok "  safe.directory is already '*' — leaving it alone"
+    return 0
+  fi
+
+  for checkout in "$shared"/*; do
+    # A worktree's .git is a file, not a directory; both are repositories git
+    # will refuse.
+    [ -e "$checkout/.git" ] || continue
+    [ "$(stat -c '%U' "$checkout" 2>/dev/null)" != "$(id -un)" ] || continue
+    name="$(basename "$checkout")"
+    if printf '%s\n' "$trusted" | grep -qxF "$checkout"; then
+      fm_ok "  $name already trusted"
+    elif git config --global --add safe.directory "$checkout"; then
+      fm_ok "  trusted $name"
+    else
+      fm_warn "  could not trust $name — git will refuse to read it"
+    fi
+  done
 }
 
 # --- SSH first-read --------------------------------------------------------
@@ -350,6 +421,7 @@ main() {
   ensure_local_bin
   ensure_workspace
   ensure_shell_env
+  trust_shared_checkouts
   install_ssh_first_read
   install_fm_cli
   install_claude

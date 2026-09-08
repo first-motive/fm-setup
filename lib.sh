@@ -819,6 +819,32 @@ fm_ensure_line() {
   grep -qxF "$line" "$file" 2>/dev/null || printf '%s\n' "$line" >>"$file"
 }
 
+# fm_ensure_first_line FILE LINE — make LINE the first line of FILE, once.
+#
+# The append form is enough for a file read top to bottom, and wrong for one
+# that stops early. Ubuntu's stock ~/.bashrc returns on the fourth line when the
+# shell is not interactive, so a line appended below it never runs in `ssh host
+# command`, in CI, or under an agent — which is where PATH lost ~/.local/bin and
+# FM_HOME went unset while an interactive shell looked perfectly healthy.
+#
+# Idempotent by comparing the first line, and convergent for a file that already
+# carries the line further down: the stale copy is stripped before the new one
+# is written, so a re-run leaves one.
+fm_ensure_first_line() {
+  local file="$1" line="$2" tmp
+  [ -f "$file" ] || touch "$file"
+  [ "$(head -n 1 "$file" 2>/dev/null)" = "$line" ] && return 0
+  fm_strip_line "$file" "$line"
+  tmp="$(mktemp "$(dirname "$file")/.fm-line.XXXXXX")" || return 1
+  if { printf '%s\n' "$line"; cat "$file"; } >"$tmp"; then
+    chmod --reference="$file" "$tmp" 2>/dev/null || chmod "$(stat -f '%Lp' "$file" 2>/dev/null || echo 644)" "$tmp"
+    mv "$tmp" "$file"
+  else
+    rm -f "$tmp"
+    return 1
+  fi
+}
+
 # fm_strip_line FILE LINE — remove every exact-match LINE from FILE.
 #
 # The scratch file comes from mktemp inside the target's own directory, not from

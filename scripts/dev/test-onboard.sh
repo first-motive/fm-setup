@@ -118,6 +118,85 @@ for marker in 'service_account_workspace()' 'elif WORKSPACE="$(service_account_w
   fi
 done
 
+echo "== a non-interactive shell inherits the profile =="
+# The failure this covers: ~/.bashrc returns for a shell with no prompt, so a
+# source line appended below that guard runs for a terminal and for nothing
+# else. `ssh host command`, CI and an agent all landed there with no
+# ~/.local/bin (no uv) and no FM_HOME, and `fm doctor` answered about a
+# different workspace than the same command typed at a prompt.
+#
+# Sourcing ~/.bashrc from a non-interactive bash is the guard's own condition,
+# which is what makes this a test of the real thing rather than of a mock.
+# shellcheck disable=SC2016  # the literals the shell files carry; they must not expand
+SHELL_ENV_LINE='. "$HOME/.fm-profile"'
+# shellcheck disable=SC2016
+BASHRC_LINE='[ -f "$HOME/.fm-profile" ] && . "$HOME/.fm-profile"'
+
+FAKE_HOME="$WORK/home/nia"
+mkdir -p "$FAKE_HOME"
+printf 'export FM_HOME=%s/fm\n' "$FAKE_HOME" > "$FAKE_HOME/.fm-profile"
+stock_bashrc() {
+  cat > "$FAKE_HOME/.bashrc" <<'RC'
+# ~/.bashrc: executed by bash(1) for non-login shells.
+case $- in
+    *i*) ;;
+      *) return;;
+esac
+RC
+}
+inherited() { HOME="$FAKE_HOME" bash -c '. "$HOME/.bashrc"; printf %s "${FM_HOME:-}"'; }
+
+# The shape this change replaced, kept as the control: a test that cannot fail
+# proves nothing about the one that passes.
+stock_bashrc
+fm_ensure_line "$FAKE_HOME/.bashrc" "$SHELL_ENV_LINE"
+if [ -z "$(inherited)" ]; then
+  pass "appended below the guard, a non-interactive shell inherits nothing"
+else
+  fail "the guard did not fire — this fixture is not a stock bashrc"
+fi
+
+stock_bashrc
+fm_ensure_first_line "$FAKE_HOME/.bashrc" "$BASHRC_LINE"
+if [ "$(inherited)" = "$FAKE_HOME/fm" ]; then
+  pass "above the guard, a non-interactive shell inherits FM_HOME"
+else
+  fail "a non-interactive shell inherited '$(inherited)', not $FAKE_HOME/fm"
+fi
+
+echo "== the shell wiring converges =="
+# A second onboarding run finds its own line and adds nothing; an account
+# carrying the old bottom copy ends with one line, not two.
+fm_ensure_first_line "$FAKE_HOME/.bashrc" "$BASHRC_LINE"
+fm_strip_line "$FAKE_HOME/.bashrc" "$SHELL_ENV_LINE"
+fm_ensure_first_line "$FAKE_HOME/.bashrc" "$BASHRC_LINE"
+count="$(grep -cxF "$BASHRC_LINE" "$FAKE_HOME/.bashrc")"
+if [ "$count" = "1" ] && [ "$(head -n 1 "$FAKE_HOME/.bashrc")" = "$BASHRC_LINE" ]; then
+  pass "re-running leaves one source line, still first"
+else
+  fail "found $count source line(s), first line is: $(head -n 1 "$FAKE_HOME/.bashrc")"
+fi
+
+echo "== a missing profile does not break every shell =="
+# ~/.bashrc now runs for every bash on the account, so an absent ~/.fm-profile
+# must be silence rather than an error on each one.
+rm -f "$FAKE_HOME/.fm-profile"
+if err="$(HOME="$FAKE_HOME" bash -c '. "$HOME/.bashrc"' 2>&1)" || [ -z "$err" ]; then
+  pass "no ~/.fm-profile is quiet"
+else
+  fail "a missing ~/.fm-profile printed: $err"
+fi
+
+echo "== onboard.sh wires the shell and the checkouts the way this suite says =="
+# shellcheck disable=SC2016  # the literal is the point; it must not expand
+for marker in 'fm_ensure_first_line "$BASHRC" "$BASHRC_LINE"' 'trust_shared_checkouts' 'safe.directory'; do
+  if grep -qF "$marker" scripts/run/onboard.sh; then
+    pass "onboard.sh carries: $marker"
+  else
+    fail "onboard.sh no longer carries: $marker — this suite is testing a copy that drifted"
+  fi
+done
+
 echo
 if [ "$fails" -gt 0 ]; then
   echo "$fails check(s) failed"

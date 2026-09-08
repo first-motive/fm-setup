@@ -538,12 +538,19 @@ what keeps one pinned version on the box rather than nine drifting.
 
 `onboard` uses no sudo and writes nothing outside the home directory. It puts
 `~/.local/bin` on `PATH`, installs uv and the `fm` CLI through the same step
-provisioning uses, installs Claude Code, creates `~/fm`, and writes `FM_HOME`
-into `~/.profile` — which is what makes every tool resolve *your* workspace
-rather than the machine's. It also installs a personal `~/AGENTS.md` and a
-login-only hook that prints its first 35 lines during interactive SSH login.
-Non-SSH shells and remote commands stay quiet. An existing personal
-`~/AGENTS.md` is preserved and becomes the displayed first-read.
+provisioning uses, installs Claude Code, creates `~/fm`, and writes `FM_HOME` —
+which is what makes every tool resolve *your* workspace rather than the
+machine's. Both settings live in `~/.fm-profile`, which `~/.profile` sources at
+the end and `~/.bashrc` sources at the **top**: the stock `~/.bashrc` returns on
+its fourth line when the shell is not interactive, so a line below that guard
+reaches a prompt and misses `ssh host command`, CI, and agents. It also tells
+git that the machine's checkouts under `/opt/fm` are safe to read — they belong
+to the service account, and git refuses another account's repository as
+"dubious ownership", which is enough to make `fm doctor` report a configured
+push guard as off. It installs a personal `~/AGENTS.md` and a login-only hook
+that prints its first 35 lines during interactive SSH login. Non-SSH shells and
+remote commands stay quiet. An existing personal `~/AGENTS.md` is preserved and
+becomes the displayed first-read.
 
 On a machine whose CLI is not system-wide yet, clone and run it from the
 checkout instead:
