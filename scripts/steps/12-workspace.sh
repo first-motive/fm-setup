@@ -124,7 +124,7 @@ do_check() {
   local checkout
   if getent group "$FM_GROUP" >/dev/null 2>&1 && [ -d "$WORKSPACE" ]; then
     for checkout in "$WORKSPACE"/*; do
-      [ -d "$checkout" ] && [ ! -L "$checkout" ] || continue
+      if [ ! -d "$checkout" ] || [ -L "$checkout" ]; then continue; fi
       [ -e "$checkout/.git" ] || continue
       if checkout_needs_repair "$checkout"; then
         fm_warn "$(basename "$checkout") is not writable by the $FM_GROUP group — only its cloner can update it"
@@ -191,7 +191,7 @@ ensure_checkouts_writable() {
   [ -d "$WORKSPACE" ] || return 0
 
   for checkout in "$WORKSPACE"/*; do
-    [ -d "$checkout" ] && [ ! -L "$checkout" ] || continue
+    if [ ! -d "$checkout" ] || [ -L "$checkout" ]; then continue; fi
     [ -e "$checkout/.git" ] || continue
     name="$(basename "$checkout")"
 
