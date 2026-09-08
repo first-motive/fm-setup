@@ -100,7 +100,11 @@ else
 fi
 
 echo "== no card at all falls back to the personal workspace =="
-got="$(FM_MACHINE_FILE="$WORK/absent.json" FM_HOME='' resolve_workspace "$WORK/home/sam")"
+# HOME is overridden as well as the card, because the library's fallback is
+# $HOME/fm. Left at the real one, an account that already has ~/fm resolves to
+# it and the fixture proves nothing about the fallback — this suite failed on
+# fm-ws-01 for exactly that reason, on a resolution that was working.
+got="$(FM_MACHINE_FILE="$WORK/absent.json" FM_HOME='' HOME="$WORK/home/sam" resolve_workspace "$WORK/home/sam")"
 if [ "$got" = "$WORK/home/sam/fm" ]; then
   pass "a machine with no card gives the personal workspace"
 else
@@ -144,7 +148,10 @@ case $- in
 esac
 RC
 }
-inherited() { HOME="$FAKE_HOME" bash -c '. "$HOME/.bashrc"; printf %s "${FM_HOME:-}"'; }
+# FM_HOME is cleared, not just HOME: the account running this suite is an
+# onboarded one, so it exports FM_HOME already, and a child that inherits it
+# reports the parent's value as though the fixture had set it.
+inherited() { HOME="$FAKE_HOME" FM_HOME='' bash -c '. "$HOME/.bashrc"; printf %s "${FM_HOME:-}"'; }
 
 # The shape this change replaced, kept as the control: a test that cannot fail
 # proves nothing about the one that passes.
