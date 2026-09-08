@@ -64,6 +64,16 @@ resolved() { # path
   (cd -P "$1" 2>/dev/null && pwd) || true
 }
 
+# Does this checkout hold anything the fm group cannot write?
+#
+# Directories only, and group ownership for everything. Git writes new files
+# into a directory rather than editing them in place, and it deliberately
+# creates loose objects read-only — so grading files on the write bit would
+# report every healthy checkout as broken and re-chmod it on every run.
+checkout_needs_repair() { # path
+  [ -n "$(find "$1" \( ! -group "$FM_GROUP" -o \( -type d ! -perm -g+w \) \) -print -quit 2>/dev/null)" ]
+}
+
 do_check() {
   if [ -d "$WORKSPACE" ]; then
     fm_ok "workspace $WORKSPACE ($(stat -c '%A %U:%G' "$WORKSPACE"))"
@@ -101,6 +111,19 @@ do_check() {
   elif [ -d "$legacy" ]; then
     fm_warn "$legacy is a second checkout outside the workspace"
   fi
+
+  # Named one by one rather than counted: the account reading this can write
+  # some of them, and "one checkout is wrong" is only useful with the name.
+  local checkout
+  if getent group "$FM_GROUP" >/dev/null 2>&1 && [ -d "$WORKSPACE" ]; then
+    for checkout in "$WORKSPACE"/*; do
+      [ -d "$checkout" ] && [ ! -L "$checkout" ] || continue
+      [ -e "$checkout/.git" ] || continue
+      if checkout_needs_repair "$checkout"; then
+        fm_warn "$(basename "$checkout") is not writable by the $FM_GROUP group — only its cloner can update it"
+      fi
+    done
+  fi
   return 0
 }
 
@@ -132,6 +155,51 @@ ensure_workspace_dir() {
   fi
 }
 
+# Make the checkouts in the workspace writable by the group that shares them.
+#
+# The setgid bit on the workspace hands new entries the right group; it hands
+# them no write bit, so a clone made under the default umask of 022 is one only
+# its cloner can update. /opt/fm/fm-policy on fm-ws-01 arrived that way, and the
+# symptom was not a refusal anybody saw: `git fetch` failed on .git/FETCH_HEAD
+# for everyone else, and `fm doctor` went on reporting the repo "up to date"
+# from refs that had stopped moving. A check that cannot look answers from
+# memory, which is worse than a check that fails.
+#
+# core.sharedRepository is the durable half. It is git's own switch for a
+# repository more than one account writes to, and it makes git create its files
+# group-writable from then on, whoever runs the command. The chmod repairs what
+# already exists; this stops the next clone needing a repair at all.
+#
+# Gated on a scan, because the repair walks the tree: a converged workspace
+# costs one find per checkout and changes nothing.
+ensure_checkouts_writable() {
+  local checkout name
+
+  getent group "$FM_GROUP" >/dev/null 2>&1 || return 0
+  [ -d "$WORKSPACE" ] || return 0
+
+  for checkout in "$WORKSPACE"/*; do
+    [ -d "$checkout" ] && [ ! -L "$checkout" ] || continue
+    [ -e "$checkout/.git" ] || continue
+    name="$(basename "$checkout")"
+
+    if [ -d "$checkout/.git" ] && fm_has_cmd git; then
+      git config --file "$checkout/.git/config" core.sharedRepository group 2>/dev/null ||
+        fm_warn "  could not set core.sharedRepository in $name"
+    fi
+
+    checkout_needs_repair "$checkout" || { fm_ok "  $name is group-writable"; continue; }
+
+    if chgrp -R "$FM_GROUP" "$checkout" 2>/dev/null &&
+       find "$checkout" -type d -exec chmod g+ws {} + 2>/dev/null; then
+      fm_ok "  repaired $name (group $FM_GROUP, group-writable directories)"
+    else
+      fm_warn "  $name is not writable by the $FM_GROUP group, and this account cannot fix it"
+      fm_info "  sudo chgrp -R $FM_GROUP $checkout && sudo find $checkout -type d -exec chmod g+ws {} +"
+    fi
+  done
+}
+
 # Leave the old path answering.
 #
 # The machine's workspace used to be ~/fm, and that path is written into shell
@@ -158,6 +226,7 @@ ensure_legacy_alias() {
 do_install() {
   ensure_workspace_dir
   ensure_legacy_alias
+  ensure_checkouts_writable
 
   local target
   target="$(resolved "$EXPECTED")"
