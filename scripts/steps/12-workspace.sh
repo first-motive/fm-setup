@@ -75,10 +75,19 @@ resolved() { # path
 # core.sharedRepository=group has git create them 664 rather than 644 — so this
 # grade converges instead of fighting git.
 #
+# Setgid is graded too, not only written. A checkout whose group and write bits
+# are already right skips the repair entirely, so a directory missing setgid
+# never converges — and the next directory created in it by a member whose
+# primary group is their own lands outside the fm group, which is this whole
+# failure again one directory deeper.
+#
 # Symlinks are skipped: their mode is not theirs to carry, and chmod would
 # follow them out of the checkout.
 checkout_needs_repair() { # path
-  [ -n "$(find "$1" \( ! -group "$FM_GROUP" -o \( ! -type l ! -perm -g+w \) \) -print -quit 2>/dev/null)" ]
+  [ -n "$(find "$1" \
+    \( ! -group "$FM_GROUP" \
+       -o \( ! -type l ! -perm -g+w \) \
+       -o \( -type d ! -perm -g+s \) \) -print -quit 2>/dev/null)" ]
 }
 
 do_check() {
@@ -195,7 +204,20 @@ ensure_checkouts_writable() {
     [ -e "$checkout/.git" ] || continue
     name="$(basename "$checkout")"
 
-    if [ -d "$checkout/.git" ] && fm_has_cmd git; then
+    # This step runs as root, and every path below is one an unprivileged
+    # account can arrange. A checkout whose .git is a link to /root/.ssh would
+    # have root write a git config into somebody else's home — no race and no
+    # real repository needed, because `git config --file` creates the file it is
+    # given. So the privileged write is refused unless .git is a plain directory
+    # inside this checkout. A worktree, whose .git is a file naming its real
+    # git directory, is refused by the same rule and loses nothing: the
+    # repository it points at is repaired where it actually lives.
+    #
+    # The permission repair below still runs. chgrp and chmod do not follow a
+    # symlink they meet while recursing, so it stays inside the checkout.
+    if [ -L "$checkout/.git" ] || [ ! -d "$checkout/.git" ]; then
+      fm_warn "  $name has no plain .git directory — leaving its sharing config alone"
+    elif fm_has_cmd git; then
       git config --file "$checkout/.git/config" core.sharedRepository group 2>/dev/null ||
         fm_warn "  could not set core.sharedRepository in $name"
     fi
