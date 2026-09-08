@@ -184,6 +184,19 @@ else
   fail "found $count source line(s), first line is: $(head -n 1 "$FAKE_HOME/.bashrc")"
 fi
 
+# The rewrite is one pass, so a stale copy further down goes in the same write
+# that puts the new line first — never a strip that lands and a write that does
+# not.
+printf '%s\n' "$BASHRC_LINE" >> "$FAKE_HOME/.bashrc"
+sed -i '1d' "$FAKE_HOME/.bashrc"
+fm_ensure_first_line "$FAKE_HOME/.bashrc" "$BASHRC_LINE"
+count="$(grep -cxF "$BASHRC_LINE" "$FAKE_HOME/.bashrc")"
+if [ "$count" = "1" ] && [ "$(head -n 1 "$FAKE_HOME/.bashrc")" = "$BASHRC_LINE" ]; then
+  pass "a copy further down is collapsed into the first line"
+else
+  fail "found $count source line(s) after collapsing a stale copy"
+fi
+
 echo "== a missing profile does not break every shell =="
 # ~/.bashrc now runs for every bash on the account, so an absent ~/.fm-profile
 # must be silence rather than an error on each one.

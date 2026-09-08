@@ -223,8 +223,11 @@ EOF
   # without FM_HOME, so `fm` answered about the machine's workspace while the
   # same command in a prompt answered about the person's. One account, two
   # contradicting `fm doctor` reports, neither of them wrong.
-  fm_strip_line "$BASHRC" "$SHELL_ENV_LINE"
+  # The new line is written before the old one is removed, so a failure between
+  # the two leaves an account with a hook that works rather than none. Both
+  # source the same file, so the overlap is a harmless second read.
   fm_ensure_first_line "$BASHRC" "$BASHRC_LINE"
+  fm_strip_line "$BASHRC" "$SHELL_ENV_LINE"
 
   fm_ok "shell environment in $SHELL_ENV, sourced from ~/.profile and ~/.bashrc"
 }
@@ -247,15 +250,29 @@ EOF
 # Per checkout, not `safe.directory *`: the blanket value trusts every
 # repository this account will ever read, including one cloned into /tmp by
 # something else.
+#
+# Trust is granted to an approved owner, never to "somebody other than me". The
+# exception lets git parse that repository's config and run its hooks as this
+# account, so the owner has to be one this machine already trusts: the account
+# that owns the workspace, or a member of the fm group. A failed `stat` is a
+# refusal rather than a pass.
+#
+# A symlinked checkout or a symlinked .git is skipped and named. Either one can
+# point at a repository outside the workspace whose owner nobody here approved,
+# and trust is granted to the path this account will later read through.
 trust_shared_checkouts() {
-  local shared checkout name trusted
+  local shared owner checkout name trusted approved
 
   shared="$(FM_HOME='' fm_machine_workspace 2>/dev/null)" || return 0
   [ -d "$shared" ] || return 0
-  # The account that owns the workspace has nothing to trust: git only refuses
-  # what somebody else owns.
-  [ "$(stat -c '%U' "$shared" 2>/dev/null)" != "$(id -un)" ] || return 0
   fm_has_cmd git || { fm_warn "git not installed — the machine's checkouts stay untrusted"; return 0; }
+
+  # Owning the workspace says nothing about who owns the checkouts inside it:
+  # the setgid bit hands a clone the group, never the cloner's account. The
+  # service account reading a repo a teammate cloned is refused exactly like
+  # anybody else, so the decision is per checkout for every caller.
+  owner="$(stat -c '%U' "$shared" 2>/dev/null)" || return 0
+  approved="$(printf '%s\n%s\n' "$owner" "$(fm_group_members "$FM_GROUP")" | grep -v '^$' | sort -u)"
 
   fm_log "trusting the machine's checkouts in $shared"
   trusted="$(git config --global --get-all safe.directory 2>/dev/null || true)"
@@ -265,15 +282,30 @@ trust_shared_checkouts() {
   fi
 
   for checkout in "$shared"/*; do
-    # A worktree's .git is a file, not a directory; both are repositories git
-    # will refuse.
     [ -e "$checkout/.git" ] || continue
-    [ "$(stat -c '%U' "$checkout" 2>/dev/null)" != "$(id -un)" ] || continue
     name="$(basename "$checkout")"
+
+    if [ -L "$checkout" ] || [ -L "$checkout/.git" ]; then
+      fm_warn "  $name is a link — trusting it would trust whatever it points at"
+      continue
+    fi
+
+    if ! owner="$(stat -c '%U' "$checkout" 2>/dev/null)" || [ -z "$owner" ]; then
+      fm_warn "  cannot read who owns $name — leaving it untrusted"
+      continue
+    fi
+    # Already this account's: git refuses nothing here, so there is nothing to
+    # add and no reason to widen the list.
+    [ "$owner" != "$(id -un)" ] || continue
+    if ! printf '%s\n' "$approved" | grep -qxF "$owner"; then
+      fm_warn "  $name belongs to $owner, who is not in the $FM_GROUP group — leaving it untrusted"
+      continue
+    fi
+
     if printf '%s\n' "$trusted" | grep -qxF "$checkout"; then
       fm_ok "  $name already trusted"
     elif git config --global --add safe.directory "$checkout"; then
-      fm_ok "  trusted $name"
+      fm_ok "  trusted $name ($owner)"
     else
       fm_warn "  could not trust $name — git will refuse to read it"
     fi

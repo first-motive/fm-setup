@@ -827,22 +827,27 @@ fm_ensure_line() {
 # command`, in CI, or under an agent — which is where PATH lost ~/.local/bin and
 # FM_HOME went unset while an interactive shell looked perfectly healthy.
 #
-# Idempotent by comparing the first line, and convergent for a file that already
-# carries the line further down: the stale copy is stripped before the new one
-# is written, so a re-run leaves one.
+# One rewrite, not two. An earlier copy further down is dropped in the same pass
+# that writes the new first line, so the file is never left without the line it
+# had: a strip that succeeded followed by a write that failed — a full disk is
+# enough — would take the account's working hook with it.
 fm_ensure_first_line() {
-  local file="$1" line="$2" tmp
+  local file="$1" line="$2" tmp rc
   [ -f "$file" ] || touch "$file"
   [ "$(head -n 1 "$file" 2>/dev/null)" = "$line" ] && return 0
-  fm_strip_line "$file" "$line"
+
   tmp="$(mktemp "$(dirname "$file")/.fm-line.XXXXXX")" || return 1
-  if { printf '%s\n' "$line"; cat "$file"; } >"$tmp"; then
-    chmod --reference="$file" "$tmp" 2>/dev/null || chmod "$(stat -f '%Lp' "$file" 2>/dev/null || echo 644)" "$tmp"
-    mv "$tmp" "$file"
-  else
-    rm -f "$tmp"
-    return 1
-  fi
+  {
+    printf '%s\n' "$line"
+    # grep exits 1 when it selects nothing, which is a file of nothing but the
+    # line — an empty result, not an error. Only 2 and above is a real failure.
+    grep -vxF -- "$line" "$file"
+    rc=$?
+    [ "$rc" -le 1 ]
+  } >"$tmp" || { rm -f "$tmp"; return 1; }
+
+  chmod --reference="$file" "$tmp" 2>/dev/null || chmod "$(stat -f '%Lp' "$file" 2>/dev/null || echo 644)" "$tmp"
+  mv "$tmp" "$file"
 }
 
 # fm_strip_line FILE LINE — remove every exact-match LINE from FILE.
