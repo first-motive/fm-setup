@@ -33,13 +33,13 @@ On a machine that already has the repo:
 On a fresh machine, pin the URL to a release tag:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/first-motive/fm-setup/v0.1.25/install.sh | bash -s -- --workstation
+curl -fsSL https://raw.githubusercontent.com/first-motive/fm-setup/v0.1.26/install.sh | bash -s -- --workstation
 ```
 
 To read it first:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/first-motive/fm-setup/v0.1.25/install.sh -o install.sh
+curl -fsSL https://raw.githubusercontent.com/first-motive/fm-setup/v0.1.26/install.sh -o install.sh
 less install.sh && bash install.sh --workstation
 ```
 
@@ -108,7 +108,7 @@ tag — a tag is a name and can be moved by anyone who can push; a commit sha is
 the content and cannot:
 
 ```bash
-TAG=v0.1.25
+TAG=v0.1.26
 SHA=<commit sha for that tag>
 LIB=<lib.sh sha256 for that tag>
 
@@ -725,9 +725,10 @@ Before enabling derived uploads, approve the retention rule and the scopes in
 [fm-data's archive contract](https://github.com/first-motive/fm-data/blob/main/fm_data_archive/ARCHIVE_LAYOUT.md).
 Keep the reader and writer credentials in their separate mode-600 service
 environment files on the processor. Run `fm archive preflight --json` there.
-Only then explicitly enable `FM_ARCHIVE_UPLOADER_DERIVED_ENABLED` through the
-approved host-change workflow. Local deletion stays disabled. An install or
-release does not grant either approval.
+Only then explicitly enable `FM_ARCHIVE_UPLOADER_DERIVED_ENABLED` through
+`./install.sh --workstation --only archive-derived`. The step runs the provider
+preflight first, changes only that flag, and restarts only the uploader. Local
+deletion stays disabled. An install or release does not grant either approval.
 
 The manifest is plain `sha256sum -c` format at the backup root, readable without
 anything from this repo. The copy path verifies before reporting success, and
