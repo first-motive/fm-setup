@@ -47,6 +47,9 @@ WORKSTATION_STEPS=(
   "users|70-users.sh|on"
   "agent-ruleset|80-agent-ruleset.sh|on"
   "isaac-sim|90-isaac-sim.sh|on"
+  # Derived archive writes are an explicit operator action after provider
+  # scope and retention approval.
+  "archive-derived|95-archive-derived.sh|off"
 )
 
 # Ubuntu 22.04 on the Jetson Orin Nano: the capture rig.

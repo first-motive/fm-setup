@@ -81,7 +81,41 @@ export PATH="$BIN:$PATH"
 
 cat > "$BIN/sudo" <<'FAKE'
 #!/usr/bin/env bash
+if [ "${1:-}" = -n ]; then shift; fi
+for arg in "$@"; do
+  case "$arg" in /etc/fm-archive-uploader.env) exit 97 ;; esac
+done
 exec env "$@"
+FAKE
+
+cat > "$BIN/fm" <<'FAKE'
+#!/usr/bin/env bash
+case " $* " in
+  *" archive preflight "*|*" data-archive preflight "*)
+    [ "${FM_ARCHIVE_PREFLIGHT_FAIL:-0}" = 1 ] && exit 1
+    printf '%s\n' '{"checks":{"writer_scope":"pass"}}'
+    ;;
+  *) exit 2 ;;
+esac
+FAKE
+
+cat > "$BIN/systemctl" <<'FAKE'
+#!/usr/bin/env bash
+case "${1:-}" in
+  cat) exit 0 ;;
+  is-active)
+    state="$(cat "$FM_ARCHIVE_ACTIVE_FILE")"
+    [ "$state" = active ] && printf 'active\n' && exit 0 || printf '%s\n' "$state" && exit 3
+    ;;
+  restart)
+    printf '%s\n' restart >>"$FM_ARCHIVE_SYSTEMCTL_LOG"
+    if [ "${FM_ARCHIVE_RESTART_FAIL:-0}" = 1 ]; then exit 1; fi
+    # Disabling derived discovery leaves raw recording uploads running.
+    printf 'active\n' >"$FM_ARCHIVE_ACTIVE_FILE"
+    exit 0
+    ;;
+  *) exit 0 ;;
+esac
 FAKE
 
 cat > "$BIN/apt-get" <<'FAKE'
@@ -140,7 +174,11 @@ chmod +x "$BIN"/*
 run_step_fn() {
   local step="$1"; shift
   # shellcheck disable=SC1090
-  ( . "$FM_ROOT/scripts/steps/$step" check >/dev/null 2>&1 || true; "$@" ) 2>&1
+  if [ "$step" = 95-archive-derived.sh ]; then
+    ( . "$FM_ROOT/scripts/steps/$step" check >/dev/null 2>&1 || true; export ENVFILE="$ARCHIVE_ENV"; "$@" ) 2>&1
+  else
+    ( . "$FM_ROOT/scripts/steps/$step" check >/dev/null 2>&1 || true; "$@" ) 2>&1
+  fi
 }
 
 # --- 35: the NVIDIA signing key --------------------------------------------
@@ -200,6 +238,77 @@ assert_contains "a matching installer passes install_tailscale" "RC=0" "$out"
 assert_eq "a matching installer runs" "true" \
   "$([ -e "$RAN" ] && echo true || echo false)"
 assert_eq "the installer is handed the pinned version" "$FM_TAILSCALE_VERSION" "$(cat "$RAN" 2>/dev/null)"
+
+# --- 95: the derived archive opt-in ----------------------------------------
+#
+# The fake sudo refuses the real service path. The step is sourced first, then
+# its path variable is pointed at this temporary fixture, so this test cannot
+# inspect or mutate a live credential file.
+ARCHIVE_ENV="$TMP/fm-archive-uploader.env"
+ARCHIVE_ACTIVE="$TMP/archive-active"
+ARCHIVE_SYSTEMCTL_LOG="$TMP/systemctl.log"
+export ARCHIVE_ENV FM_ARCHIVE_ENVFILE="$ARCHIVE_ENV" \
+  FM_ARCHIVE_ACTIVE_FILE="$ARCHIVE_ACTIVE" FM_ARCHIVE_SYSTEMCTL_LOG="$ARCHIVE_SYSTEMCTL_LOG"
+cat >"$ARCHIVE_ENV" <<'EOF'
+FM_ARCHIVE_UPLOADER_ENABLED=true
+BACKBLAZE_B2_FMREC_KEY_ID=secret-id
+BACKBLAZE_B2_FMREC_APPLICATION_KEY=secret-key
+FM_ARCHIVE_UPLOADER_DERIVED_ENABLED=false
+FM_ARCHIVE_UPLOADER_DELETE_ENABLED=false
+KEEP_THIS_BYTE=unchanged
+EOF
+chmod 600 "$ARCHIVE_ENV"
+printf 'active\n' >"$ARCHIVE_ACTIVE"
+printf '%s\n' untouched >"$ARCHIVE_SYSTEMCTL_LOG"
+ARCHIVE_BEFORE="$(sha256sum "$ARCHIVE_ENV")"
+
+assert_contains "derived opt-in requires provider preflight" "RC=1" "$(FM_ARCHIVE_PREFLIGHT_FAIL=1 run_step_fn 95-archive-derived.sh do_install && echo RC=0 || echo RC=1)"
+assert_eq "provider refusal leaves env bytes unchanged" "$ARCHIVE_BEFORE" "$(sha256sum "$ARCHIVE_ENV")"
+out="$(run_step_fn 95-archive-derived.sh do_install && echo RC=0 || echo RC=1)"
+assert_eq "provider output does not contain credentials" false \
+  "$(printf '%s' "$out" | grep -Eq 'secret-(id|key)' && echo true || echo false)"
+assert_contains "derived opt-in enables the flag" "RC=0" "$out"
+assert_eq "derived flag is true" true "$(sed -n 's/^FM_ARCHIVE_UPLOADER_DERIVED_ENABLED=//p' "$ARCHIVE_ENV")"
+assert_eq "raw uploader remains enabled" true "$(sed -n 's/^FM_ARCHIVE_UPLOADER_ENABLED=//p' "$ARCHIVE_ENV")"
+assert_eq "deletion remains disabled" false "$(sed -n 's/^FM_ARCHIVE_UPLOADER_DELETE_ENABLED=//p' "$ARCHIVE_ENV")"
+assert_eq "derived flag occurs once" 1 "$(grep -c '^FM_ARCHIVE_UPLOADER_DERIVED_ENABLED=' "$ARCHIVE_ENV")"
+assert_eq "credential remains private" 600 "$(stat -c '%a' "$ARCHIVE_ENV")"
+restarts="$(wc -l <"$ARCHIVE_SYSTEMCTL_LOG")"
+run_step_fn 95-archive-derived.sh do_install >/dev/null
+assert_eq "repeated enable does not restart" "$restarts" "$(wc -l <"$ARCHIVE_SYSTEMCTL_LOG")"
+run_step_fn 95-archive-derived.sh do_uninstall >/dev/null
+assert_eq "disable clears only the derived flag" false "$(sed -n 's/^FM_ARCHIVE_UPLOADER_DERIVED_ENABLED=//p' "$ARCHIVE_ENV")"
+assert_eq "disable leaves raw uploader active" active "$(cat "$ARCHIVE_ACTIVE")"
+restarts="$(wc -l <"$ARCHIVE_SYSTEMCTL_LOG")"
+run_step_fn 95-archive-derived.sh do_uninstall >/dev/null
+assert_eq "repeated disable does not restart" "$restarts" "$(wc -l <"$ARCHIVE_SYSTEMCTL_LOG")"
+
+# Restart failure must restore the exact pre-change file, including metadata.
+cp "$ARCHIVE_ENV" "$TMP/archive-disabled"
+archive_mode="$(stat -c '%a' "$ARCHIVE_ENV")"
+archive_owner="$(stat -c '%u:%g' "$ARCHIVE_ENV")"
+archive_bytes="$(sha256sum "$ARCHIVE_ENV")"
+restarts="$(wc -l <"$ARCHIVE_SYSTEMCTL_LOG")"
+export FM_ARCHIVE_RESTART_FAIL=1
+out="$(run_step_fn 95-archive-derived.sh do_install && echo RC=0 || echo RC=1)"
+unset FM_ARCHIVE_RESTART_FAIL
+assert_contains "restart failure is reported" "RC=1" "$out"
+assert_eq "restart failure restores bytes" "$archive_bytes" "$(sha256sum "$ARCHIVE_ENV")"
+assert_eq "restart failure restores mode" "$archive_mode" "$(stat -c '%a' "$ARCHIVE_ENV")"
+assert_eq "restart failure restores owner" "$archive_owner" "$(stat -c '%u:%g' "$ARCHIVE_ENV")"
+assert_eq "restart failure attempts recovery" "$((restarts + 2))" "$(wc -l <"$ARCHIVE_SYSTEMCTL_LOG")"
+assert_eq "secure temporary files are cleaned" false \
+  "$(find "$TMP" -name '.fm-archive-derived.*' -print -quit | grep -q . && echo true || echo false)"
+
+cp "$TMP/archive-disabled" "$ARCHIVE_ENV"
+chmod 640 "$ARCHIVE_ENV"
+assert_contains "readable credential file is refused" "RC=1" "$(run_step_fn 95-archive-derived.sh do_install && echo RC=0 || echo RC=1)"
+chmod 600 "$ARCHIVE_ENV"
+printf '\n  FM_ARCHIVE_UPLOADER_DERIVED_ENABLED=false\n' >>"$ARCHIVE_ENV"
+assert_contains "duplicate derived flag is refused" "RC=1" "$(run_step_fn 95-archive-derived.sh do_install && echo RC=0 || echo RC=1)"
+rm -f "$ARCHIVE_ENV"
+ln -s "$TMP/archive-disabled" "$ARCHIVE_ENV"
+assert_contains "symlinked env is refused" "RC=1" "$(run_step_fn 95-archive-derived.sh do_install && echo RC=0 || echo RC=1)"
 
 # --- Result ----------------------------------------------------------------
 
