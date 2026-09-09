@@ -41,6 +41,11 @@ WORKSTATION_STEPS=(
   "no-snap|25-no-snap.sh|on"
   "docker|30-docker.sh|on"
   "nvidia-container|35-nvidia-container-toolkit.sh|on"
+  # After docker and the container toolkit, because it builds an image. A
+  # workstation is the host an Anvil rig names as its inference server and the
+  # host that converts its recordings, and both are Anvil's own code that
+  # fm-policy delegates to.
+  "anvil-embodied-ai|37-anvil-embodied-ai.sh|on"
   "ros2|40-ros2.sh|on"
   "dds-tuning|50-dds-tuning.sh|on"
   "tailscale|60-tailscale.sh|on"
@@ -605,6 +610,49 @@ FM_DATA_ROOT_SUBDIRS=(
 # was built. Which commit trained a model is the run's business.
 FM_POLICY_REPO=first-motive/fm-policy
 FM_POLICY_CHECKOUT_NAME=fm-policy
+
+# --- anvil-embodied-ai -----------------------------------------------------
+
+# Anvil's inference and conversion stack, cloned into the workspace by
+# 37-anvil-embodied-ai.sh. First Motive's fork rather than upstream, because the
+# fork is where LeRobot is pinned to the release fm-policy trains with — a
+# checkpoint trained under one and served under another is what that pin
+# prevents. Unpinned as a repo, like fm-policy: which commit served a run is the
+# run's business.
+FM_ANVIL_REPO=first-motive/anvil-embodied-ai
+FM_ANVIL_CHECKOUT_NAME=anvil-embodied-ai
+
+# The image their docker-compose.yml builds, by the name it gives it.
+FM_ANVIL_IMAGE=anvil-embodied-ai-inference
+
+# The LeRobot release the fork pins, restated here so `--check` can say which
+# version the image was asked for without reading their Dockerfile.
+FM_ANVIL_LEROBOT_VERSION=0.6.1
+
+# The policies this workstation serves. LeRobot gates SmolVLA and pi0.5 inside
+# the model's own __init__, so a missing extra fails after a checkpoint has been
+# loaded — the expensive place to find out. Two spellings because the image
+# takes a comma-separated list and uv takes a flag per extra.
+FM_ANVIL_LEROBOT_EXTRAS=smolvla,pi
+FM_ANVIL_UV_EXTRAS="--extra smolvla --extra pi"
+
+# The ROS domain this workstation and the rig share. It must equal the
+# ROS_DOMAIN_ID in the rig's own .env.config; discovery finds nothing when the
+# two differ, and nothing reports why.
+FM_ANVIL_ROS_DOMAIN_ID=1
+
+# Facts about one installation rather than about the role: the interface this
+# host talks to the rig over, and the rig's address on it. fm-ws-01's values are
+# the defaults; another workstation overrides them with FM_ANVIL_IFACE and
+# FM_ANVIL_PEER_IP when it runs the step.
+#
+# The peer is the robot, not this machine. Both sides name the other: the rig's
+# own .env.config carries CYCLONEDDS_PEER_IP=192.168.1.28, which is this
+# workstation, and the profile written here points back at the rig. Reading one
+# of those two as the value for the other is the mistake this comment exists to
+# stop — it produces a profile that discovers nothing while looking right.
+FM_ANVIL_IFACE_DEFAULT=enp11s0
+FM_ANVIL_PEER_IP_DEFAULT=192.168.1.22
 
 # --- Isaac Sim -------------------------------------------------------------
 
