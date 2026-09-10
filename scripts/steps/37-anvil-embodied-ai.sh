@@ -99,6 +99,18 @@ check_peer() {
 PROFILE_NAME="fm_two_pc_gpu.xml"
 PROFILE_PATH="$ANVIL_DIR/configs/cyclonedds/$PROFILE_NAME"
 
+# The image compose builds, tag included. Their compose reads the tag from
+# IMAGE_TAG in the .env this step writes, so it is read back from the same file
+# rather than assumed — the two disagreeing is what makes an image that exists
+# look missing.
+anvil_image() {
+  local tag=""
+  if [ -f "$ANVIL_DIR/.env" ]; then
+    tag="$(sed -n 's/^IMAGE_TAG=\(.*\)$/\1/p' "$ANVIL_DIR/.env" | tail -1)"
+  fi
+  printf '%s:%s\n' "$FM_ANVIL_IMAGE_REPO" "${tag:-$FM_ANVIL_IMAGE_TAG_DEFAULT}"
+}
+
 do_check() {
   if [ ! -d "$ANVIL_DIR/.git" ]; then
     fm_warn "$ANVIL_DIR missing — 'fm policy dataset import' and 'serve --target anvil' will refuse"
@@ -119,10 +131,12 @@ do_check() {
   else
     fm_warn "$ANVIL_DIR/.venv missing — the mcap tools 'dataset import' runs are not installed"
   fi
-  if fm_has_docker && docker image inspect "$FM_ANVIL_IMAGE" >/dev/null 2>&1; then
-    fm_ok "$FM_ANVIL_IMAGE built"
+  local image
+  image="$(anvil_image)"
+  if fm_has_docker && docker image inspect "$image" >/dev/null 2>&1; then
+    fm_ok "$image built"
   else
-    fm_warn "$FM_ANVIL_IMAGE not built — the inference node has no image to run"
+    fm_warn "$image not built — the inference node has no image to run"
   fi
   return 0
 }
@@ -257,6 +271,8 @@ ensure_installed() {  # owner  home
 # this checkout works without it, and a workstation that cannot reach a registry
 # still has the rest of its role.
 build_image() {
+  local image
+  image="$(anvil_image)"
   if ! fm_has_docker; then
     if fm_has_cmd docker && sudo -n docker info >/dev/null 2>&1; then
       fm_skip "docker group declined — image not built; re-run after: sudo usermod -aG docker $(id -un)"
@@ -265,17 +281,20 @@ build_image() {
     fm_warn "docker is not reachable — run the docker step first, then re-run this one"
     return 0
   fi
-  if docker image inspect "$FM_ANVIL_IMAGE" >/dev/null 2>&1; then
-    fm_ok "$FM_ANVIL_IMAGE already built"
+  if docker image inspect "$image" >/dev/null 2>&1; then
+    fm_ok "$image already built"
     fm_info "rebuild deliberately with: docker compose -f $ANVIL_DIR/docker-compose.yml build"
     return 0
   fi
 
-  fm_log "building $FM_ANVIL_IMAGE (lerobot $FM_ANVIL_LEROBOT_VERSION, extras $FM_ANVIL_LEROBOT_EXTRAS) — slow once"
+  fm_log "building $image (lerobot $FM_ANVIL_LEROBOT_VERSION, extras $FM_ANVIL_LEROBOT_EXTRAS) — slow once"
+  # Built, never pulled: the same name on their registry carries their LeRobot
+  # pin, and a checkpoint trained under ours served under theirs is the failure
+  # the pin exists to prevent.
   if (cd "$ANVIL_DIR" && docker compose build >/dev/null 2>&1); then
-    fm_ok "$FM_ANVIL_IMAGE built"
+    fm_ok "$image built"
   else
-    fm_warn "could not build $FM_ANVIL_IMAGE — the conversion half of this checkout still works"
+    fm_warn "could not build $image — the conversion half of this checkout still works"
     fm_info "run it directly to see why: cd $ANVIL_DIR && docker compose build"
   fi
 }
@@ -320,7 +339,7 @@ do_uninstall() {
   # costs an hour to rebuild. Neither is reconstructible from the repo alone.
   fm_warn "$ANVIL_DIR is left in place — its .env names this host's DDS deployment"
   fm_info "remove it deliberately with: rm -rf $ANVIL_DIR"
-  fm_info "and the image with: docker image rm $FM_ANVIL_IMAGE"
+  fm_info "and the image with: docker image rm $(anvil_image)"
   return 0
 }
 
