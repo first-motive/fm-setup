@@ -625,8 +625,17 @@ FM_POLICY_CHECKOUT_NAME=fm-policy
 FM_ANVIL_REPO=first-motive/anvil-embodied-ai
 FM_ANVIL_CHECKOUT_NAME=anvil-embodied-ai
 
-# The image their docker-compose.yml builds, by the name it gives it.
-FM_ANVIL_IMAGE=anvil-embodied-ai-inference
+# The image their docker-compose.yml builds, by the name it gives it — read out
+# of their `image:` field rather than named here, because a guess makes the
+# check report "not built" for an image that is, and makes the build repeat on
+# every converge.
+#
+# It is upstream's ghcr path even in our fork, and the fork does not rename it.
+# That means `docker compose pull` in this checkout fetches Anvil's published
+# image, which is built at their pin rather than ours. This step always builds,
+# never pulls, for that reason.
+FM_ANVIL_IMAGE_REPO=ghcr.io/anvil-robotics/lerobot-inference
+FM_ANVIL_IMAGE_TAG_DEFAULT=latest
 
 # The LeRobot release the fork pins, restated here so `--check` can say which
 # version the image was asked for without reading their Dockerfile.
