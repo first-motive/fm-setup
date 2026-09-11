@@ -461,7 +461,7 @@ FM_ROS_RMW_REQUIRED=(
 # fm-tools' own install.sh does. Pinned here rather than tracking latest: two
 # machines provisioned months apart should get the same CLI.
 FM_TOOLS_REPO=first-motive/fm-tools
-FM_TOOLS_VERSION=v0.13.2
+FM_TOOLS_VERSION=v0.13.3
 
 # Where the machine-wide copy of the CLI lives, and the command every account
 # reaches it by.
