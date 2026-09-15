@@ -10,6 +10,9 @@
 # name (/dev/fm-tactile-left, pinned to a physical port) is owned by fm_ros2's
 # install-tactile-service.sh, which knows which glove is which. Naming it here
 # too would give one device two symlinks and two owners.
+# Hot-plug activation for the receiver service (TAG+="systemd", SYSTEMD_WANTS)
+# lives in that same fm_ros2 rule, beside the symlink it depends on. Do not add
+# it here: the service is started by the named device, not by this grant.
 SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", MODE="0660", GROUP="plugdev"
 
 # Intel RealSense depth cameras. librealsense opens them as raw USB devices, so
