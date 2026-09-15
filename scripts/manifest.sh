@@ -55,6 +55,10 @@ WORKSTATION_STEPS=(
   # Derived archive writes are an explicit operator action after provider
   # scope and retention approval.
   "archive-derived|95-archive-derived.sh|off"
+  # After the data root and after fm_ros2 has installed fm-sync.timer: points
+  # the timer at the recorder and at this machine's data root. Skips, and says
+  # so, until the unit's env file exists.
+  "recordings-sync|96-recordings-sync.sh|on"
 )
 
 # Ubuntu 22.04 on the Jetson Orin Nano: the capture rig.
@@ -665,6 +669,13 @@ FM_ANVIL_ROS_DOMAIN_ID=1
 # stop — it produces a profile that discovers nothing while looking right.
 FM_ANVIL_IFACE_DEFAULT=enp11s0
 FM_ANVIL_PEER_IP_DEFAULT=192.168.1.22
+
+# The recorder this processor pulls finished takes from, as the fm-sync unit's
+# user@host:path. fm-rec-01 is the default; another processor overrides it with
+# FM_SYNC_SOURCE when it runs the step. Key-auth ssh from this host's fm account
+# to that account is what makes the pull work, and the step says so when it
+# cannot log in.
+FM_SYNC_SOURCE_DEFAULT=fm@fm-rec-01:/home/fm/recordings
 
 # --- Isaac Sim -------------------------------------------------------------
 
