@@ -42,7 +42,10 @@ SOURCE="${FM_SYNC_SOURCE:-$FM_SYNC_SOURCE_DEFAULT}"
 # mounts. Until the two roots are reconciled, follow the consumer. Without a
 # processor env the reading is 13-data-root's: the card, never FM_HOME.
 PROCESSOR_ENV=/etc/fm-processor.env
-processor_dir="$(sed -n 's/^FM_PROCESSOR_RECORDINGS_DIR=//p' "$PROCESSOR_ENV" 2>/dev/null | tail -1)"
+processor_dir=""
+if [ -f "$PROCESSOR_ENV" ]; then
+  processor_dir="$(sed -n 's/^FM_PROCESSOR_RECORDINGS_DIR=//p' "$PROCESSOR_ENV" | tail -1)"
+fi
 DEST="${processor_dir:-$(FM_HOME='' fm_machine_workspace)/$FM_DATA_ROOT_NAME/recordings}"
 INDEX="$DEST/sessions.jsonl"
 KEY="/home/$SYNC_USER/.ssh/id_ed25519"
