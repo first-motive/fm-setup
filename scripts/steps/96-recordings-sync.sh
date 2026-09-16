@@ -35,8 +35,15 @@ fm_require_linux
 ENVFILE=/etc/fm-sync.env
 SYNC_USER=fm
 SOURCE="${FM_SYNC_SOURCE:-$FM_SYNC_SOURCE_DEFAULT}"
-# Same reading as 13-data-root: the card, never FM_HOME.
-DEST="$(FM_HOME='' fm_machine_workspace)/$FM_DATA_ROOT_NAME/recordings"
+# The processor's own declared recordings dir outranks the card-derived root.
+# Found live on fm-ws-01 (2026-09-16): /etc/fm-processor.env names
+# /data/recordings while the card's data root is /opt/fm/data, so the first
+# converge of this step pulled every take into a directory the processor never
+# mounts. Until the two roots are reconciled, follow the consumer. Without a
+# processor env the reading is 13-data-root's: the card, never FM_HOME.
+PROCESSOR_ENV=/etc/fm-processor.env
+processor_dir="$(sed -n 's/^FM_PROCESSOR_RECORDINGS_DIR=//p' "$PROCESSOR_ENV" 2>/dev/null | tail -1)"
+DEST="${processor_dir:-$(FM_HOME='' fm_machine_workspace)/$FM_DATA_ROOT_NAME/recordings}"
 INDEX="$DEST/sessions.jsonl"
 KEY="/home/$SYNC_USER/.ssh/id_ed25519"
 
