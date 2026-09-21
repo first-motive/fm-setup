@@ -32,6 +32,9 @@ WORKSTATION_STEPS=(
   "workspace|12-workspace.sh|on"
   "data-root|13-data-root.sh|on"
   "fm-cli|15-fm-cli.sh|on"
+  # Before the two venvs that decode video through it: fm-policy and
+  # anvil-embodied-ai.
+  "ffmpeg|16-ffmpeg.sh|on"
   # The same step the trainer runs, for a different reason. A trainer exists to
   # train; a workstation is also the host a robot names as its inference server —
   # fm-rob-02 points its `inference.server_host` at this machine — so the policy
@@ -111,6 +114,7 @@ TRAINER_STEPS=(
   "workspace|12-workspace.sh|on"
   "data-root|13-data-root.sh|on"
   "fm-cli|15-fm-cli.sh|on"
+  "ffmpeg|16-ffmpeg.sh|on"
   "fm-policy|17-fm-policy.sh|on"
   "nvidia|20-nvidia.sh|on"
   "docker|30-docker.sh|on"
@@ -284,6 +288,15 @@ FM_APT_BASE=(
   jq
   lsb-release
   software-properties-common
+)
+
+# --- FFmpeg ----------------------------------------------------------------
+
+# The libraries torchcodec loads, by way of the one package that depends on all
+# of them. Named once rather than per library because the library packages carry
+# a soname that moves with the Ubuntu release. See 16-ffmpeg.sh.
+FM_FFMPEG_APT=(
+  ffmpeg
 )
 
 # --- GPU -------------------------------------------------------------------

@@ -111,12 +111,31 @@ anvil_image() {
   printf '%s:%s\n' "$FM_ANVIL_IMAGE_REPO" "${tag:-$FM_ANVIL_IMAGE_TAG_DEFAULT}"
 }
 
+# Whether the checkout's origin is First Motive's fork. Upstream has the same
+# name, the same layout and LeRobot at their pin, so a checkout cloned from it
+# by hand looks right and serves a checkpoint under a release it was not trained
+# with. Compared without the scheme or a trailing .git, so an ssh remote for the
+# fork passes.
+check_origin() {
+  local origin
+  origin="$(git -C "$ANVIL_DIR" remote get-url origin 2>/dev/null || true)"
+  origin="${origin%.git}"
+  case "$origin" in
+    *[:/]"$FM_ANVIL_REPO" ) fm_ok "origin is $FM_ANVIL_REPO" ;;
+    * )
+      fm_warn "origin is '${origin:-unset}', not $FM_ANVIL_REPO — this checkout does not carry the fork's LeRobot pin"
+      fm_info "repoint it with: git -C $ANVIL_DIR remote set-url origin $ANVIL_URL"
+      ;;
+  esac
+}
+
 do_check() {
   if [ ! -d "$ANVIL_DIR/.git" ]; then
     fm_warn "$ANVIL_DIR missing — 'fm policy dataset import' and 'serve --target anvil' will refuse"
     return 0
   fi
   fm_ok "$ANVIL_DIR ($(git -C "$ANVIL_DIR" rev-parse --short HEAD 2>/dev/null || echo 'no commit'))"
+  check_origin
 
   # A checkout is not a working stack. Each of these is one of the three things
   # fm-policy reaches for, reported on its own so a partial install says which
@@ -312,6 +331,7 @@ do_install() {
 
   if [ -d "$ANVIL_DIR/.git" ]; then
     fm_ok "$ANVIL_DIR already cloned"
+    check_origin
     fm_info "bring it forward deliberately with: git -C $ANVIL_DIR pull"
   else
     fm_require_cmd git || return 1
