@@ -251,6 +251,7 @@ card_sudo() {
 # a renamed card from leaving the host answering to its old identity.
 align_hostname() {
   local current
+  [ -n "${FM_MACHINE_FILE:-}" ] && { fm_skip "hostname alignment (card override)"; return 0; }
   [ "$ROLE" = "mac" ] && { fm_skip "hostname alignment (mac role)"; return 0; }
   fm_has_cmd hostnamectl || { fm_warn "no hostnamectl — set the hostname to $NAME by hand"; return 0; }
   current="$(hostnamectl --static 2>/dev/null || true)"
@@ -371,7 +372,7 @@ do_doctor() {
 
   # The hostname is the name in practice. A card that disagrees with the host is
   # the drift that makes a rig unreachable at the name everyone was told.
-  if [ "$ROLE" != "mac" ] && fm_has_cmd hostnamectl; then
+  if [ -z "${FM_MACHINE_FILE:-}" ] && [ "$ROLE" != "mac" ] && fm_has_cmd hostnamectl; then
     host="$(hostnamectl --static 2>/dev/null || true)"
     if [ "$host" = "$value" ]; then
       fm_ok "hostname matches the card"
