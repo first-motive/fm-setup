@@ -66,6 +66,23 @@ fm_require_cmd jq
 
 fm_log "machine identity card"
 
+# Stop before the remaining cases if an override can reach host commands.
+(
+  # Exported commands are called by the machine.sh subprocess.
+  # shellcheck disable=SC2329
+  hostnamectl() { printf 'hostnamectl\n' >>"${FM_MACHINE_FILE}.host-calls"; printf 'fm-ws-01\n'; }
+  # shellcheck disable=SC2329
+  sudo() { printf 'sudo\n' >>"${FM_MACHINE_FILE}.host-calls"; }
+  export -f hostnamectl sudo
+  card init --role jetson --name fm-rec-09 --workspace /opt/fm >/dev/null
+  card doctor >/dev/null
+)
+if [ -f "${FM_MACHINE_FILE}.host-calls" ]; then
+  bad "card override must not call hostnamectl or sudo"
+  exit 1
+fi
+ok "card override does not call hostnamectl or sudo"
+
 # --- Writing ---------------------------------------------------------------
 
 fresh
