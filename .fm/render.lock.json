@@ -2,7 +2,7 @@
   "_fm_render": {
     "artifact": "render-lock",
     "origin": "rendered by the First Motive render plane \u2014 edit the upstream source, not this file",
-    "sha256": "a65728c23addf570f0dbf5452f7f731fef4390ff4b035c903bfe780d7abb2b6d"
+    "sha256": "b9a59c57a2fa4854c279b0ee9b56ea863d94d3306189dfbbeb807c774d59094f"
   },
   "artifacts": {
     "agents-invariants": {
@@ -50,7 +50,7 @@
       "paths": [
         ".github/pull_request_template.md"
       ],
-      "sha256": "77ffa0c7e2a4effbca5ea4af0e436b1f6cdc3cd2235cce096110229e5cda4f3b",
+      "sha256": "a54b579e3a04cf302f04cf2e63bfb74569a3d258819edfca30fa645aa3d6f60e",
       "stamp": "html"
     },
     "render-check": {
