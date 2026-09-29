@@ -250,12 +250,13 @@ resolve_storage() {
     (.locations | type == "array" and length <= 1000) and
     ([.locations[].id] | length == (unique | length)) and
     all(.locations[];
-      (keys - ["id","name","kind","adapter","root","producer_id","ssh_host","capabilities","archive_writer"] | length == 0) and
+      (keys - ["id","name","kind","adapter","root","producer_id","ssh_host","capabilities","archive_writer","remote_location"] | length == 0) and
       (.id | type == "string" and test("^[A-Za-z0-9_.-]{1,100}$")) and
       (.name | type == "string" and length > 0) and
       (.kind | IN("tower","robot","jetson","backblaze","mac","other")) and
-      (.adapter | IN("recordings","lerobot","catalogue","anvil","evidence","unsupported")) and
+      (.adapter | IN("recordings","lerobot","catalogue","anvil","evidence","imports","unsupported")) and
       (if has("producer_id") then (.producer_id | type == "string" and test("^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$")) else true end) and
+      (if has("remote_location") then (.remote_location | type == "string" and test("^[A-Za-z0-9_.-]{1,100}$")) else true end) and
       (if has("ssh_host") then (.ssh_host | type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._@-]{0,127}$")) else true end) and
       (if has("capabilities") then (.capabilities | type == "array" and length == (unique | length) and all(.[]; IN("browse","copy_source","copy_destination"))) else true end) and
       (if has("archive_writer") then (.archive_writer | IN("legacy","coordinator")) else true end) and

@@ -416,6 +416,9 @@ assert_rc "storage configuration is accepted" 0 card init --storage-config "$TMP
 assert_eq "both managed roots are retained" "2" "$(field '.storage.locations | length')"
 assert_rc "ordinary init preserves storage configuration" 0 card init
 assert_eq "coordinator account survives init" "fm" "$(field .storage.account)"
+jq '.locations += [{"id":"robot-imports","name":"Robot imports","kind":"robot","adapter":"imports","ssh_host":"robot-alias","remote_location":"accepted","capabilities":["copy_destination"]}]' "$TMP/storage.json" > "$TMP/import-storage.json"
+assert_rc "explicit remote import root is accepted" 0 card init --storage-config "$TMP/import-storage.json"
+assert_eq "receiver location survives init" "accepted" "$(field '.storage.locations[2].remote_location')"
 printf '{"contract_version":99}' > "$TMP/invalid-storage.json"
 assert_rc "unknown storage contract is refused" 3 card init --storage-config "$TMP/invalid-storage.json"
 
