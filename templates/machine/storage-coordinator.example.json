@@ -1,0 +1,61 @@
+{
+  "contract_version": 1,
+  "account": "fm",
+  "state_dir": "/opt/fm/data/cloud-storage",
+  "locations": [
+    {
+      "id": "tower-data",
+      "name": "Tower data",
+      "kind": "tower",
+      "adapter": "recordings",
+      "root": "/data",
+      "producer_id": "fm-ws-01",
+      "archive_writer": "legacy",
+      "capabilities": ["browse", "copy_source", "copy_destination"]
+    },
+    {
+      "id": "tower-robot-data",
+      "name": "Tower robot data",
+      "kind": "tower",
+      "adapter": "lerobot",
+      "root": "/opt/fm/data",
+      "producer_id": "fm-ws-01-robot-data",
+      "capabilities": ["browse", "copy_source", "copy_destination"]
+    },
+    {
+      "id": "backblaze",
+      "name": "Backblaze",
+      "kind": "backblaze",
+      "adapter": "catalogue",
+      "capabilities": ["browse", "copy_source", "copy_destination"]
+    },
+    {
+      "id": "fm-rec-01",
+      "name": "Recorder fm-rec-01 (source registration required)",
+      "kind": "jetson",
+      "adapter": "unsupported",
+      "capabilities": ["browse"]
+    },
+    {
+      "id": "fm-rob-01",
+      "name": "Robot fm-rob-01 (source registration required)",
+      "kind": "robot",
+      "adapter": "unsupported",
+      "capabilities": ["browse"]
+    },
+    {
+      "id": "fm-rob-02",
+      "name": "Robot fm-rob-02 (account and source registration required)",
+      "kind": "robot",
+      "adapter": "unsupported",
+      "capabilities": ["browse"]
+    },
+    {
+      "id": "trainer",
+      "name": "Trainer (source registration required)",
+      "kind": "other",
+      "adapter": "unsupported",
+      "capabilities": ["browse"]
+    }
+  ]
+}

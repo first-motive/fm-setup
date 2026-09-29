@@ -7,6 +7,37 @@
   "additionalProperties": false,
   "required": ["schema_version", "name", "role", "fleet", "transport", "workspace"],
   "properties": {
+    "storage": {
+      "description": "Storage coordinator authority and managed locations. Credentials remain in the archive service environment.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contract_version", "account", "state_dir", "locations"],
+      "properties": {
+        "contract_version": {"const": 1},
+        "account": {"type": "string", "pattern": "^[a-z_][a-z0-9_-]*[$]?$"},
+        "state_dir": {"type": "string", "pattern": "^/"},
+        "locations": {
+          "type": "array",
+          "maxItems": 1000,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "name", "kind", "adapter"],
+            "properties": {
+              "id": {"type": "string", "pattern": "^[A-Za-z0-9_.-]{1,100}$"},
+              "name": {"type": "string", "minLength": 1},
+              "kind": {"enum": ["tower", "robot", "jetson", "backblaze", "mac", "other"]},
+              "adapter": {"enum": ["recordings", "lerobot", "catalogue", "anvil", "evidence", "unsupported"]},
+              "root": {"type": "string", "pattern": "^/"},
+              "producer_id": {"type": "string", "minLength": 1},
+              "ssh_host": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._@-]{0,127}$"},
+              "capabilities": {"type": "array", "uniqueItems": true, "items": {"enum": ["browse", "copy_source", "copy_destination"]}},
+              "archive_writer": {"enum": ["legacy", "coordinator"], "description": "Coordinator ownership is set only after the old uploader stops watching this recording scope."}
+            }
+          }
+        }
+      }
+    },
     "schema_version": {
       "description": "Bumped when a field changes meaning or disappears. A reader that does not know this version must refuse the file rather than guess at it.",
       "type": "integer",

@@ -42,6 +42,8 @@ TRANSPORT=""
 WORKLOAD=""
 ROBOT=""
 WORKSPACE=""
+STORAGE_CONFIG=""
+STORAGE_JSON=null
 # Distinguishes "the caller asked for this workspace" from "the card had one".
 # Only the second is converged onto the new default; a passed --workspace is a
 # deliberate choice and is written exactly as given, even back into a home.
@@ -55,6 +57,8 @@ usage() {
 machine — this host's identity card
 
 Usage: ./run.sh machine <verb> [options]
+
+  --storage-config FILE  storage coordinator configuration (init only)
 
 Verbs:
   init      write (or repair) the card, then align the hostname to it
@@ -221,10 +225,45 @@ card_json() {
     --arg workload "$WORKLOAD" \
     --arg robot "$ROBOT" \
     --arg workspace "$WORKSPACE" \
+    --argjson storage "$STORAGE_JSON" \
     '{schema_version: $schema_version, name: $name, role: $role, fleet: $fleet, transport: $transport}
      + (if $workload == "" then {} else {workload: $workload} end)
      + (if $robot == "" then {} else {robot: $robot} end)
-     + {workspace: $workspace}'
+     + {workspace: $workspace}
+     + (if $storage == null then {} else {storage: $storage} end)'
+}
+
+resolve_storage() {
+  local file
+  file="$(fm_machine_file)"
+  if [ -n "$STORAGE_CONFIG" ]; then
+    STORAGE_JSON="$(jq -c . "$STORAGE_CONFIG")" || return "$EX_PRECONDITION"
+  elif [ -f "$file" ]; then
+    STORAGE_JSON="$(jq -c '.storage // null' "$file")" || return "$EX_PRECONDITION"
+  fi
+  [ "$STORAGE_JSON" = null ] && return 0
+  if ! jq -e '
+    (keys - ["contract_version","account","state_dir","locations"] | length == 0) and
+    .contract_version == 1 and
+    (.account | type == "string" and test("^[a-z_][a-z0-9_-]*[$]?$")) and
+    (.state_dir | type == "string" and startswith("/") and (split("/") | index("..") == null)) and
+    (.locations | type == "array" and length <= 1000) and
+    ([.locations[].id] | length == (unique | length)) and
+    all(.locations[];
+      (keys - ["id","name","kind","adapter","root","producer_id","ssh_host","capabilities","archive_writer"] | length == 0) and
+      (.id | type == "string" and test("^[A-Za-z0-9_.-]{1,100}$")) and
+      (.name | type == "string" and length > 0) and
+      (.kind | IN("tower","robot","jetson","backblaze","mac","other")) and
+      (.adapter | IN("recordings","lerobot","catalogue","anvil","evidence","unsupported")) and
+      (if has("producer_id") then (.producer_id | type == "string" and test("^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$")) else true end) and
+      (if has("ssh_host") then (.ssh_host | type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._@-]{0,127}$")) else true end) and
+      (if has("capabilities") then (.capabilities | type == "array" and length == (unique | length) and all(.[]; IN("browse","copy_source","copy_destination"))) else true end) and
+      (if has("archive_writer") then (.archive_writer | IN("legacy","coordinator")) else true end) and
+      (if has("root") then (.root | type == "string" and startswith("/") and (split("/") | index("..") == null)) else true end))
+  ' <<< "$STORAGE_JSON" >/dev/null; then
+    fm_err 'invalid storage coordinator configuration'
+    return "$EX_PRECONDITION"
+  fi
 }
 
 # --- Verbs ------------------------------------------------------------------
@@ -277,6 +316,7 @@ do_init() {
   local file dir tmp
   fm_require_cmd jq || return "$EX_PRECONDITION"
   resolve_fields || return "$EX_USAGE"
+  resolve_storage || return "$EX_PRECONDITION"
   file="$(fm_machine_file)"
   dir="$(dirname "$file")"
 
@@ -490,6 +530,7 @@ main() {
       --workload)  WORKLOAD="${2:?--workload needs a value (or 'none')}"; shift 2 ;;
       --robot)     ROBOT="${2:?--robot needs a value}"; shift 2 ;;
       --workspace) WORKSPACE="${2:?--workspace needs a value}"; WORKSPACE_EXPLICIT=1; shift 2 ;;
+      --storage-config) STORAGE_CONFIG="${2:?--storage-config needs a file}"; shift 2 ;;
       --json)      AS_JSON=1; shift ;;
       --dry-run)   DRY_RUN=1; shift ;;
       -y|--yes)    ASSUME_YES=1; shift ;;
