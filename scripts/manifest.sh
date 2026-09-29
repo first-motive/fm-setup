@@ -58,6 +58,7 @@ WORKSTATION_STEPS=(
   # Derived archive writes are an explicit operator action after provider
   # scope and retention approval.
   "archive-derived|95-archive-derived.sh|off"
+  "cloud-storage|97-cloud-storage.sh|off"
   # After the data root and after fm_ros2 has installed fm-sync.timer: points
   # the timer at the recorder and at this machine's data root. Skips, and says
   # so, until the unit's env file exists.
@@ -478,7 +479,7 @@ FM_ROS_RMW_REQUIRED=(
 # fm-tools' own install.sh does. Pinned here rather than tracking latest: two
 # machines provisioned months apart should get the same CLI.
 FM_TOOLS_REPO=first-motive/fm-tools
-FM_TOOLS_VERSION=v0.20.0
+FM_TOOLS_VERSION=v0.21.0
 
 # Where the machine-wide copy of the CLI lives, and the command every account
 # reaches it by.
