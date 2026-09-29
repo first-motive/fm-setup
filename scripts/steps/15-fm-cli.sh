@@ -40,7 +40,11 @@ fm_require_linux
 # The exact spec uv is asked to install. One place builds it so check, install,
 # and the dry run all talk about the same thing.
 fm_tools_spec() {
-  printf 'fm-tools @ git+https://github.com/%s@%s\n' "$FM_TOOLS_REPO" "$FM_TOOLS_VERSION"
+  local extras=""
+  if jq -e '.storage.contract_version == 1' "$(fm_machine_file)" >/dev/null 2>&1; then
+    extras="[archive]"
+  fi
+  printf 'fm-tools%s @ git+https://github.com/%s@%s\n' "$extras" "$FM_TOOLS_REPO" "$FM_TOOLS_VERSION"
 }
 
 # uv lands in ~/.local/bin, which is on PATH only after `uv tool update-shell`
