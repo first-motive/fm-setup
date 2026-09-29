@@ -13,7 +13,7 @@ configuration() {
   card="$(fm_machine_file)"
   account="$(jq -er '.storage.account' "$card")"
   state="$(jq -er '.storage.state_dir' "$card")"
-  root="$(jq -er '[.storage.locations[] | select(.adapter == "recordings" and (has("ssh_host") | not))][0].root' "$card")"
+  root="$(sudo -n awk -F= '$1 == "FM_ARCHIVE_UPLOADER_STATE_DIR" {print substr($0, index($0, "=") + 1)}' "$ENVFILE")"
   getent passwd "$account" >/dev/null
   for path in "$state" "$root"; do
     [[ "$path" = /* && "$path" != *$'\n'* && "$path" != *"'"* ]] || return 1
@@ -46,8 +46,10 @@ do_install() {
   if [ ! -e "$lock" ]; then
     sudo -u "$account" sh -c 'umask 077; set -C; : > "$1"' sh "$lock"
   fi
-  [ -f "$lock" ] && [ "$(stat -c '%U:%a' "$lock")" = "$account:600" ] ||
-    { fm_err "shared writer lock must be a private file owned by the coordinator"; return 1; }
+  if [ ! -f "$lock" ] || [ "$(stat -c '%U:%a' "$lock")" != "$account:600" ]; then
+    fm_err "shared writer lock must be a private file owned by the coordinator"
+    return 1
+  fi
   if ! sudo -n grep -Fxq "FM_ARCHIVE_WRITER_LOCK='$lock'" "$ENVFILE"; then
     local temporary
     temporary="$(sudo mktemp /etc/.fm-storage.XXXXXX)"
