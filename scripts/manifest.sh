@@ -88,6 +88,8 @@ JETSON_STEPS=(
   "udev-rules|45-udev-rules.sh|on"
   "librealsense-rsusb|47-librealsense-rsusb.sh|on"
   "dds-tuning|50-dds-tuning.sh|on"
+  # Skips, and says so, unless this is a recorder that runs its LiDAR.
+  "lidar-link|55-lidar-link.sh|on"
   "tailscale|60-tailscale.sh|on"
 )
 
