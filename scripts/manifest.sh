@@ -88,6 +88,7 @@ JETSON_STEPS=(
   "udev-rules|45-udev-rules.sh|on"
   "librealsense-rsusb|47-librealsense-rsusb.sh|on"
   "dds-tuning|50-dds-tuning.sh|on"
+  "resolved-dns|52-resolved-dns.sh|on"
   # Skips, and says so, unless this is a recorder that runs its LiDAR.
   "lidar-link|55-lidar-link.sh|on"
   "tailscale|60-tailscale.sh|on"
@@ -754,6 +755,11 @@ FM_DDS_RMEM_MAX=134217728
 # /24. Used by ./run.sh lidar-net, which puts them on a dedicated interface.
 FM_LIDAR_IP=192.168.1.131
 FM_LIDAR_HOST_IP=192.168.1.10
+
+# The DNS servers a rig's systemd-resolved uses on every link: the office
+# router, then a public resolver. Site values, not per-host ones; a rig on
+# another network overrides them with FM_RESOLVED_DNS when it runs the step.
+FM_RESOLVED_DNS_DEFAULT="192.168.1.1 1.1.1.1"
 
 # --- Flashable images ------------------------------------------------------
 #
