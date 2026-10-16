@@ -47,15 +47,6 @@ fm_tools_spec() {
   printf 'fm-tools%s @ git+https://github.com/%s@%s\n' "$extras" "$FM_TOOLS_REPO" "$FM_TOOLS_VERSION"
 }
 
-# uv lands in ~/.local/bin, which is on PATH only after `uv tool update-shell`
-# has run once and the shell has been restarted. During provisioning neither has
-# happened yet, so look there directly rather than trusting PATH.
-uv_bin() {
-  if fm_has_cmd uv; then command -v uv; return 0; fi
-  [ -x "$HOME/.local/bin/uv" ] && printf '%s\n' "$HOME/.local/bin/uv" && return 0
-  return 1
-}
-
 # The machine-wide command, and the tool tree behind it.
 FM_MACHINE_FM="$FM_CLI_BIN_DIR/fm"
 
@@ -114,7 +105,7 @@ check_machine_install() {
 
 check_user_install() {
   local uv fm_path
-  if uv="$(uv_bin)"; then
+  if uv="$(fm_uv_bin "$HOME")"; then
     fm_ok "uv $("$uv" --version 2>/dev/null | awk '{print $2}')"
   else
     fm_warn "uv missing"
@@ -201,8 +192,8 @@ do_install() {
   # work on the box may depend on and this step did not necessarily install it.
   # What must be reproducible is the CLI, and `uv tool install --force` below
   # pins that outright.
-  uv_bin >/dev/null || install_uv
-  uv="$(uv_bin)" || { fm_err "uv still not found after install"; return 1; }
+  fm_uv_bin "$HOME" >/dev/null || install_uv
+  uv="$(fm_uv_bin "$HOME")" || { fm_err "uv still not found after install"; return 1; }
 
   spec="$(fm_tools_spec)"
   fm_log "installing the fm CLI ($FM_TOOLS_VERSION)"
@@ -303,7 +294,7 @@ do_uninstall() {
   local uv
   remove_machine_wide
 
-  if ! uv="$(uv_bin)"; then
+  if ! uv="$(fm_uv_bin "$HOME")"; then
     fm_skip "uv not installed"
     return 0
   fi

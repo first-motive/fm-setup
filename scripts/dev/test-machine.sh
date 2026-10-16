@@ -123,6 +123,9 @@ assert_eq "workload sits before workspace" \
 card init --transport dds-lan >/dev/null
 assert_eq "workload carries forward" "recorder" "$(field .workload)"
 
+card init --workload sim >/dev/null
+assert_eq "sim is a workload the card takes" "sim" "$(field .workload)"
+
 card init --workload none >/dev/null
 assert_eq "none clears workload" "false" "$(jq 'has("workload")' "$FM_MACHINE_FILE")"
 

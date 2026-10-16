@@ -32,6 +32,10 @@ logged_in_to_ngc() {
 }
 
 do_check() {
+  # First, because the driver and the GPU are worth reporting even on a host
+  # whose docker is not up yet.
+  isaac_report
+
   if ! fm_has_docker; then
     fm_warn "docker not reachable — install the docker step first"
     return 0
@@ -55,21 +59,70 @@ do_check() {
     fm_warn "$FM_ISAAC_CACHE_DIR missing"
   fi
 
-  if docker run --rm --gpus all "$FM_CUDA_SMOKE_IMAGE" nvidia-smi >/dev/null 2>&1; then
-    fm_ok "the GPU is visible inside containers"
-  else
-    fm_warn "the GPU is not visible inside containers — check the nvidia-container step"
-  fi
   return 0
 }
 
+# version_ge HAVE WANT — 0 when HAVE is WANT or later.
+version_ge() {
+  [ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -n1)" = "$2" ]
+}
+
+# What Isaac Sim 4.5 needs from the host: a driver at or above the lowest it
+# lists, a GPU, and that GPU inside a container. Reported, never installed —
+# the driver is 20-nvidia's and the toolkit 35-nvidia-container's. Each is its
+# own line, so the one that fails is the one named, and nothing is pulled.
+isaac_report() {
+  local query driver name mem problems=0
+  if ! fm_has_cmd nvidia-smi; then
+    fm_warn "no nvidia-smi — no NVIDIA driver here; the nvidia step installs it"
+    problems=$((problems + 1))
+  else
+    query="$(nvidia-smi --query-gpu=driver_version,name,memory.total --format=csv,noheader,nounits 2>/dev/null | head -n1 || true)"
+    if [ -z "$query" ]; then
+      fm_warn "nvidia-smi finds no GPU — the driver is not loaded, or there is no card"
+      problems=$((problems + 1))
+    else
+      driver="$(printf '%s' "$query" | awk -F', *' '{print $1}')"
+      name="$(printf '%s' "$query" | awk -F', *' '{print $2}')"
+      mem="$(printf '%s' "$query" | awk -F', *' '{print $3}')"
+      fm_ok "GPU present: $name (${mem} MiB)"
+      if version_ge "$driver" "$FM_ISAAC_DRIVER_MIN"; then
+        fm_ok "driver $driver (Isaac Sim 4.5 wants $FM_ISAAC_DRIVER_MIN or later)"
+      else
+        fm_warn "driver $driver is older than $FM_ISAAC_DRIVER_MIN, the lowest Isaac Sim 4.5 lists"
+        problems=$((problems + 1))
+      fi
+    fi
+  fi
+
+  if ! fm_has_docker; then
+    fm_warn "docker not reachable — cannot test the GPU inside a container"
+    problems=$((problems + 1))
+  elif ! docker image inspect "$FM_CUDA_SMOKE_IMAGE" >/dev/null 2>&1; then
+    fm_warn "$FM_CUDA_SMOKE_IMAGE not pulled — the container GPU test needs it: docker pull $FM_CUDA_SMOKE_IMAGE"
+    problems=$((problems + 1))
+  elif fm_docker_gpu_ok --pull=never; then
+    fm_ok "the GPU is visible inside containers (nvidia-container-toolkit works)"
+  else
+    fm_warn "the GPU is not visible inside containers — check the nvidia-container step"
+    problems=$((problems + 1))
+  fi
+
+  if [ "$problems" -eq 0 ]; then
+    fm_ok "this host can run Isaac Sim 4.5"
+  else
+    fm_warn "this host cannot run Isaac Sim 4.5 yet ($problems problem(s) above)"
+  fi
+}
+
 # The GPU has to be visible from inside a container, not merely present on the
-# host. This is the cheapest thing that proves the driver, the container
-# toolkit, and the runtime hook all line up — and it fails loudly rather than
-# leaving Isaac Sim to fail obscurely much later.
+# host (fm_docker_gpu_ok). This fails loudly rather than leaving Isaac Sim to
+# fail obscurely much later.
+# The smoke container runs as nobody (fm_docker_gpu_ok passes --user): nvidia-smi
+# needs no root, so the install-time test proves the same thing it did as root.
 gpu_smoke_test() {
   fm_log "GPU smoke test: nvidia-smi inside a container"
-  if docker run --rm --gpus all "$FM_CUDA_SMOKE_IMAGE" nvidia-smi >/dev/null 2>&1; then
+  if fm_docker_gpu_ok; then
     fm_ok "the GPU is visible inside containers"
     return 0
   fi

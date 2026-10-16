@@ -653,6 +653,70 @@ fm_ensure_dir() {
   fi
 }
 
+# Who a workspace checkout belongs to: the workspace's own owner, falling back to
+# the account that invoked sudo, then to whoever is running.
+#
+# It is not root, and that is the point. install.sh runs under sudo, so a clone
+# left as-is runs as root — which owns no GitHub credential, and would leave a
+# root-owned tree inside a group-writable workspace that nobody can work in.
+fm_workspace_owner() {
+  local workspace
+  workspace="$(fm_machine_workspace)"
+  if [ -d "$workspace" ]; then
+    stat -c '%U' "$workspace" 2>/dev/null && return 0
+  fi
+  printf '%s\n' "${SUDO_USER:-${USER:-$(id -un)}}"
+}
+
+# fm_workspace_home — echo the workspace owner's home, or this shell's HOME when
+# the account has no passwd entry to read one from.
+fm_workspace_home() {
+  local home
+  home="$(getent passwd "$(fm_workspace_owner)" 2>/dev/null | cut -d: -f6)"
+  printf '%s\n' "${home:-$HOME}"
+}
+
+# fm_run_as USER CMD… — run a command as USER: plainly when that is the account
+# already running, otherwise through sudo.
+fm_run_as() {
+  local user="$1"; shift
+  if [ "$user" = "$(id -un)" ]; then
+    "$@"
+  elif [ "$user" = root ]; then
+    sudo "$@"
+  else
+    sudo -u "$user" "$@"
+  fi
+}
+
+# fm_as_workspace_owner CMD… — run a command as the workspace's owner.
+fm_as_workspace_owner() { fm_run_as "$(fm_workspace_owner)" "$@"; }
+
+# fm_uv_bin HOME — echo the uv a step should run, or fail when there is none.
+#
+# uv lands in ~/.local/bin, which reaches PATH only after `uv tool update-shell`
+# and a new shell. Neither has happened during provisioning, and a non-login ssh
+# does not source a profile either — so HOME's copy is looked for directly.
+fm_uv_bin() {
+  local home="$1"
+  if fm_has_cmd uv; then command -v uv; return 0; fi
+  [ -x "$home/.local/bin/uv" ] && printf '%s\n' "$home/.local/bin/uv" && return 0
+  return 1
+}
+
+# fm_docker_gpu_ok [DOCKER_RUN_ARG…] — 0 when nvidia-smi runs inside a container.
+#
+# The GPU has to be visible from inside a container, not merely present on the
+# host. This is the cheapest thing that proves the driver, the container
+# toolkit, and the runtime hook all line up. Extra arguments go to `docker run`
+# before the image — `--pull=never` keeps a report from downloading anything.
+#
+# The container runs as nobody: nvidia-smi needs no root, and a smoke image is
+# pinned by tag rather than digest, so it gets no more than it needs.
+fm_docker_gpu_ok() {
+  docker run --rm "$@" --user 65534:65534 --gpus all "$FM_CUDA_SMOKE_IMAGE" nvidia-smi >/dev/null 2>&1
+}
+
 # Field validators, here rather than in the writer, because two callers now
 # produce cards: `machine init` on a running host and `flash` into a cloud-init
 # seed. A second copy of these rules would let the two disagree about what a

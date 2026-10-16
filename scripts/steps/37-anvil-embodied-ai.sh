@@ -160,44 +160,12 @@ do_check() {
   return 0
 }
 
-# uv lands in ~/.local/bin, which reaches PATH only after a new login shell.
-# Neither has happened during provisioning, so look there directly — 15-fm-cli
-# and 17-fm-policy resolve it the same way.
-uv_bin() {  # home
-  local home="$1"
-  if fm_has_cmd uv; then command -v uv; return 0; fi
-  [ -x "$home/.local/bin/uv" ] && printf '%s\n' "$home/.local/bin/uv" && return 0
-  return 1
-}
-
-# Who the checkout belongs to: the workspace's owner. Not root — this step runs
-# under sudo, and a root-owned tree inside a group-writable workspace is one
-# nobody can work in afterwards. Mirrors 17-fm-policy.sh.
-workspace_owner() {
-  local workspace
-  workspace="$(fm_machine_workspace)"
-  if [ -d "$workspace" ]; then
-    stat -c '%U' "$workspace" 2>/dev/null && return 0
-  fi
-  printf '%s\n' "${SUDO_USER:-${USER:-$(id -un)}}"
-}
-
-as_workspace_owner() {
-  local owner
-  owner="$(workspace_owner)"
-  if [ "$owner" = "$(id -un)" ]; then
-    "$@"
-  else
-    sudo -u "$owner" "$@"
-  fi
-}
-
 # The DDS profile this host talks to the rig over. Generated rather than copied:
 # their `two_pc_gpu.xml` names `eno1` and an example peer, and a profile with
 # the wrong interface in it discovers nothing while looking correct.
 write_profile() {
   fm_log "writing $PROFILE_PATH (interface $ANVIL_IFACE, peer $ANVIL_PEER)"
-  as_workspace_owner tee "$PROFILE_PATH" >/dev/null <<PROFILE
+  fm_as_workspace_owner tee "$PROFILE_PATH" >/dev/null <<PROFILE
 <?xml version="1.0" encoding="UTF-8" ?>
 <!-- Written by fm-setup's anvil-embodied-ai step. Their two_pc_gpu.xml is the
      shipped example; this one carries this workstation's own interface and the
@@ -250,12 +218,12 @@ write_env() {
   }
 
   fm_log "writing $env_path"
-  as_workspace_owner cp "$ANVIL_DIR/.env.example" "$env_path"
+  fm_as_workspace_owner cp "$ANVIL_DIR/.env.example" "$env_path"
   # The ROS domain and the RMW must match the rig's own .env.config, and the
   # profile is the one written above rather than their example. The container
   # sees the checkout at /workspace, which is what makes this path the right one
   # inside it.
-  as_workspace_owner sed -i \
+  fm_as_workspace_owner sed -i \
     -e "s|^ROS_DOMAIN_ID=.*|ROS_DOMAIN_ID=$FM_ANVIL_ROS_DOMAIN_ID|" \
     -e "s|^RMW_IMPLEMENTATION=.*|RMW_IMPLEMENTATION=rmw_cyclonedds_cpp|" \
     -e "s|^CYCLONEDDS_URI=.*|CYCLONEDDS_URI=file:///workspace/configs/cyclonedds/$PROFILE_NAME|" \
@@ -270,14 +238,14 @@ write_env() {
 # been loaded.
 ensure_installed() {  # owner  home
   local owner="$1" home="$2" uv
-  if ! uv="$(uv_bin "$home")"; then
+  if ! uv="$(fm_uv_bin "$home")"; then
     fm_warn "uv is not installed for $owner — cannot resolve $ANVIL_DIR/.venv"
     fm_info "the fm-cli step installs it; re-run: ./install.sh --workstation --only fm-cli,anvil-embodied-ai"
     return 0
   fi
   fm_log "resolving $ANVIL_DIR/.venv (as $owner) — torch and lerobot, slow once"
   # shellcheck disable=SC2086
-  if as_workspace_owner env PATH="$(dirname "$uv"):$PATH" \
+  if fm_as_workspace_owner env PATH="$(dirname "$uv"):$PATH" \
       "$uv" sync --project "$ANVIL_DIR" --all-packages $FM_ANVIL_UV_EXTRAS >/dev/null 2>&1; then
     fm_ok "$ANVIL_DIR/.venv resolved"
   else
@@ -320,9 +288,8 @@ build_image() {
 
 do_install() {
   local owner home
-  owner="$(workspace_owner)"
-  home="$(getent passwd "$owner" 2>/dev/null | cut -d: -f6)"
-  [ -n "$home" ] || home="$HOME"
+  owner="$(fm_workspace_owner)"
+  home="$(fm_workspace_home)"
 
   if [ -e "$ANVIL_DIR" ] && [ ! -d "$ANVIL_DIR/.git" ]; then
     fm_warn "$ANVIL_DIR exists and is not a checkout — leaving it"
@@ -337,7 +304,7 @@ do_install() {
     fm_require_cmd git || return 1
     fm_ensure_dir "$(dirname "$ANVIL_DIR")"
     fm_log "cloning $FM_ANVIL_REPO into $ANVIL_DIR (as $owner)"
-    if ! as_workspace_owner env GIT_TERMINAL_PROMPT=0 git clone --quiet "$ANVIL_URL" "$ANVIL_DIR"; then
+    if ! fm_as_workspace_owner env GIT_TERMINAL_PROMPT=0 git clone --quiet "$ANVIL_URL" "$ANVIL_DIR"; then
       fm_warn "could not clone $FM_ANVIL_REPO — the rest of this role is unaffected"
       fm_info "authenticate as $owner (gh auth login), then re-run:"
       fm_info "  ./install.sh --workstation --only anvil-embodied-ai"

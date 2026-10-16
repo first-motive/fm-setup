@@ -55,6 +55,9 @@ WORKSTATION_STEPS=(
   "users|70-users.sh|on"
   "agent-ruleset|80-agent-ruleset.sh|on"
   "isaac-sim|90-isaac-sim.sh|on"
+  # After the container toolkit and fm-cli (whose uv builds the agent's venv):
+  # the fm-sim image and the sim agent unit.
+  "sim|91-sim.sh|on"
   # Derived archive writes are an explicit operator action after provider
   # scope and retention approval.
   "archive-derived|95-archive-derived.sh|off"
@@ -190,7 +193,12 @@ FM_MACHINE_TRANSPORTS=(zenoh dds-lan)
 # rather than either half: under `processor` the tower's bridge held a session
 # and carried no joint states, which reads as a network fault and is a workload
 # that named half the machine (fm-comms#20).
-FM_MACHINE_WORKLOADS=(recorder processor robot workstation router cockpit)
+#
+# `sim` is a sim host: it runs one fm-sim run at a time, driven through the sim
+# agent's `fm/sim/<host>/*` verbs, and fm-comms renders bridge-sim.json5 for it —
+# the run's state outward and nothing inward. 91-sim.sh installs the agent and
+# reports when the card names another workload.
+FM_MACHINE_WORKLOADS=(recorder processor robot workstation router cockpit sim)
 
 # Names are fm-<abbrev>-<nn>, so two recorders on one LAN are fm-rec-01 and
 # fm-rec-02 rather than one fm-jetson and a collision. The abbreviation follows
@@ -721,6 +729,80 @@ FM_ISAAC_CACHE_MAP=(
 # reviewed, instead of buried in a docker run line.
 FM_ISAAC_ACCEPT_EULA=Y
 FM_ISAAC_PRIVACY_CONSENT=Y
+
+# The lowest Linux driver Isaac Sim 4.5 lists in its requirements table.
+# 90-isaac-sim's check reports against it; the driver itself is 20-nvidia's.
+FM_ISAAC_DRIVER_MIN=535.129.03
+
+# --- Sim host --------------------------------------------------------------
+
+# fm-sim's host agent. 91-sim.sh fetches FM_SIM_COMMIT_DEFAULT itself, as root,
+# into a bare repository under FM_SIM_AGENT_ROOT, and copies agent/ out of that
+# commit into a root-owned tree. The agent runs with docker rights, so its code
+# is pinned by full SHA and read from nowhere a person or the agent can write —
+# never from the group-writable workspace's own .git.
+#
+# Empty means nothing is pinned yet, and the step installs no agent. Fill it with
+# the merge commit of the sim agent (first-motive/fm-sim#43) once it lands.
+# FM_SIM_COMMIT overrides it on the command line, to try a commit before pinning.
+FM_SIM_REPO=first-motive/fm-sim
+FM_SIM_COMMIT_DEFAULT=
+
+# The image every run starts from, by digest. Without one the step still pulls
+# the tag and writes the unit, but grants no docker rights and enables nothing:
+# an agent whose image can move under it is not one to start unattended.
+# fm-sim's CI pushes the tag on every main push; read the digest after a pull:
+#   docker image inspect --format '{{index .RepoDigests 0}}' ghcr.io/first-motive/fm-sim:jazzy
+# FM_SIM_IMAGE_DIGEST overrides it on the command line.
+FM_SIM_IMAGE=ghcr.io/first-motive/fm-sim:jazzy
+FM_SIM_IMAGE_DIGEST_DEFAULT=
+
+# The account the agent runs as. Its own system user rather than a person's,
+# and outside the fm group so the roster steps never treat it as somebody. It is
+# in the docker group, which is root-equivalent: the step asks before granting
+# it. Its home holds nothing the step installs.
+FM_SIM_USER=fm-sim
+FM_SIM_HOME=/var/lib/fm-sim
+
+# The agent's source, code, venv, and uv: root-owned, directories 755 and files
+# 644, built by root at install time with the project installed non-editable, so
+# the service starts the venv's entrypoint and runs no uv and no build backend.
+# uv's cache for that build is root's alone.
+FM_SIM_AGENT_ROOT=/opt/fm-sim-agent
+FM_SIM_UV_CACHE=/var/cache/fm-sim-agent
+
+# The uv that builds the agent's venv as root. Not the operator's ~/.local/bin/uv
+# — a file its owner can rewrite is not one root runs — but Astral's release
+# tarball at FM_UV_VERSION, checked against these before it is unpacked into
+# FM_SIM_AGENT_ROOT/bin. Entries are "arch|sha256". Re-read after a bump with:
+#   curl -fsSL https://github.com/astral-sh/uv/releases/download/<v>/uv-<arch>-unknown-linux-gnu.tar.gz.sha256
+FM_SIM_UV_SHA256_MAP=(
+  "x86_64|1ce5212f8f42dc7427a1bd3db4168d6d1abcf81b38d8c82a5b9d0ddc54ceebfc"
+  "aarch64|935b35542b7e25493a551dcb3487af23b72ad284ee8ac6a488a97d02ce2d84ec"
+)
+
+# Run summaries and MCAPs, on the shared data disk. Owned by the agent's account,
+# group fm, setgid, and closed to everyone else.
+FM_SIM_RUNS_DIR="$FM_DATA_DIR/sim-runs"
+
+FM_SIM_UNIT=fm-sim-agent.service
+
+# Operator flags for the agent, on the unit's ExecStart. Host networking and
+# host IPC are the agent's default and need no flag. `--image` and `--runs-dir`
+# come from the values above.
+#   --gpus               every GPU to each run: Isaac needs one
+#   --memory 32g         Isaac Sim 4.5 asks for 32 GB of RAM
+#   --pids-limit 4096    the agent's own default, stated
+#   --max-run-minutes    the agent's own default, stated
+#   --min-free-gb 50     refuse `up` below 50 GB free; /data also holds the
+#                        recordings, so the floor sits above the agent's 10
+FM_SIM_AGENT_FLAGS=(
+  --gpus
+  --memory 32g
+  --pids-limit 4096
+  --max-run-minutes 120
+  --min-free-gb 50
+)
 
 # --- Networking ------------------------------------------------------------
 
