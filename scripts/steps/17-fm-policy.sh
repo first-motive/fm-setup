@@ -54,16 +54,6 @@ do_check() {
   return 0
 }
 
-# uv lands in ~/.local/bin, which reaches PATH only after `uv tool update-shell`
-# and a new shell. Neither has happened during provisioning, and a non-login ssh
-# does not source a profile either — so look there directly, as 15-fm-cli does.
-uv_bin() {  # home
-  local home="$1"
-  if fm_has_cmd uv; then command -v uv; return 0; fi
-  [ -x "$home/.local/bin/uv" ] && printf '%s\n' "$home/.local/bin/uv" && return 0
-  return 1
-}
-
 # Resolve the project's venv, so the checkout is a policy layer rather than a
 # directory. Idempotent: `uv sync` is a no-op once the lockfile is satisfied.
 #
@@ -75,13 +65,13 @@ ensure_installed() {  # owner  home
     fm_warn "$POLICY_DIR has no install.sh — leaving the checkout as it is"
     return 0
   }
-  if ! uv="$(uv_bin "$home")"; then
+  if ! uv="$(fm_uv_bin "$home")"; then
     fm_warn "uv is not installed for $owner — cannot resolve $POLICY_DIR/.venv"
     fm_info "the fm-cli step installs it; re-run: ./install.sh --${FM_ROLE:-workstation} --only fm-cli,fm-policy"
     return 0
   fi
   fm_log "resolving $POLICY_DIR/.venv (as $owner) ..."
-  if as_workspace_owner env PATH="$(dirname "$uv"):$PATH" "$POLICY_DIR/install.sh" >/dev/null 2>&1; then
+  if fm_as_workspace_owner env PATH="$(dirname "$uv"):$PATH" "$POLICY_DIR/install.sh" >/dev/null 2>&1; then
     fm_ok "$POLICY_DIR/.venv resolved"
   else
     fm_warn "could not resolve $POLICY_DIR/.venv — the rest of this role is unaffected"
@@ -89,39 +79,10 @@ ensure_installed() {  # owner  home
   fi
 }
 
-# Who the checkout belongs to: the workspace's own owner, falling back to the
-# account that invoked sudo, then to whoever is running.
-#
-# It is not root, and that is the point. install.sh runs under sudo, so a clone
-# left as-is runs as root — which owns no GitHub credential, and would leave a
-# root-owned tree inside a group-writable workspace for a repo whose whole
-# premise is that it is somebody's working tree.
-workspace_owner() {
-  local workspace
-  workspace="$(fm_machine_workspace)"
-  if [ -d "$workspace" ]; then
-    stat -c '%U' "$workspace" 2>/dev/null && return 0
-  fi
-  printf '%s\n' "${SUDO_USER:-${USER:-$(id -un)}}"
-}
-
-# as_workspace_owner CMD… — run a command as that account, or plainly when it is
-# already the one running. Mirrors as_owner in 80-agent-ruleset.sh.
-as_workspace_owner() {
-  local owner
-  owner="$(workspace_owner)"
-  if [ "$owner" = "$(id -un)" ]; then
-    "$@"
-  else
-    sudo -u "$owner" "$@"
-  fi
-}
-
 do_install() {
   local owner home
-  owner="$(workspace_owner)"
-  home="$(getent passwd "$owner" 2>/dev/null | cut -d: -f6)"
-  [ -n "$home" ] || home="$HOME"
+  owner="$(fm_workspace_owner)"
+  home="$(fm_workspace_home)"
   if [ -d "$POLICY_DIR/.git" ]; then
     fm_ok "$POLICY_DIR already cloned"
     fm_info "bring it forward deliberately with: git -C $POLICY_DIR pull"
@@ -144,7 +105,7 @@ do_install() {
   fm_log "cloning $FM_POLICY_REPO into $POLICY_DIR (as $owner)"
   # GIT_TERMINAL_PROMPT=0 so a host with no credential fails in a second rather
   # than sitting on a username prompt for the rest of an unattended provision.
-  if as_workspace_owner env GIT_TERMINAL_PROMPT=0 git clone --quiet "$POLICY_URL" "$POLICY_DIR"; then
+  if fm_as_workspace_owner env GIT_TERMINAL_PROMPT=0 git clone --quiet "$POLICY_URL" "$POLICY_DIR"; then
     fm_ok "$POLICY_DIR cloned"
     ensure_installed "$owner" "$home"
   else

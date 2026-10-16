@@ -47,36 +47,26 @@ targets() {
   done < <(fm_group_members "$FM_GROUP")
 }
 
-# as_owner OWNER CMD… — run a command as that home's owner, or as root for skel.
-as_owner() {
-  local owner="$1"; shift
-  if [ "$owner" = "root" ]; then
-    sudo "$@"
-  else
-    sudo -u "$owner" "$@"
-  fi
-}
-
 # managed OWNER FILE — 0 when the file is ours to replace. Absent counts as ours;
 # a symlink never does.
 managed() {
   local owner="$1" file="$2"
-  as_owner "$owner" test -L "$file" && return 1
-  as_owner "$owner" test -e "$file" || return 0
-  as_owner "$owner" grep -qF "$MARKER" "$file" 2>/dev/null
+  fm_run_as "$owner" test -L "$file" && return 1
+  fm_run_as "$owner" test -e "$file" || return 0
+  fm_run_as "$owner" grep -qF "$MARKER" "$file" 2>/dev/null
 }
 
 do_check() {
   [ -f "$SOURCE" ] || { fm_warn "template missing: $SOURCE"; return 0; }
   local owner file
   while IFS='|' read -r owner file; do
-    if as_owner "$owner" test -L "$file"; then
+    if fm_run_as "$owner" test -L "$file"; then
       fm_warn "$file is a symlink — left alone"
-    elif ! as_owner "$owner" test -e "$file"; then
+    elif ! fm_run_as "$owner" test -e "$file"; then
       fm_warn "$file missing"
     elif ! managed "$owner" "$file"; then
       fm_warn "$file is not managed by fm-setup — left alone"
-    elif as_owner "$owner" cmp -s "$SOURCE" "$file"; then
+    elif fm_run_as "$owner" cmp -s "$SOURCE" "$file"; then
       fm_ok "$file current"
     else
       fm_warn "$file is out of date"
@@ -90,7 +80,7 @@ do_install() {
 
   local owner file
   while IFS='|' read -r owner file; do
-    if as_owner "$owner" test -L "$file"; then
+    if fm_run_as "$owner" test -L "$file"; then
       fm_skip "$file is a symlink — leaving it alone"
       continue
     fi
@@ -98,11 +88,11 @@ do_install() {
       fm_skip "$file is not ours — leaving the existing file alone"
       continue
     fi
-    if as_owner "$owner" cmp -s "$SOURCE" "$file" 2>/dev/null; then
+    if fm_run_as "$owner" cmp -s "$SOURCE" "$file" 2>/dev/null; then
       fm_ok "$file current"
       continue
     fi
-    as_owner "$owner" install -m 0644 "$SOURCE" "$file"
+    fm_run_as "$owner" install -m 0644 "$SOURCE" "$file"
     fm_ok "$file written"
   done < <(targets)
 }
@@ -110,8 +100,8 @@ do_install() {
 do_uninstall() {
   local owner file
   while IFS='|' read -r owner file; do
-    if managed "$owner" "$file" && as_owner "$owner" test -e "$file"; then
-      as_owner "$owner" rm -f "$file"
+    if managed "$owner" "$file" && fm_run_as "$owner" test -e "$file"; then
+      fm_run_as "$owner" rm -f "$file"
       fm_ok "$file removed"
     else
       fm_skip "$file not managed by fm-setup"

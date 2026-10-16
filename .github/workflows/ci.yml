@@ -166,6 +166,17 @@ jobs:
       - name: Exercise the trainer's fm-policy checkout
         run: ./scripts/dev/test-fm-policy.sh
 
+  # The sim step installs a service that runs with docker rights. The suite runs
+  # its install path end to end against stand-in sudo, systemctl, uv and docker:
+  # the template allowlist, the commit and digest pins, the uv refusal, and the
+  # declined grant. It also drives isaac-sim's preflight with a fake nvidia-smi.
+  sim:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - name: Exercise the sim workload
+        run: ./scripts/dev/test-sim.sh
+
   # The ledger decides what an uninstall may remove from a provisioned machine,
   # so its bug is measured in packages someone did not ask to lose. No runner has
   # a machine to prove that on, and rehearsing a removal in a container proves

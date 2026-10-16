@@ -374,10 +374,15 @@ The GPU tower is `workstation`. It runs the sim and the dataset engine together,
 so its bridge is the union of `robot` and `processor`; `processor` alone left it
 holding a session and publishing no joint states (fm-comms#20).
 
+A sim host is `sim`. fm-comms renders `bridge-sim.json5` for it, which carries
+the run's state outward and nothing inward; the run itself is driven through the
+sim agent (see [Sim Host](#sim-host)).
+
 ```bash
 fm machine init --name fm-rec-01 --workload recorder
 fm machine init --workload cockpit           # a Mac: its own bridge
 fm machine init --workload workstation       # the GPU tower: robot + processor
+fm machine init --workload sim               # a sim host: bridge-sim.json5
 fm machine init --workload none              # repurposed; no bridge any more
 ```
 
@@ -659,6 +664,72 @@ The generated rule is checked with `visudo -c` before it is installed, and again
 in CI, because a malformed file in `/etc/sudoers.d` breaks sudo for every account
 on the host, including the one that would have to repair it. Confirm what an
 account may do with `sudo -l -U <name>`.
+
+## Sim Host
+
+The `sim` step (`scripts/steps/91-sim.sh`, on in the workstation role) makes a
+workstation a sim host: the fm-sim image and fm-sim's sim agent, run by systemd.
+Whether the host can run Isaac Sim 4.5 is `isaac-sim`'s check, which reports the
+driver against Isaac's minimum, the GPU, and the GPU inside a container.
+
+| Part | What the step does |
+| --- | --- |
+| Image | pulls `ghcr.io/first-motive/fm-sim@<FM_SIM_IMAGE_DIGEST_DEFAULT>`, or the `jazzy` tag while no digest is pinned |
+| Agent | fetches fm-sim at `FM_SIM_COMMIT_DEFAULT` as root, copies its `agent/` into `/opt/fm-sim-agent`, builds its venv, and writes the unit from fm-sim's template |
+| Bridge | reports which bridge the card selects; `workload: "sim"` selects fm-comms' `bridge-sim.json5` |
+
+**The `fm-sim` account is in the docker group, and that group is
+root-equivalent:** a member can start a container that mounts the host's
+filesystem. Root sources this fm-setup checkout, which is trusted as it is for
+every step. Beyond that, the three things the sim step brings in for the agent —
+its code, the uv that builds its venv, and its unit template — come only from
+pinned sources root fetches and keeps in root-owned places:
+
+- Root fetches the pinned commit itself, from GitHub, into
+  `/opt/fm-sim-agent/src.git`, with a scrubbed environment and replace objects
+  off. A workspace checkout of fm-sim, if there is one, is never read. With no
+  commit pinned, the step installs no agent.
+- The commit's `agent/` tree is listed first and refused if it holds a symlink
+  or a submodule. It is then copied with `git archive` into
+  `/opt/fm-sim-agent/project`, root:root, directories 755 and files 644.
+- Root builds the venv with a uv downloaded at `FM_UV_VERSION` and checked
+  against `FM_SIM_UV_SHA256_MAP` — never the operator's own uv — with no uv
+  config file, no inherited index, and a fixed PATH (`uv sync --frozen
+  --no-editable`). The service starts `/opt/fm-sim-agent/venv/bin/fm-sim-agent`
+  and runs no uv and no build.
+- fm-sim's template is parsed against an allowlist
+  (`scripts/internal/sim-lib.sh`): known sections and keys, each once, every
+  value in its expected shape, `User=@USER@`, and `ExecStart` exactly as fm-sim
+  ships it. The step then replaces `ExecStart` with the installed entrypoint
+  and this host's flags: `--image`, `--runs-dir /data/sim-runs`, and
+  `FM_SIM_AGENT_FLAGS` (`--gpus` and the memory, process, duration and
+  free-disk limits). Host networking and host IPC are the agent's default.
+- The docker grant is asked for and auto-declines under `NONINTERACTIVE=1`.
+  Without a pinned image digest the step writes the unit but grants nothing and
+  enables nothing. The unit starts once `/etc/fm-comms.env` exists.
+- Every privileged command is checked; one that fails stops the step with exit
+  1 before anything is recorded as installed.
+
+One input is not pinned yet: fm-sim's `[build-system]` names `hatchling`
+without a version, and root runs that build backend once at install time. Pinning
+it is a follow-up in fm-sim.
+
+The tailnet ACL on the router's 7447 is the boundary on who can call the agent.
+
+```
+/etc/systemd/system/fm-sim-agent.service    rendered from fm-sim's template
+/opt/fm-sim-agent/src.git                   root's fetch of the pinned commit
+/opt/fm-sim-agent/{project,venv,bin/uv}     the agent, its venv, and the pinned uv (root:root)
+/var/cache/fm-sim-agent/                    root's uv cache for that build
+/var/lib/fm-sim/                            the account's home; nothing installed there
+/data/sim-runs/                             run summaries and MCAPs (fm-sim:fm, 2770)
+```
+
+```bash
+bash scripts/steps/91-sim.sh install --dry-run   # the plan and the rendered unit; changes nothing
+./install.sh --workstation --check --only sim,isaac-sim
+./scripts/dev/test-sim.sh                        # stand-in sudo, systemctl, curl, uv, docker; no root
+```
 
 ## The Data Root
 
