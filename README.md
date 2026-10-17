@@ -4,17 +4,20 @@ Machine provisioning for First Motive. One repo defines what a First Motive host
 is, so any machine can be rebuilt from a clean install without anyone
 remembering what was done to the last one.
 
-Three roles:
+Four roles:
 
 ```
-workstation   Ubuntu 26.04, RTX GPU   training, annotation, sim
-jetson        Ubuntu 22.04, Orin Nano capture rig
-trainer       Ubuntu 26.04, cloud GPU training only
+workstation   Ubuntu 26.04, RTX GPU          training, annotation, sim
+jetson        Ubuntu 22.04, Orin Nano        capture rig
+trainer       Ubuntu 26.04, cloud GPU        training only
+sim-cloud     Ubuntu 24.04/26.04, cloud GPU  sim runs, unattended
 ```
 
-`trainer` is the one role hardware detection cannot find — a cloud GPU instance
-looks exactly like a tower — so it is named once with `--trainer` and recorded
-on the machine's card, which every converge afterwards reads.
+`trainer` and `sim-cloud` are the roles hardware detection cannot find — a cloud
+GPU instance looks exactly like a tower — so each is named with its flag and
+recorded on the machine's card, which every converge afterwards reads.
+`sim-cloud` is provisioned only by fm-sim's AWS stack; see
+[Cloud Sim Host](#cloud-sim-host).
 
 fm-setup owns the **machine** layer — drivers, container runtime, ROS 2, users,
 kernel tuning. [`fm_ros2`](https://github.com/first-motive/fm-ros2) owns the
@@ -450,7 +453,8 @@ scripts/
 
 docs/diagrams/          d2 sources + rendered svg sidecars
 templates/              files a step deploys onto the machine
-└─ machine/             the identity card's schema — the cross-repo contract
+├─ machine/             the identity card's schema — the cross-repo contract
+└─ tailscale/           tailnet policy the operator applies by hand
 ```
 
 Roles share `scripts/steps/` rather than owning a directory each, so a step more
@@ -729,6 +733,93 @@ The tailnet ACL on the router's 7447 is the boundary on who can call the agent.
 bash scripts/steps/91-sim.sh install --dry-run   # the plan and the rendered unit; changes nothing
 ./install.sh --workstation --check --only sim,isaac-sim
 ./scripts/dev/test-sim.sh                        # stand-in sudo, systemctl, curl, uv, docker; no root
+```
+
+### Cloud Sim Host
+
+The `sim-cloud` role is a sim host on a cloud GPU instance. fm-sim's AWS stack
+(`infra/aws/sim/` in fm-sim) launches the instance, writes
+`/etc/fm-sim-cloud/host.env`, fetches this repo at the commit it pins, and runs,
+as root:
+
+```bash
+set -a; . /etc/fm-sim-cloud/host.env; set +a
+NONINTERACTIVE=1 timeout 60m /opt/fm/fm-setup/install.sh --sim-cloud
+```
+
+The role must finish unattended: a failure terminates the instance. It accepts
+Ubuntu 24.04 (the stack's default AWS Deep Learning Base GPU AMI) and 26.04, and
+installs no GPU driver; the image ships one.
+
+| host.env | What the role does with it |
+| --- | --- |
+| `FM_MACHINE_NAME` | the card's name (`sim-cloud` by default; the agent serves `fm/sim/sim_cloud/*`), the hostname, and the tailnet name |
+| `FM_SETUP_SHA` | refuses to run unless this checkout's `HEAD` is that commit |
+| `FM_SIM_COMMIT`, `FM_SIM_IMAGE_DIGEST` | the sim step's agent commit and image digest |
+| `FM_ROUTER_ENDPOINT` | `FM_ROUTER_ENDPOINT` in `/etc/fm-comms.env`, which the agent's and the bridge's units read |
+| `FM_TS_AUTHKEY_SSM_PARAMETER`, `FM_SIM_CLOUD_REGION` | where the Tailscale auth key is read from |
+| `FM_TS_TAG` | the tag the node advertises (`tag:sim-cloud`) |
+
+`install.sh` checks every one of these, and the checkout's commit, before any
+step runs, and names each one that is missing or malformed. `scripts/update.sh`
+(what `fm update` runs) reads the required variables from host.env as data when
+its caller has not exported them; a checkout pulled past `FM_SETUP_SHA` is still
+refused, since the stack pins the commit.
+
+The steps are the trainer's less five, plus the sim workload and five of the
+role's own (`./install.sh --sim-cloud --list`). It drops `system-update` and
+`nvidia`, because an upgrade on a fresh instance can move the image's driver
+under the loaded module; `etckeeper`, because `/etc`'s history ends with the
+instance; and `fm-policy` and `ffmpeg`, because nothing on a sim host trains.
+
+| Step | What it does |
+| --- | --- |
+| `sim-cloud-host` | repeats the host.env check; makes apt wait for the lock first-boot upgrades hold |
+| `sim-cloud-card` | writes the card (role `sim-cloud`, workload `sim`) through `machine init`, which also sets the hostname |
+| `tailscale-authkey` | reads the auth key from SSM and joins with `--advertise-tags=$FM_TS_TAG`, without Tailscale SSH |
+| `comms-bridge` | fetches fm-comms at `FM_COMMS_COMMIT` (the commit of `FM_COMMS_TAG`, the tag fm_ros2 pins) into `/opt/fm-comms` as root; places `/etc/fm-comms.env` from its example with the router, `FM_ROS_DISTRO=jazzy`, and the image; and runs fm-comms' own `install.sh --role bridge`, which enables `fm-zenoh-bridge.service` with the `bridge-sim` profile the card selects |
+| `sim` | as on a workstation, except the docker grant is given without a prompt |
+| `sim-cloud-ready` | fails the role unless docker and the driver answer, the agent is enabled and stays active, the bridge is enabled and active, `fm-sim` holds the docker grant, and the node carries the tag |
+
+`fm-cli` installs the CLI for the account running the role, and not the
+machine-wide `/usr/local/bin/fm`: that install asks first, and an unattended
+run declines.
+
+The bridge is the one fm-comms ships: `bridge-sim` publishes a run's state
+outward and subscribes to nothing, on a DDS graph confined to loopback. The
+step names no profile, interface, or allow-list of its own.
+
+**The auth key never reaches the log.** cloud-init copies the run's output to
+the instance's console. aws writes the key into a 0600 file in a 0700
+directory under `/run`, a tmpfs; tailscale reads it from there
+(`--auth-key=file:…`), so argv holds only the path; and the file is shredded
+whether the join worked or not. Its shape is checked without printing it.
+
+**The docker grant is not asked for when the role runs unattended.** That is
+its stack's bootstrap, on an instance launched to serve sim runs, where an
+agent without the grant serves nothing; choosing the role is the decision to
+grant it. A person running the role interactively is asked, as on a
+workstation.
+
+**What the role does not do**, because another owner does it:
+
+- The metadata-service block. Runs use host networking as the agent's account,
+  `fm-sim`. The stack's bootstrap creates that account before the role runs, with
+  the sim step's own `useradd` flags, and installs an `iptables` owner-match rule
+  dropping its traffic to `169.254.169.254`; root keeps its access for the idle
+  check. The sim step finds the account and leaves it, and no step touches
+  `iptables`.
+- The tailnet ACL. No step can change the tailnet's policy, so
+  [`templates/tailscale/sim-cloud-acl.hujson`](templates/tailscale/sim-cloud-acl.hujson)
+  holds the grant the role needs — `tag:sim-cloud` to the router on tcp/7447,
+  nothing else — for the operator to merge into the policy file once. The auth
+  key in SSM must be tagged `tag:sim-cloud`, pre-authorised, ephemeral, and
+  given an expiry.
+
+```bash
+./install.sh --sim-cloud --list
+scripts/update.sh            # `fm update` on the host: reads host.env itself, then converges
+./scripts/dev/test-sim-cloud.sh     # stand-in aws, tailscale, sudo, systemctl; no root, no network
 ```
 
 ## The Data Root

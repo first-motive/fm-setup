@@ -177,6 +177,16 @@ jobs:
       - name: Exercise the sim workload
         run: ./scripts/dev/test-sim.sh
 
+  # The sim-cloud role runs unattended from fm-sim's AWS stack. This drives its
+  # host.env refusals, its card and env file, the auth-key join (the key never
+  # reaching output or argv), and the readiness gate, against stand-ins.
+  sim-cloud:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - name: Exercise the sim-cloud role
+        run: ./scripts/dev/test-sim-cloud.sh
+
   # The ledger decides what an uninstall may remove from a provisioned machine,
   # so its bug is measured in packages someone did not ask to lose. No runner has
   # a machine to prove that on, and rehearsing a removal in a container proves

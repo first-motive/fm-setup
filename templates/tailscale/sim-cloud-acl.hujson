@@ -1,0 +1,29 @@
+// sim-cloud-acl.hujson — the tailnet policy the sim-cloud role needs.
+//
+// fm-setup cannot change the tailnet's policy, so the operator merges these
+// entries into it by hand, in the admin console's policy file, once per
+// tailnet. The role joins as tag:sim-cloud and needs one thing: tcp/7447 on
+// the Zenoh router, where the sim agent serves fm/sim/<host>/*. It is the
+// same grant tag:fm-robot holds, and nothing else on the tailnet is reachable
+// from the host. No Tailscale SSH rule: the role does not turn SSH on.
+//
+// Replace ROUTER with how the policy names the router: its tag (for example
+// "tag:fm-router") or a host alias defined under "hosts".
+//
+// The auth key stored in the stack's SSM parameter must be tagged
+// tag:sim-cloud, pre-authorised, and ephemeral, so a terminated instance
+// leaves the tailnet on its own. Give it an expiry.
+{
+  "tagOwners": {
+    // Whoever mints the stack's auth key. autogroup:admin is the narrowest
+    // owner that needs no per-tailnet edit; name a group instead if one exists.
+    "tag:sim-cloud": ["autogroup:admin"],
+  },
+  "grants": [
+    {
+      "src": ["tag:sim-cloud"],
+      "dst": ["ROUTER"],
+      "ip":  ["tcp:7447"],
+    },
+  ],
+}

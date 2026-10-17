@@ -30,7 +30,8 @@
 #   - The unit comes from fm-sim's template only if it passes the allowlist in
 #     scripts/internal/sim-lib.sh, and its ExecStart is replaced by the
 #     installed entrypoint and this host's flags.
-#   - The docker grant is asked for (auto-declined under NONINTERACTIVE), and
+#   - The docker grant is asked for (auto-declined under NONINTERACTIVE; given
+#     without asking on the sim-cloud role run unattended, its bootstrap), and
 #     neither the grant nor the enable happens without a pinned image digest.
 #
 # install exits 1 on a failure: a malformed pin, a fetch or checksum that does
@@ -100,7 +101,8 @@ ENTRYPOINT="$VENV_DIR/bin/fm-sim-agent"
 COMMIT_MARKER="$FM_SIM_AGENT_ROOT/.fm-commit"
 UV_MARKER="$FM_SIM_AGENT_ROOT/bin/.uv-sha256"
 
-# The pins, or values named on the command line to try something first.
+# The pins, or values named on the command line to try something first. The
+# sim-cloud role always names both, from its stack's host.env.
 SIM_COMMIT="${FM_SIM_COMMIT:-$FM_SIM_COMMIT_DEFAULT}"
 SIM_DIGEST="${FM_SIM_IMAGE_DIGEST:-$FM_SIM_IMAGE_DIGEST_DEFAULT}"
 
@@ -462,13 +464,23 @@ install_unit() {
 
 # The docker grant, asked for. 0 when the account holds it, 2 when declined,
 # 1 on a failure.
+#
+# The sim-cloud role run unattended is the one exception, and grants it without
+# asking: that is its stack's bootstrap, on a single-purpose instance launched
+# to serve sim runs, where an agent without the grant serves nothing and
+# choosing the role is the decision to grant it. Run by a person, it asks.
 grant_docker() {
   if in_docker_group; then
     fm_ok "$FM_SIM_USER already in the docker group"
     return 0
   fi
   fm_warn "the docker group is equivalent to root — $FM_SIM_USER could mount the host filesystem into a container"
-  if fm_confirm "Add $FM_SIM_USER to the docker group so the sim agent can start runs?"; then
+  local unattended_cloud=0
+  if [ "${FM_ROLE:-}" = sim-cloud ] && [ "${NONINTERACTIVE:-0}" = 1 ]; then
+    unattended_cloud=1
+    fm_info "sim-cloud role, unattended: granting without a prompt"
+  fi
+  if [ "$unattended_cloud" = 1 ] || fm_confirm "Add $FM_SIM_USER to the docker group so the sim agent can start runs?"; then
     must "adding $FM_SIM_USER to the docker group" sudo usermod -aG docker "$FM_SIM_USER" || return 1
     fm_ok "$FM_SIM_USER added to the docker group"
     return 0

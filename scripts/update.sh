@@ -64,7 +64,7 @@ role_flag() {
   fi
   [ -n "$role" ] || role="$(fm_detect_role)"
   case "$role" in
-    workstation|jetson|trainer) printf -- '--%s\n' "$role" ;;
+    workstation|jetson|trainer|sim-cloud) printf -- '--%s\n' "$role" ;;
     mac) fm_err "this machine's card says role 'mac' — fm-setup provisions no macOS host"; return 1 ;;
     *) fm_err "unknown role '$role' — fix the card with 'fm machine init'"; return 1 ;;
   esac
@@ -80,6 +80,14 @@ main() {
   esac
 
   flag="$(role_flag)" || return 1
+  # A cloud sim host is configured by its stack's host.env, which the bootstrap
+  # exported and a later caller has not. install.sh still refuses the role if
+  # the file is incomplete, or if this checkout has moved off FM_SETUP_SHA.
+  if [ "$flag" = "--sim-cloud" ]; then
+    # shellcheck source=internal/sim-cloud-lib.sh disable=SC1091
+    . "$FM_ROOT/scripts/internal/sim-cloud-lib.sh"
+    sim_cloud_load_host_env
+  fi
   fm_log "converging fm-setup ($flag, $mode) from $FM_ROOT"
 
   if [ "$mode" = "check" ]; then

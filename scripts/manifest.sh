@@ -131,6 +131,45 @@ TRAINER_STEPS=(
   "agent-ruleset|80-agent-ruleset.sh|on"
 )
 
+# A cloud GPU instance that hosts sim runs: fm-sim's AWS stack (infra/aws/sim in
+# fm-sim) launches it, and its bootstrap runs this role unattended as root with
+# /etc/fm-sim-cloud/host.env exported. Every launch is a fresh instance that
+# lives for hours, and any failure terminates it.
+#
+# The trainer's steps, less five, plus the sim workload and four of its own:
+#
+#   - No system-update or nvidia. The GPU image is the pin: it ships the driver,
+#     and an upgrade on a fresh instance can move the driver's userspace under
+#     the module already loaded, which breaks nvidia-smi until a reboot that
+#     never comes. Packages a later step installs still get a fresh apt update.
+#   - No etckeeper: /etc's history ends when the instance does.
+#   - No fm-policy or ffmpeg: a sim host trains nothing, and fm-policy's clone
+#     needs a credential an unattended host does not have.
+#
+# The five of its own: sim-cloud-host checks host.env before anything changes;
+# sim-cloud-card writes the card, after base-deps installs jq and before
+# workspace reads the card; tailscale-authkey joins the tailnet; comms-bridge
+# installs fm-comms' zenoh bridge, whose bridge-sim profile carries a run's
+# state to the fleet, and the /etc/fm-comms.env the sim step needs; and
+# sim-cloud-ready fails the run when the host would not serve.
+SIM_CLOUD_STEPS=(
+  "sim-cloud-host|01-sim-cloud-host.sh|on"
+  "base-deps|10-base-deps.sh|on"
+  "sim-cloud-card|11-sim-cloud-card.sh|on"
+  "workspace|12-workspace.sh|on"
+  "data-root|13-data-root.sh|on"
+  "fm-cli|15-fm-cli.sh|on"
+  "docker|30-docker.sh|on"
+  "nvidia-container|35-nvidia-container-toolkit.sh|on"
+  "tailscale|60-tailscale.sh|on"
+  "tailscale-authkey|61-tailscale-authkey.sh|on"
+  "comms-bridge|62-comms-bridge.sh|on"
+  "users|70-users.sh|on"
+  "agent-ruleset|80-agent-ruleset.sh|on"
+  "sim|91-sim.sh|on"
+  "sim-cloud-ready|92-sim-cloud-ready.sh|on"
+)
+
 # --- Machine identity ------------------------------------------------------
 #
 # One file per machine says what that machine is, and everything host-shaped is
@@ -158,11 +197,11 @@ FM_MACHINE_SCHEMA_VERSION=1
 # to know what it may rely on.
 FM_MACHINE_SCHEMA=templates/machine/machine.schema.json
 
-# Roles a card may declare. The three provisioning roles plus `mac` and `robot`,
+# Roles a card may declare. The four provisioning roles plus `mac` and `robot`,
 # which fm-setup never provisions — a laptop still needs a name, a fleet, and a
 # workspace to point at, and a robot arrives on its vendor's own OS, adopted by
 # `fm device adopt` rather than flashed.
-FM_MACHINE_ROLES=(workstation jetson trainer mac robot)
+FM_MACHINE_ROLES=(workstation jetson trainer sim-cloud mac robot)
 
 # Middleware profiles a card may declare. zenoh is the supported path; dds-lan
 # is the labelled escape hatch for hardware that has not been through the
@@ -207,6 +246,7 @@ FM_MACHINE_NAME_ABBREV=(
   "jetson|rec"
   "workstation|ws"
   "trainer|trn"
+  "sim-cloud|sim"
   "mac|mac"
   "robot|rob"
 )
@@ -288,6 +328,13 @@ FM_SETUP_LEGACY_DIR="$HOME/.first-motive/fm-setup"
 FM_OS_CODENAME_WORKSTATION=resolute
 FM_OS_CODENAME_JETSON=jammy
 FM_OS_CODENAME_TRAINER=resolute
+
+# The sim-cloud role accepts two releases, space-separated. Its stack's default
+# image is AWS's Deep Learning Base GPU AMI, which is Ubuntu 24.04 and ships the
+# driver, Docker, and the AWS CLI; an operator may point the stack at a 26.04
+# GPU image instead. The role installs no GPU driver, which is what lets it
+# take either.
+FM_OS_CODENAME_SIM_CLOUD="noble resolute"
 
 # --- Base packages ---------------------------------------------------------
 
@@ -803,6 +850,53 @@ FM_SIM_AGENT_FLAGS=(
   --max-run-minutes 120
   --min-free-gb 50
 )
+
+# --- Cloud sim host --------------------------------------------------------
+
+# What the sim-cloud role reads from its stack's bootstrap. The bootstrap writes
+# this file and exports it before it runs the role; the role reads the values
+# from its environment and never sources the file itself.
+FM_SIM_CLOUD_HOST_ENV=/etc/fm-sim-cloud/host.env
+
+# The host.env variables the role refuses to start without. The idle check's
+# own three (FM_SIM_CLOUD_REGION, FM_SIM_IDLE_MINUTES,
+# FM_SIM_MAX_LIFETIME_MINUTES) are the bootstrap's business, except the region,
+# which the auth key read needs.
+FM_SIM_CLOUD_REQUIRED_ENV=(
+  FM_MACHINE_NAME
+  FM_SETUP_SHA
+  FM_SIM_COMMIT
+  FM_SIM_IMAGE_DIGEST
+  FM_ROUTER_ENDPOINT
+  FM_TS_AUTHKEY_SSM_PARAMETER
+  FM_TS_TAG
+  FM_SIM_CLOUD_REGION
+)
+
+# How long apt waits for a lock another process holds, in seconds. A fresh
+# instance runs apt-daily and unattended-upgrades on its first boot, the same
+# minutes the bootstrap runs this role, and apt's default is to fail at once.
+FM_SIM_CLOUD_APT_LOCK_TIMEOUT=600
+
+# fm-comms, for the zenoh bridge: the release fm_ros2 pins in fm-ros2.repos,
+# and the commit that tag names. comms-bridge fetches the commit, never the
+# tag, into a root-owned tree and runs fm-comms' own bridge installer from it.
+# Re-read the commit after a bump with:
+#   git ls-remote https://github.com/first-motive/fm-comms.git 'refs/tags/<tag>^{}'
+FM_COMMS_REPO=first-motive/fm-comms
+FM_COMMS_TAG=v0.2.5
+FM_COMMS_COMMIT=34a2208e5383eca78d57900ce6b164bc79a7320f
+FM_COMMS_ROOT=/opt/fm-comms
+FM_COMMS_BRIDGE_UNIT=fm-zenoh-bridge.service
+
+# The ROS distro a sim run's graph is built with: the fm-sim image is Jazzy.
+# fm-comms' bridge parses discovery per distro and defaults to Humble, which
+# routes nothing from a Jazzy graph while the unit looks healthy.
+FM_SIM_CLOUD_ROS_DISTRO=jazzy
+
+# The tailnet ACL the role needs and cannot set itself, as a policy file
+# fragment for the operator to merge into the tailnet policy.
+FM_SIM_CLOUD_ACL_TEMPLATE=templates/tailscale/sim-cloud-acl.hujson
 
 # --- Networking ------------------------------------------------------------
 
