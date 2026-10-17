@@ -27,7 +27,7 @@ check — report provisioning state, change nothing
 
 Usage: ./run.sh check [options]
 
-  --workstation | --jetson | --trainer
+  --workstation | --jetson | --trainer | --sim-cloud
                              role to check (default: detected)
   --only  a,b,c              check only these step ids
   --skip  a,b,c              check every step except these ids
@@ -43,6 +43,7 @@ main() {
       --workstation) role="workstation"; shift ;;
       --jetson)      role="jetson"; shift ;;
       --trainer)     role="trainer"; shift ;;
+      --sim-cloud)   role="sim-cloud"; shift ;;
       --only)        fm_collect FM_ONLY "${2:-}"; shift 2 ;;
       --skip)        fm_collect FM_SKIP "${2:-}"; shift 2 ;;
       -h|--help)     usage; return 0 ;;

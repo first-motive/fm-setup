@@ -813,6 +813,19 @@ fm_machine_valid_name() {
   # `fm-[a-z]*-[0-9][0-9]` lets the `*` swallow anything at all, so `fm-r1-01`
   # would pass here and then fail the schema, which is exactly the kind of
   # disagreement between the two copies of this contract that they must not have.
+  # The cloud sim host's default name, which its stack and the sim contracts
+  # name: the agent serves fm/sim/sim_cloud/*. Only that role may carry it.
+  #
+  # The schema cannot tie a name to a role, so its pattern admits `sim-cloud`
+  # for any role; this check, which `machine init` and `machine doctor` run,
+  # is what holds it to one.
+  if [ "$name" = sim-cloud ]; then
+    if [ -z "$role" ] || [ "$role" = sim-cloud ]; then
+      return 0
+    fi
+    fm_err "name 'sim-cloud' is for the sim-cloud role, not '$role'"
+    return 1
+  fi
   case "$name" in
     fm-*-[0-9][0-9]) part="${name#fm-}"; part="${part%-*}" ;;
     *) fm_err "invalid name: '$name' (expected fm-<abbrev>-<nn>, e.g. fm-rec-01)"; return 1 ;;
@@ -1064,11 +1077,13 @@ fm_steps_for() {
     workstation) for entry in "${WORKSTATION_STEPS[@]:-}"; do [ -n "$entry" ] && printf '%s\n' "$entry"; done ;;
     jetson)      for entry in "${JETSON_STEPS[@]:-}";      do [ -n "$entry" ] && printf '%s\n' "$entry"; done ;;
     trainer)     for entry in "${TRAINER_STEPS[@]:-}";     do [ -n "$entry" ] && printf '%s\n' "$entry"; done ;;
-    *) fm_err "unknown role: $role (use workstation|jetson|trainer)"; return 1 ;;
+    sim-cloud)   for entry in "${SIM_CLOUD_STEPS[@]:-}";   do [ -n "$entry" ] && printf '%s\n' "$entry"; done ;;
+    *) fm_err "unknown role: $role (use workstation|jetson|trainer|sim-cloud)"; return 1 ;;
   esac
 }
 
-# fm_role_codename ROLE — echo the Ubuntu codename the role is built for.
+# fm_role_codename ROLE — echo the Ubuntu codename the role is built for, or a
+# space-separated list when the role accepts more than one release.
 # Same shape as fm_steps_for: the role→manifest mapping stays in one place.
 fm_role_codename() {
   local role="$1"
@@ -1076,7 +1091,8 @@ fm_role_codename() {
     workstation) printf '%s\n' "${FM_OS_CODENAME_WORKSTATION:-}" ;;
     jetson)      printf '%s\n' "${FM_OS_CODENAME_JETSON:-}" ;;
     trainer)     printf '%s\n' "${FM_OS_CODENAME_TRAINER:-}" ;;
-    *) fm_err "unknown role: $role (use workstation|jetson|trainer)"; return 1 ;;
+    sim-cloud)   printf '%s\n' "${FM_OS_CODENAME_SIM_CLOUD:-}" ;;
+    *) fm_err "unknown role: $role (use workstation|jetson|trainer|sim-cloud)"; return 1 ;;
   esac
 }
 # fm_require_role_os ROLE [STRICT] — refuse a role the running OS cannot satisfy.
@@ -1122,7 +1138,7 @@ fm_require_role_os() {
     return 0
   fi
 
-  [ "$have" = "$want" ] && return 0
+  case " $want " in *" $have "*) return 0 ;; esac
 
   if [ "${FM_ALLOW_OS_MISMATCH:-0}" = "1" ]; then
     fm_warn "role '$role' targets $want, this host is $have — continuing (FM_ALLOW_OS_MISMATCH=1)"

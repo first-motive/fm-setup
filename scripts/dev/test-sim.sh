@@ -381,6 +381,24 @@ assert_eq "the pinned tree is not copied again" 0 "$(count 'chown -R root:root')
 assert_eq "uv is not fetched again" 0 "$(count '^curl')"
 assert_eq "the commit is not fetched again" 0 "$(count ' fetch ')"
 
+# The sim-cloud role, unattended: the grant is given without a prompt, and the
+# unit enabled. Its stack's bootstrap made the account already.
+reset_host
+: > "$SIM_LOG"
+out="$(FM_ROLE=sim-cloud NONINTERACTIVE=1 inst </dev/null)"
+assert_has "sim-cloud: the grant is given unattended" "$(log)" "usermod -aG docker $FM_SIM_USER"
+assert_has "  and says why" "$out" "sim-cloud role, unattended: granting without a prompt"
+assert_has "  and the unit is enabled" "$(log)" "systemctl enable $FM_SIM_UNIT"
+assert_lacks "  with no prompt" "$out" "auto-declined"
+
+# Run by a person, the sim-cloud role asks like any other: a no is a no.
+reset_host
+: > "$SIM_LOG"
+out="$(printf 'n\n' | FM_ROLE=sim-cloud inst)"
+assert_has "sim-cloud, interactive: the grant is asked for" "$out" "docker grant declined"
+assert_eq "  and a no grants nothing" 0 "$(count '^usermod')"
+assert_eq "  and enables nothing" 0 "$(count '^systemctl enable')"
+
 # No digest: the unit is written, and nothing is granted or enabled, even on a yes.
 reset_host
 out="$(printf 'y\n' | env FM_SIM_COMMIT="$COMMIT" PATH="$BIN:$SYS_PATH" bash "$STEP" install 2>&1)"

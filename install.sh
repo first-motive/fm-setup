@@ -8,6 +8,7 @@
 #   ./install.sh --workstation            provision the GPU workstation
 #   ./install.sh --jetson                 provision the Jetson capture rig
 #   ./install.sh --trainer                provision the cloud GPU training host
+#   ./install.sh --sim-cloud              provision a cloud sim host, unattended (fm-sim's AWS stack)
 #   ./install.sh --workstation --check    report state, change nothing
 #   ./install.sh --workstation --list     list the role's steps
 #   ./install.sh uninstall --jetson       reverse what is reversible
@@ -145,11 +146,13 @@ Usage: ./install.sh [install|uninstall] [options]
   install      run the role's steps (default)
   uninstall    reverse the role's steps, in reverse order
 
-Role (default: detected from the hardware; never trainer — a cloud GPU
+Role (default: detected from the hardware; never trainer or sim-cloud — a cloud GPU
 instance looks exactly like a tower, so it has to be named):
   --workstation     Ubuntu 26.04 GPU box — training, annotation, sim
   --jetson          Ubuntu 22.04 Jetson Orin Nano — capture rig
   --trainer         Ubuntu 26.04 cloud GPU instance — training only
+  --sim-cloud       Ubuntu 24.04 or 26.04 cloud GPU instance — sim runs,
+                    unattended, configured by /etc/fm-sim-cloud/host.env
 
 Options:
   --check           report each step's state, change nothing
@@ -267,7 +270,7 @@ fm_selftest() {
   local here role id file missing=0
   here="$(fm_script_dir)"
   fm_log "self-test: manifest resolves, dry run for every role"
-  for role in workstation jetson trainer; do
+  for role in workstation jetson trainer sim-cloud; do
     fm_list_steps "$role"
     while IFS='|' read -r id file _; do
       if [ ! -f "$here/scripts/steps/$file" ]; then
@@ -282,6 +285,13 @@ fm_selftest() {
 }
 
 main() {
+  # cloud-init runs a bootstrap with neither set, and both are read unguarded
+  # below and in the steps. The account running this is the right answer for
+  # each.
+  export USER="${USER:-$(id -un)}"
+  [ -n "${HOME:-}" ] || HOME="$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f6)"
+  export HOME="${HOME:-/root}"
+
   fm_load_lib
   fm_banner
 
@@ -303,6 +313,7 @@ main() {
       --workstation)     role="workstation"; shift ;;
       --jetson)          role="jetson"; shift ;;
       --trainer)         role="trainer"; shift ;;
+      --sim-cloud)       role="sim-cloud"; shift ;;
       --check)           mode_flag="check"; shift ;;
       --list)            list=1; shift ;;
       --only)            fm_collect FM_ONLY "${2:-}"; shift 2 ;;
@@ -345,6 +356,16 @@ main() {
   local strict=0
   case "$mode" in install|uninstall) [ "$dry" = "1" ] || strict=1 ;; esac
   fm_require_role_os "$role" "$strict" || return 1
+
+  # The sim-cloud role is configured entirely by the environment its stack's
+  # bootstrap exports, and runs with nobody watching. Refuse it here, before any
+  # step changes anything, when that environment is incomplete or this checkout
+  # is not the commit the stack pinned — a dry run included.
+  if [ "$role" = "sim-cloud" ] && [ "$mode" = "install" ]; then
+    # shellcheck source=scripts/internal/sim-cloud-lib.sh disable=SC1091
+    . "$here/scripts/internal/sim-cloud-lib.sh"
+    sim_cloud_preflight "$here" || { fm_err "refusing the sim-cloud role — fix $FM_SIM_CLOUD_HOST_ENV"; return 1; }
+  fi
 
   fm_log "fm-setup — $role [$mode]"
   fm_info "checkout: $here"

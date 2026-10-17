@@ -94,6 +94,13 @@ do_install() {
     return 0
   fi
 
+  # A cloud sim host joins with its auth key, in the next step, and without
+  # Tailscale SSH: nothing on the tailnet needs a shell on it.
+  if [ "${FM_ROLE:-}" = "sim-cloud" ]; then
+    fm_skip "not joined — the tailscale-authkey step joins this host"
+    return 0
+  fi
+
   if [ "${NONINTERACTIVE:-0}" = "1" ]; then
     fm_warn "not joined — run this yourself: sudo tailscale up --ssh"
     return 0
