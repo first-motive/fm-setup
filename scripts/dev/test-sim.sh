@@ -156,6 +156,15 @@ UV_SHA="$(sha256sum "$UV_TARBALL" | cut -d' ' -f1)"
 SYS_PATH="/usr/bin:/bin:/usr/sbin:/sbin"
 export FM_SIM_TEST=1 FM_SIM_TEST_ROOT="$R" FM_SIM_TEST_SOURCE="file://$UPSTREAM" FM_SIM_TEST_UV_SHA256="$UV_SHA"
 step()  { env PATH="$BIN:$SYS_PATH" bash "$STEP" "$@" 2>&1; }
+# The manifest pins both, and an empty override falls back to the pin, so the
+# unpinned paths run from a copy of this tree whose manifest blanks them.
+UNPINNED="$TMP/unpinned"
+mkdir -p "$UNPINNED"
+tar -C "$FM_ROOT" --exclude=.git -cf - . | tar -C "$UNPINNED" -xf -
+sed -i -e 's/^FM_SIM_COMMIT_DEFAULT=.*/FM_SIM_COMMIT_DEFAULT=/' \
+  -e 's/^FM_SIM_IMAGE_DIGEST_DEFAULT=.*/FM_SIM_IMAGE_DIGEST_DEFAULT=/' "$UNPINNED/scripts/manifest.sh"
+UNPINNED_STEP="$UNPINNED/scripts/steps/91-sim.sh"
+unpinned() { env PATH="$BIN:$SYS_PATH" bash "$UNPINNED_STEP" "$@" 2>&1; }
 isaac() { env PATH="$BIN:$SYS_PATH" bash "$ISAAC_STEP" "$@" 2>&1; }
 log() { cat "$SIM_LOG"; }
 
@@ -215,7 +224,8 @@ assert_eq "the schema's enum carries sim" "true" \
   "$(jq '.properties.workload.enum | index("sim") != null' "$FM_ROOT/$FM_MACHINE_SCHEMA")"
 assert_eq "the workstation role registers the step" "sim|91-sim.sh|on" \
   "$(fm_steps_for workstation | grep '^sim|')"
-assert_eq "no commit is pinned until fm-sim#43 lands" "" "$FM_SIM_COMMIT_DEFAULT"
+assert_rc "the pinned commit is a full SHA" 0 grep -Eq '^[0-9a-f]{40}$' <<<"$FM_SIM_COMMIT_DEFAULT"
+assert_rc "the pinned digest is sha256:<64 hex>" 0 grep -Eq '^sha256:[0-9a-f]{64}$' <<<"$FM_SIM_IMAGE_DIGEST_DEFAULT"
 assert_eq "uv is pinned for x86_64" "x86_64|1ce5212f8f42dc7427a1bd3db4168d6d1abcf81b38d8c82a5b9d0ddc54ceebfc" \
   "$(printf '%s\n' "${FM_SIM_UV_SHA256_MAP[@]}" | grep '^x86_64|')"
 
@@ -320,7 +330,7 @@ make_upstream
 reset_host
 before="$(find "$TMP" -path "$SIM_LOG" -prune -o -print | LC_ALL=C sort)"
 rc=0
-out="$(FM_SIM_COMMIT="$COMMIT" step install --dry-run)" || rc=$?
+out="$(FM_SIM_COMMIT="$COMMIT" unpinned install --dry-run)" || rc=$?
 after="$(find "$TMP" -path "$SIM_LOG" -prune -o -print | LC_ALL=C sort)"
 assert_eq "dry run exits 0" 0 "$rc"
 assert_eq "dry run creates nothing" "$before" "$after"
@@ -328,7 +338,7 @@ assert_eq "dry run runs no privileged tool" "" "$(grep -v '^docker' "$SIM_LOG" |
 assert_has "dry run plans root's own fetch" "$out" "would fetch  $COMMIT from file://$UPSTREAM into $FM_SIM_AGENT_ROOT/src.git (as root)"
 assert_has "dry run names the uv checksum" "$out" "checked against sha256 $UV_SHA"
 assert_has "no digest: the plan grants and enables nothing" "$out" "would write the unit, grant nothing, enable nothing"
-assert_has "no pinned commit: the plan installs no agent" "$(step install --dry-run)" "would install no agent"
+assert_has "no pinned commit: the plan installs no agent" "$(unpinned install --dry-run)" "would install no agent"
 assert_rc "a commit that is not a full SHA is refused" 1 env FM_SIM_COMMIT=main PATH="$BIN:$SYS_PATH" bash "$STEP" install --dry-run
 assert_rc "a malformed digest is refused" 1 env FM_SIM_COMMIT="$COMMIT" FM_SIM_IMAGE_DIGEST='sha256:nope; rm -rf /' \
   PATH="$BIN:$SYS_PATH" bash "$STEP" install --dry-run
@@ -401,7 +411,7 @@ assert_eq "  and enables nothing" 0 "$(count '^systemctl enable')"
 
 # No digest: the unit is written, and nothing is granted or enabled, even on a yes.
 reset_host
-out="$(printf 'y\n' | env FM_SIM_COMMIT="$COMMIT" PATH="$BIN:$SYS_PATH" bash "$STEP" install 2>&1)"
+out="$(printf 'y\n' | env FM_SIM_COMMIT="$COMMIT" PATH="$BIN:$SYS_PATH" bash "$UNPINNED_STEP" install 2>&1)"
 assert_eq "no digest: the unit is still written" "true" "$(exists "$UNIT")"
 assert_has "no digest: the step says it will not enable" "$out" "written, not enabled, no docker grant"
 assert_eq "no digest: usermod never ran" 0 "$(count '^usermod')"
@@ -409,7 +419,7 @@ assert_eq "no digest: systemctl enable never ran" 0 "$(count '^systemctl enable'
 
 # No commit pinned: no agent, no unit.
 reset_host
-rc=0; out="$(NONINTERACTIVE=1 FM_SIM_IMAGE_DIGEST="$DIGEST" step install)" || rc=$?
+rc=0; out="$(NONINTERACTIVE=1 FM_SIM_IMAGE_DIGEST="$DIGEST" unpinned install)" || rc=$?
 assert_eq "no commit: exits 0 at the gate" 0 "$rc"
 assert_has "no commit: says so" "$out" "no fm-sim commit pinned (FM_SIM_COMMIT_DEFAULT) — no agent installed"
 assert_eq "no commit: no agent tree" "false" "$(exists "$AGENT")"
