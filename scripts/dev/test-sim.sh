@@ -45,7 +45,7 @@ ISAAC_STEP="$FM_ROOT/scripts/steps/90-isaac-sim.sh"
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT INT TERM HUP
-unset FM_HOME FM_SIM_IMAGE_DIGEST FM_SIM_COMMIT NONINTERACTIVE FAKE_FAIL
+unset FM_HOME FM_SIM_IMAGE_DIGEST FM_SIM_COMMIT FM_SIM_CONTROLLERS FM_SIM_CONTROLLERS_IMAGE_DIGEST FM_ROLE NONINTERACTIVE FAKE_FAIL
 export FM_MACHINE_FILE="$TMP/machine.json"
 R="$TMP/root"
 WS="$TMP/ws"
@@ -226,6 +226,7 @@ assert_eq "the workstation role registers the step" "sim|91-sim.sh|on" \
   "$(fm_steps_for workstation | grep '^sim|')"
 assert_rc "the pinned commit is a full SHA" 0 grep -Eq '^[0-9a-f]{40}$' <<<"$FM_SIM_COMMIT_DEFAULT"
 assert_rc "the pinned digest is sha256:<64 hex>" 0 grep -Eq '^sha256:[0-9a-f]{64}$' <<<"$FM_SIM_IMAGE_DIGEST_DEFAULT"
+assert_rc "the pinned controllers digest is sha256:<64 hex>" 0 grep -Eq '^sha256:[0-9a-f]{64}$' <<<"$FM_SIM_CONTROLLERS_IMAGE_DIGEST_DEFAULT"
 assert_eq "uv is pinned for x86_64" "x86_64|1ce5212f8f42dc7427a1bd3db4168d6d1abcf81b38d8c82a5b9d0ddc54ceebfc" \
   "$(printf '%s\n' "${FM_SIM_UV_SHA256_MAP[@]}" | grep '^x86_64|')"
 
@@ -342,6 +343,34 @@ assert_has "no pinned commit: the plan installs no agent" "$(unpinned install --
 assert_rc "a commit that is not a full SHA is refused" 1 env FM_SIM_COMMIT=main PATH="$BIN:$SYS_PATH" bash "$STEP" install --dry-run
 assert_rc "a malformed digest is refused" 1 env FM_SIM_COMMIT="$COMMIT" FM_SIM_IMAGE_DIGEST='sha256:nope; rm -rf /' \
   PATH="$BIN:$SYS_PATH" bash "$STEP" install --dry-run
+
+# The controllers image: off unless FM_SIM_CONTROLLERS=1, and then at its own pin.
+# dry VAR=value… — the pinned step's dry run with those variables set.
+dry() { env FM_SIM_COMMIT="$COMMIT" PATH="$BIN:$SYS_PATH" "$@" bash "$STEP" install --dry-run 2>&1; }
+PUBLIC_REF="${FM_SIM_IMAGE%:*}@$FM_SIM_IMAGE_DIGEST_DEFAULT"
+CTL_REF="${FM_SIM_CONTROLLERS_IMAGE%:*}@$FM_SIM_CONTROLLERS_IMAGE_DIGEST_DEFAULT"
+out="$(dry)"
+assert_has "by default the public image is pulled at its pin" "$out" "would pull   $PUBLIC_REF"
+assert_lacks "  and no private image is named" "$out" "fm-sim-controllers"
+assert_has "FM_SIM_CONTROLLERS=0 keeps the public image" "$(dry FM_SIM_CONTROLLERS=0)" "would pull   $PUBLIC_REF"
+out="$(dry FM_SIM_CONTROLLERS=1)"
+assert_has "FM_SIM_CONTROLLERS=1 pulls the controllers image at its pin" "$out" "would pull   $CTL_REF"
+assert_has "  and says it needs a GHCR login" "$out" "is private — the pull needs docker login ghcr.io"
+assert_has "  ignoring the public image's override" "$(dry FM_SIM_CONTROLLERS=1 FM_SIM_IMAGE_DIGEST="$DIGEST")" "would pull   $CTL_REF"
+assert_has "FM_SIM_CONTROLLERS_IMAGE_DIGEST overrides its pin" \
+  "$(dry FM_SIM_CONTROLLERS=1 FM_SIM_CONTROLLERS_IMAGE_DIGEST="$DIGEST")" "would pull   ${FM_SIM_CONTROLLERS_IMAGE%:*}@$DIGEST"
+assert_has "  and means nothing without the switch" "$(dry FM_SIM_CONTROLLERS_IMAGE_DIGEST="$DIGEST")" "would pull   $PUBLIC_REF"
+rc=0; out="$(dry FM_SIM_CONTROLLERS=1 FM_SIM_CONTROLLERS_IMAGE_DIGEST='sha256:nope; rm -rf /')" || rc=$?
+assert_eq "a malformed controllers digest is refused" 1 "$rc"
+assert_has "  and named" "$out" "FM_SIM_CONTROLLERS_IMAGE_DIGEST is malformed"
+assert_rc "a controllers digest with a newline is refused" 1 \
+  dry FM_SIM_CONTROLLERS=1 FM_SIM_CONTROLLERS_IMAGE_DIGEST="$DIGEST"$'\n'"evil"
+rc=0; out="$(dry FM_SIM_CONTROLLERS=yes)" || rc=$?
+assert_eq "a switch value other than 0 or 1 is refused" 1 "$rc"
+assert_has "  and named" "$out" "FM_SIM_CONTROLLERS is malformed: 'yes' (want 0 or 1)"
+rc=0; out="$(dry FM_SIM_CONTROLLERS=1 FM_ROLE=sim-cloud)" || rc=$?
+assert_eq "the sim-cloud role refuses the controllers image" 1 "$rc"
+assert_has "  and says why" "$out" "the sim-cloud role runs the public image"
 
 # --- The install path ----------------------------------------------------------------
 
@@ -569,6 +598,24 @@ assert_eq "uninstall removes the unit" "false" "$(exists "$UNIT")"
 assert_eq "uninstall removes the agent tree" "false" "$(exists "$AGENT")"
 assert_eq "uninstall leaves the runs" "true" "$(exists "$R$FM_SIM_RUNS_DIR")"
 assert_has "uninstall disables the unit" "$(log)" "systemctl disable --now $FM_SIM_UNIT"
+
+# Opted in, the unit runs the controllers image at its pin, and check says the
+# image is private. No stand-in holds that image, so its pull fails as it does
+# on a host with no GHCR login: a warning, and install still exits 0.
+make_upstream
+reset_host
+rc=0
+out="$(NONINTERACTIVE=1 FM_SIM_CONTROLLERS=1 env FM_SIM_COMMIT="$COMMIT" PATH="$BIN:$SYS_PATH" bash "$STEP" install 2>&1)" || rc=$?
+assert_eq "an opted-in install with no GHCR login exits 0" 0 "$rc"
+assert_has "  and says how to log in" "$out" "log in with: docker login ghcr.io"
+assert_has "the opted-in unit runs the controllers image at its pin" "$(cat "$UNIT")" \
+  "ExecStart=$FM_SIM_AGENT_ROOT/venv/bin/fm-sim-agent --image $CTL_REF --runs-dir"
+rc=0; out="$(FM_SIM_CONTROLLERS=1 FM_SIM_COMMIT="$COMMIT" step check)" || rc=$?
+assert_eq "an opted-in check exits 0" 0 "$rc"
+assert_has "  and says the image is private" "$out" "is private — the pull needs docker login ghcr.io"
+assert_has "  and sees its unit current" "$out" "$FM_SIM_UNIT installed and current"
+assert_has "the public check sees that unit out of date" "$(FM_SIM_COMMIT="$COMMIT" step check)" "$FM_SIM_UNIT missing or out of date"
+assert_rc "a check with a bad switch still exits 0" 0 env FM_SIM_CONTROLLERS=yes PATH="$BIN:$SYS_PATH" bash "$STEP" check
 
 # --- The bridge report ---------------------------------------------------------------
 

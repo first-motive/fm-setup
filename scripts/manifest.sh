@@ -806,6 +806,21 @@ FM_SIM_COMMIT_DEFAULT=9d531cd7989f1b2b36f2fcb85aefd3580528cdc6
 FM_SIM_IMAGE=ghcr.io/first-motive/fm-sim:jazzy
 FM_SIM_IMAGE_DIGEST_DEFAULT=sha256:25f5c4384d6be8deb8cb399313a3906008a5f7d42570988e4531da4086f744bb
 
+# The private overlay of that image, which adds the fm_skills, classical,
+# policy_serve, and fastwam controllers. A host runs it only when it opts in
+# with FM_SIM_CONTROLLERS=1 on the command line; otherwise it runs the public
+# image above. Pulling it needs `docker login ghcr.io` with a token that can
+# read first-motive packages, so a host without one keeps the public image.
+# The workstation sim step honours it; the sim-cloud role refuses it, because
+# its stack pins the public image's digest and holds no GHCR credential.
+#
+# Pinned to the index built on FM_SIM_IMAGE_DIGEST_DEFAULT. Read the tag's
+# current one with:
+#   docker buildx imagetools inspect ghcr.io/first-motive/fm-sim-controllers:jazzy
+# FM_SIM_CONTROLLERS_IMAGE_DIGEST overrides it on the command line.
+FM_SIM_CONTROLLERS_IMAGE=ghcr.io/first-motive/fm-sim-controllers:jazzy
+FM_SIM_CONTROLLERS_IMAGE_DIGEST_DEFAULT=sha256:782781b4a8a904aef21f7c09b2cfeab243eade790972c02c0dccd99adecd76b2
+
 # The account the agent runs as. Its own system user rather than a person's,
 # and outside the fm group so the roster steps never treat it as somebody. It is
 # in the docker group, which is root-equivalent: the step asks before granting

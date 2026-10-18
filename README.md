@@ -678,7 +678,7 @@ driver against Isaac's minimum, the GPU, and the GPU inside a container.
 
 | Part | What the step does |
 | --- | --- |
-| Image | pulls `ghcr.io/first-motive/fm-sim@<FM_SIM_IMAGE_DIGEST_DEFAULT>`, or the `jazzy` tag while no digest is pinned |
+| Image | pulls `ghcr.io/first-motive/fm-sim@<FM_SIM_IMAGE_DIGEST_DEFAULT>`, or the `jazzy` tag while no digest is pinned; with `FM_SIM_CONTROLLERS=1`, the private controllers image instead (below) |
 | Agent | fetches fm-sim at `FM_SIM_COMMIT_DEFAULT` as root, copies its `agent/` into `/opt/fm-sim-agent`, builds its venv, and writes the unit from fm-sim's template |
 | Bridge | reports which bridge the card selects; `workload: "sim"` selects fm-comms' `bridge-sim.json5` |
 
@@ -734,6 +734,30 @@ bash scripts/steps/91-sim.sh install --dry-run   # the plan and the rendered uni
 ./install.sh --workstation --check --only sim,isaac-sim
 ./scripts/dev/test-sim.sh                        # stand-in sudo, systemctl, curl, uv, docker; no root
 ```
+
+### Controllers Image
+
+`ghcr.io/first-motive/fm-sim-controllers` is a private overlay of the public
+image that adds the fm_skills, classical, policy_serve, and fastwam controllers.
+A host runs it only when it opts in; every other host keeps the public image.
+The manifest pins it by `FM_SIM_CONTROLLERS_IMAGE_DIGEST_DEFAULT`, the index
+built on the public pin, and `FM_SIM_CONTROLLERS_IMAGE_DIGEST` overrides that
+pin on the command line, checked against the same `sha256:<64 hex>` shape.
+
+The pull needs a GHCR login with a token that can read first-motive packages,
+made once by the operator who runs the step. fm-setup never logs in or handles
+the token:
+
+```bash
+docker login ghcr.io
+FM_SIM_CONTROLLERS=1 ./install.sh --workstation --only sim
+FM_SIM_CONTROLLERS=1 ./install.sh --workstation --check --only sim
+```
+
+Without the login, the pull fails with a warning and the agent's runs cannot
+start. Re-running without `FM_SIM_CONTROLLERS=1` returns the unit to the
+public image. The `sim-cloud` role refuses the switch: its stack pins the
+public image's digest in host.env, and the instance holds no GHCR credential.
 
 ### Cloud Sim Host
 
