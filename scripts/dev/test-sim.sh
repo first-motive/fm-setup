@@ -622,8 +622,12 @@ assert_rc "a check with a bad switch still exits 0" 0 env FM_SIM_CONTROLLERS=yes
 printf '\n── bridge ──\n'
 card workstation
 out="$(step check)"
-assert_has "another workload names the profile it selects" "$out" "card workload is 'workstation' — fm-comms renders bridge-workstation.json5, not bridge-sim.json5"
-assert_eq "check leaves the card as it was" "workstation" "$(jq -r .workload "$FM_MACHINE_FILE")"
+assert_has "workstation carries the sim topics" "$out" "card workload workstation — fm-comms renders bridge-workstation.json5, which carries the sim topics"
+assert_lacks "  and is not warned about" "$out" "carries no sim topics"
+card recorder
+out="$(step check)"
+assert_has "another workload names the profile it selects" "$out" "card workload is 'recorder' — fm-comms renders bridge-recorder.json5, which carries no sim topics"
+assert_eq "check leaves the card as it was" "recorder" "$(jq -r .workload "$FM_MACHINE_FILE")"
 card ""
 assert_has "no workload is named" "$(step check)" "the card names no workload"
 card sim

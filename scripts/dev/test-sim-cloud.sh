@@ -153,7 +153,7 @@ assert_eq "the role's steps, in order" \
 for gone in system-update nvidia etckeeper fm-policy ffmpeg; do
   assert_lacks "no $gone step" " $ids " " $gone "
 done
-assert_eq "fm-comms is pinned to the tag fm_ros2 uses" "v0.2.5" "$FM_COMMS_TAG"
+assert_eq "fm-comms is pinned to the tag fm_ros2 uses" "v0.2.6" "$FM_COMMS_TAG"
 assert_rc "  by a full commit" 0 bash -c "printf '%s' '$FM_COMMS_COMMIT' | grep -Eqx '[0-9a-f]{40}'"
 assert_eq "the bridge carries a Jazzy graph" jazzy "$FM_SIM_CLOUD_ROS_DISTRO"
 assert_eq "every step is on" "" "$(fm_steps_for sim-cloud | grep -v '|on$' || true)"

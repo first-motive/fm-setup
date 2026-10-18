@@ -44,7 +44,9 @@
 #
 # Isaac Sim's readiness is 90-isaac-sim's check. The bridge is fm-comms': the
 # card's `workload: "sim"` selects bridge-sim.json5 when fm_ros2 renders it, and
-# this step reports when the card names another workload without changing it.
+# `workload: "workstation"` selects bridge-workstation.json5, which carries the
+# same sim topics from fm-comms v0.2.6. This step reports when the card names any
+# other workload, without changing it.
 #
 #   bash scripts/steps/91-sim.sh install --dry-run    print the plan, change nothing
 #
@@ -228,12 +230,14 @@ bridge_report() {
   case "$workload" in
     sim)
       fm_ok "card workload sim — fm-comms renders bridge-sim.json5" ;;
+    workstation)
+      fm_ok "card workload workstation — fm-comms renders bridge-workstation.json5, which carries the sim topics from v0.2.6" ;;
     "")
       fm_warn "the card names no workload — no bridge carries this host's runs"
       fm_info "for a sim host: fm machine init --workload sim, then restart fm-zenoh-bridge" ;;
     *)
-      fm_warn "card workload is '$workload' — fm-comms renders bridge-$workload.json5, not bridge-sim.json5"
-      fm_info "for a sim host: fm machine init --workload sim, then restart fm-zenoh-bridge" ;;
+      fm_warn "card workload is '$workload' — fm-comms renders bridge-$workload.json5, which carries no sim topics"
+      fm_info "for a sim host: fm machine init --workload sim (or workstation), then restart fm-zenoh-bridge" ;;
   esac
 }
 
