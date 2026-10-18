@@ -43,10 +43,13 @@
 # which.
 #
 # Isaac Sim's readiness is 90-isaac-sim's check. The bridge is fm-comms': the
-# card's `workload: "sim"` selects bridge-sim.json5 when fm_ros2 renders it, and
-# `workload: "workstation"` selects bridge-workstation.json5, which carries the
-# same sim topics from fm-comms v0.2.6. This step reports when the card names any
-# other workload, without changing it.
+# card's `workload: "sim"` selects bridge-sim.json5 when fm_ros2 renders it. A
+# workstation keeps its own Humble bridge, which never discovers the Jazzy nodes
+# of a sim run, so its sim topics need fm-comms' second, Jazzy bridge
+# (`install.sh --role bridge-sim`, from FM_COMMS_TAG on). fm-setup does not
+# manage fm-comms on a workstation — fm_ros2 does — so this step prints the
+# command rather than running it. It reports any other workload without
+# changing the card.
 #
 #   bash scripts/steps/91-sim.sh install --dry-run    print the plan, change nothing
 #
@@ -222,22 +225,38 @@ uv_sha() {
 
 # --- Reports ------------------------------------------------------------------
 
-# Which bridge the card selects. Reported, never changed: the card is
+# Which bridge carries this host's runs. Reported, never changed: the card is
 # `machine init`'s, and a workload switch moves what the bridge carries.
+#
+# A workstation is the one case with a second bridge to report. Its own runs
+# Humble and cannot see the Jazzy sim nodes, so the sim topics cross only when
+# fm-comms' sim bridge unit is running beside it. fm-setup does not own the
+# workstation's fm-comms checkout (fm_ros2 does), so when that unit is not
+# active the report names the command to run there and installs nothing.
 bridge_report() {
-  local workload
+  local workload checkout
   workload="$(fm_machine_workload 2>/dev/null || true)"
   case "$workload" in
     sim)
       fm_ok "card workload sim — fm-comms renders bridge-sim.json5" ;;
     workstation)
-      fm_ok "card workload workstation — fm-comms renders bridge-workstation.json5, which carries the sim topics from v0.2.6" ;;
+      if fm_has_cmd systemctl && systemctl is-active --quiet "$FM_COMMS_SIM_BRIDGE_UNIT" 2>/dev/null; then
+        fm_ok "card workload workstation — $FM_COMMS_SIM_BRIDGE_UNIT is running, the Jazzy bridge that carries the sim topics"
+      else
+        checkout="$(fm_machine_get_opt workspace 2>/dev/null || true)"
+        checkout="${checkout:-<workspace>}/fm-comms"
+        fm_warn "card workload workstation — its Humble bridge (bridge-workstation.json5) cannot see the Jazzy sim nodes, and $FM_COMMS_SIM_BRIDGE_UNIT is not running"
+        fm_info "the sim topics need the Jazzy sim bridge; install it from this workstation's fm-comms checkout at $FM_COMMS_TAG or later:"
+        fm_info "  git -C $checkout fetch origin tag $FM_COMMS_TAG && git -C $checkout checkout --detach $FM_COMMS_TAG"
+        fm_info "  $checkout/install.sh --role bridge-sim"
+      fi ;;
     "")
       fm_warn "the card names no workload — no bridge carries this host's runs"
       fm_info "for a sim host: fm machine init --workload sim, then restart fm-zenoh-bridge" ;;
     *)
       fm_warn "card workload is '$workload' — fm-comms renders bridge-$workload.json5, which carries no sim topics"
-      fm_info "for a sim host: fm machine init --workload sim (or workstation), then restart fm-zenoh-bridge" ;;
+      fm_info "for a sim host: fm machine init --workload sim, then restart fm-zenoh-bridge"
+      fm_info "for a workstation: fm machine init --workload workstation, then add the Jazzy sim bridge (install.sh --role bridge-sim)" ;;
   esac
 }
 

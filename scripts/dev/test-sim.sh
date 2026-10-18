@@ -115,8 +115,12 @@ exec /usr/bin/install "${args[@]}"'
 for tool in chown useradd usermod userdel; do
   stub "$tool" "printf '$tool %s\n' \"\$*\" >> @LOG@"
 done
+# is-active answers 0 only for a unit named in FAKE_ACTIVE.
 stub systemctl 'printf "systemctl %s\n" "$*" >> @LOG@
-[ "$1" = is-active ] && exit 3
+if [ "$1" = is-active ]; then
+  for unit in ${FAKE_ACTIVE:-}; do for arg; do [ "$arg" = "$unit" ] && exit 0; done; done
+  exit 3
+fi
 exit 0'
 # curl serves the stand-in uv tarball to whatever -o names.
 stub curl 'printf "curl %s\n" "$*" >> @LOG@
@@ -622,8 +626,21 @@ assert_rc "a check with a bad switch still exits 0" 0 env FM_SIM_CONTROLLERS=yes
 printf '\n── bridge ──\n'
 card workstation
 out="$(step check)"
-assert_has "workstation carries the sim topics" "$out" "card workload workstation — fm-comms renders bridge-workstation.json5, which carries the sim topics"
-assert_lacks "  and is not warned about" "$out" "carries no sim topics"
+assert_has "a workstation without the sim bridge is warned about" "$out" \
+  "its Humble bridge (bridge-workstation.json5) cannot see the Jazzy sim nodes, and $FM_COMMS_SIM_BRIDGE_UNIT is not running"
+assert_has "  and told the sim topics need the Jazzy sim bridge" "$out" \
+  "the sim topics need the Jazzy sim bridge; install it from this workstation's fm-comms checkout at $FM_COMMS_TAG or later"
+assert_has "  and given the checkout's tag move" "$out" \
+  "git -C $WS/fm-comms fetch origin tag $FM_COMMS_TAG && git -C $WS/fm-comms checkout --detach $FM_COMMS_TAG"
+assert_has "  and the exact install command" "$out" "$WS/fm-comms/install.sh --role bridge-sim"
+: > "$SIM_LOG"
+out="$(step install --dry-run)"
+assert_has "the install plan prints the same command" "$out" "$WS/fm-comms/install.sh --role bridge-sim"
+assert_eq "  and runs no fm-comms installer" 0 "$(count 'install.sh --role')"
+out="$(FAKE_ACTIVE="$FM_COMMS_SIM_BRIDGE_UNIT" step check)"
+assert_has "a workstation running the sim bridge says so" "$out" \
+  "card workload workstation — $FM_COMMS_SIM_BRIDGE_UNIT is running, the Jazzy bridge that carries the sim topics"
+assert_lacks "  and prints no install command" "$out" "--role bridge-sim"
 card recorder
 out="$(step check)"
 assert_has "another workload names the profile it selects" "$out" "card workload is 'recorder' — fm-comms renders bridge-recorder.json5, which carries no sim topics"
