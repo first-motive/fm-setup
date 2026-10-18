@@ -375,7 +375,9 @@ out.
 
 The GPU tower is `workstation`. It runs the sim and the dataset engine together,
 so its bridge is the union of `robot` and `processor`; `processor` alone left it
-holding a session and publishing no joint states (fm-comms#20).
+holding a session and publishing no joint states (fm-comms#20). At the fm-comms
+release `FM_COMMS_TAG` names, it also carries every `sim` publisher, so a
+workstation such as fm-ws-01 hosts sim runs and keeps `--workload workstation`.
 
 A sim host is `sim`. fm-comms renders `bridge-sim.json5` for it, which carries
 the run's state outward and nothing inward; the run itself is driven through the
@@ -384,7 +386,7 @@ sim agent (see [Sim Host](#sim-host)).
 ```bash
 fm machine init --name fm-rec-01 --workload recorder
 fm machine init --workload cockpit           # a Mac: its own bridge
-fm machine init --workload workstation       # the GPU tower: robot + processor
+fm machine init --workload workstation       # the GPU tower: robot + processor + sim
 fm machine init --workload sim               # a sim host: bridge-sim.json5
 fm machine init --workload none              # repurposed; no bridge any more
 ```
@@ -680,7 +682,7 @@ driver against Isaac's minimum, the GPU, and the GPU inside a container.
 | --- | --- |
 | Image | pulls `ghcr.io/first-motive/fm-sim@<FM_SIM_IMAGE_DIGEST_DEFAULT>`, or the `jazzy` tag while no digest is pinned; with `FM_SIM_CONTROLLERS=1`, the private controllers image instead (below) |
 | Agent | fetches fm-sim at `FM_SIM_COMMIT_DEFAULT` as root, copies its `agent/` into `/opt/fm-sim-agent`, builds its venv, and writes the unit from fm-sim's template |
-| Bridge | reports which bridge the card selects; `workload: "sim"` selects fm-comms' `bridge-sim.json5` |
+| Bridge | reports which bridge the card selects; `workload: "sim"` selects fm-comms' `bridge-sim.json5`, and `workload: "workstation"` selects `bridge-workstation.json5`, which carries the same sim topics at the fm-comms release `FM_COMMS_TAG` names; any other workload is warned about |
 
 **The `fm-sim` account is in the docker group, and that group is
 root-equivalent:** a member can start a container that mounts the host's

@@ -231,12 +231,13 @@ FM_MACHINE_TRANSPORTS=(zenoh dds-lan)
 # so its bridge is the union of `robot` and `processor`. It is its own workload
 # rather than either half: under `processor` the tower's bridge held a session
 # and carried no joint states, which reads as a network fault and is a workload
-# that named half the machine (fm-comms#20).
+# that named half the machine (fm-comms#20). From fm-comms v0.2.6 it also carries
+# every sim publisher, so a workstation hosts sim runs without changing workload.
 #
 # `sim` is a sim host: it runs one fm-sim run at a time, driven through the sim
 # agent's `fm/sim/<host>/*` verbs, and fm-comms renders bridge-sim.json5 for it —
 # the run's state outward and nothing inward. 91-sim.sh installs the agent and
-# reports when the card names another workload.
+# reports when the card names a workload whose bridge carries no sim topics.
 FM_MACHINE_WORKLOADS=(recorder processor robot workstation router cockpit sim)
 
 # Names are fm-<abbrev>-<nn>, so two recorders on one LAN are fm-rec-01 and
@@ -901,8 +902,8 @@ FM_SIM_CLOUD_APT_LOCK_TIMEOUT=600
 # Re-read the commit after a bump with:
 #   git ls-remote https://github.com/first-motive/fm-comms.git 'refs/tags/<tag>^{}'
 FM_COMMS_REPO=first-motive/fm-comms
-FM_COMMS_TAG=v0.2.5
-FM_COMMS_COMMIT=34a2208e5383eca78d57900ce6b164bc79a7320f
+FM_COMMS_TAG=v0.2.6
+FM_COMMS_COMMIT=c5dd9f1fed9c2f643f14e1d4f4fbc320ad292fdc
 FM_COMMS_ROOT=/opt/fm-comms
 FM_COMMS_BRIDGE_UNIT=fm-zenoh-bridge.service
 
