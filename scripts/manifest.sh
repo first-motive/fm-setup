@@ -804,7 +804,7 @@ FM_SIM_COMMIT_DEFAULT=9d531cd7989f1b2b36f2fcb85aefd3580528cdc6
 #   docker buildx imagetools inspect ghcr.io/first-motive/fm-sim:jazzy
 # FM_SIM_IMAGE_DIGEST overrides it on the command line.
 FM_SIM_IMAGE=ghcr.io/first-motive/fm-sim:jazzy
-FM_SIM_IMAGE_DIGEST_DEFAULT=sha256:1865345a1521ee25fc617202cdfd36bd6404dabfb67e049b216d93d3b4f0fb92
+FM_SIM_IMAGE_DIGEST_DEFAULT=sha256:25f5c4384d6be8deb8cb399313a3906008a5f7d42570988e4531da4086f744bb
 
 # The account the agent runs as. Its own system user rather than a person's,
 # and outside the fm group so the roster steps never treat it as somebody. It is
