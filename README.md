@@ -378,8 +378,8 @@ so its bridge is the union of `robot` and `processor`; `processor` alone left it
 holding a session and publishing no joint states (fm-comms#20). That bridge runs
 Humble and cannot see the Jazzy nodes of a sim run, so a workstation such as
 fm-ws-01 that hosts sim runs keeps `--workload workstation` and adds fm-comms'
-second, Jazzy bridge from its fm-comms checkout (`install.sh --role bridge-sim`,
-fm-comms v0.2.7 on). The sim step prints that command when the unit is not
+second, Jazzy bridge from its fm-comms checkout (`install.sh --role bridge-sim`, at
+the fm-comms release `FM_COMMS_TAG` names). The sim step prints that command when the unit is not
 running; it does not run it, because fm_ros2 owns the workstation's fm-comms.
 
 A sim host is `sim`. fm-comms renders `bridge-sim.json5` for it, which carries
