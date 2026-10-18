@@ -6,7 +6,9 @@
 # control verbs under fm/sim/<host>/* and starts each run as a container of the
 # fm-sim image. This step puts both on the host:
 #
-#   the image    ghcr.io/first-motive/fm-sim, by the digest the manifest pins
+#   the image    ghcr.io/first-motive/fm-sim, by the digest the manifest pins;
+#                with FM_SIM_CONTROLLERS=1, the private fm-sim-controllers
+#                overlay by its own pin, which needs docker login ghcr.io
 #   the agent    fm-sim's agent/ at the commit the manifest pins, in a
 #                root-owned tree with a root-built venv, run by systemd as its
 #                own account
@@ -104,7 +106,21 @@ UV_MARKER="$FM_SIM_AGENT_ROOT/bin/.uv-sha256"
 # The pins, or values named on the command line to try something first. The
 # sim-cloud role always names both, from its stack's host.env.
 SIM_COMMIT="${FM_SIM_COMMIT:-$FM_SIM_COMMIT_DEFAULT}"
-SIM_DIGEST="${FM_SIM_IMAGE_DIGEST:-$FM_SIM_IMAGE_DIGEST_DEFAULT}"
+
+# Which image runs start from: the public fm-sim image, or, with
+# FM_SIM_CONTROLLERS=1, its private controllers overlay at that image's own pin.
+# DIGEST_VAR names the override, so a message says which variable to fix. Any
+# other value of the switch is refused by image_ref, which every mode calls.
+SIM_CONTROLLERS="${FM_SIM_CONTROLLERS:-0}"
+if [ "$SIM_CONTROLLERS" = 1 ]; then
+  SIM_IMAGE="$FM_SIM_CONTROLLERS_IMAGE"
+  DIGEST_VAR=FM_SIM_CONTROLLERS_IMAGE_DIGEST
+  SIM_DIGEST="${FM_SIM_CONTROLLERS_IMAGE_DIGEST:-$FM_SIM_CONTROLLERS_IMAGE_DIGEST_DEFAULT}"
+else
+  SIM_IMAGE="$FM_SIM_IMAGE"
+  DIGEST_VAR=FM_SIM_IMAGE_DIGEST
+  SIM_DIGEST="${FM_SIM_IMAGE_DIGEST:-$FM_SIM_IMAGE_DIGEST_DEFAULT}"
+fi
 
 # git with nothing inherited: no user or system config, no replace objects, no
 # prompt, and a fixed PATH. Root runs it against its own repository only.
@@ -138,15 +154,37 @@ commit_pinned() {
 
 # The image reference runs use: the digest when one is pinned.
 image_ref() {
+  case "$SIM_CONTROLLERS" in
+    0) ;;
+    1)
+      # The sim-cloud stack pins the public image's digest in host.env, and
+      # comms-bridge names that image in /etc/fm-comms.env; neither knows the
+      # overlay, and the instance holds no GHCR credential to pull it.
+      if [ "${FM_ROLE:-}" = sim-cloud ]; then
+        fm_err "FM_SIM_CONTROLLERS=1 is a workstation option — the sim-cloud role runs the public image"
+        return 1
+      fi ;;
+    *)
+      fm_err "FM_SIM_CONTROLLERS is malformed: '$SIM_CONTROLLERS' (want 0 or 1)"
+      return 1 ;;
+  esac
   if [ -z "$SIM_DIGEST" ]; then
-    printf '%s\n' "$FM_SIM_IMAGE"
+    printf '%s\n' "$SIM_IMAGE"
     return 0
   fi
-  if ! printf '%s' "$SIM_DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
-    fm_err "FM_SIM_IMAGE_DIGEST is malformed: '$SIM_DIGEST' (want sha256:<64 hex>)"
+  # grep matches line by line, so a value with a newline in it is refused first.
+  if [[ "$SIM_DIGEST" == *$'\n'* ]] || ! printf '%s' "$SIM_DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
+    fm_err "$DIGEST_VAR is malformed: '$SIM_DIGEST' (want sha256:<64 hex>)"
     return 1
   fi
-  printf '%s@%s\n' "${FM_SIM_IMAGE%:*}" "$SIM_DIGEST"
+  printf '%s@%s\n' "${SIM_IMAGE%:*}" "$SIM_DIGEST"
+}
+
+# With the controllers image chosen, say that it is private and how to reach it.
+private_image_note() {
+  [ "$SIM_CONTROLLERS" = 1 ] || return 0
+  fm_info "FM_SIM_CONTROLLERS=1: ${SIM_IMAGE%:*} is private — the pull needs docker login ghcr.io"
+  fm_info "  with a token that can read first-motive packages; without one the pull fails and runs cannot start"
 }
 
 # The installed entrypoint and the operator flags, as one ExecStart value.
@@ -244,15 +282,17 @@ do_check() {
   fi
   if [ -d "$R$FM_SIM_RUNS_DIR" ]; then fm_ok "$FM_SIM_RUNS_DIR present"; else fm_warn "$FM_SIM_RUNS_DIR missing"; fi
 
-  if ref="$(image_ref 2>/dev/null)"; then
-    [ -n "$SIM_DIGEST" ] || fm_warn "no image digest pinned (FM_SIM_IMAGE_DIGEST_DEFAULT) — the agent will not be enabled"
+  # image_ref names what it refuses, so its message is left on stderr.
+  if ref="$(image_ref)"; then
+    private_image_note
+    [ -n "$SIM_DIGEST" ] || fm_warn "no image digest pinned (${DIGEST_VAR}_DEFAULT) — the agent will not be enabled"
     if fm_has_docker && docker image inspect "$ref" >/dev/null 2>&1; then
       fm_ok "$ref pulled"
     else
       fm_warn "$ref not pulled"
     fi
   else
-    fm_warn "FM_SIM_IMAGE_DIGEST is malformed"
+    fm_warn "the sim image is refused — install will fail until the value above is fixed"
   fi
 
   if [ "$rc" = 0 ] && have_commit \
@@ -280,6 +320,7 @@ dry_run_plan() {
   [ "$rc" = 2 ] && return 1
   fm_log "dry run — nothing on this host changes"
   fm_info "would pull   $ref"
+  private_image_note
   if [ "$rc" = 1 ]; then
     fm_info "no fm-sim commit pinned (FM_SIM_COMMIT_DEFAULT) — would install no agent"
     return 0
@@ -313,7 +354,8 @@ pull_image() {
     fm_ok "$ref already pulled"
     return 0
   fi
-  [ -n "$SIM_DIGEST" ] || fm_warn "no image digest pinned (FM_SIM_IMAGE_DIGEST_DEFAULT) — pulling the moving tag $FM_SIM_IMAGE"
+  [ -n "$SIM_DIGEST" ] || fm_warn "no image digest pinned (${DIGEST_VAR}_DEFAULT) — pulling the moving tag $SIM_IMAGE"
+  private_image_note
   fm_log "pulling $ref"
   if docker pull "$ref"; then
     fm_ok "$ref pulled"
@@ -531,7 +573,7 @@ do_install() {
   esac
 
   if [ -z "$SIM_DIGEST" ]; then
-    fm_warn "no image digest pinned (FM_SIM_IMAGE_DIGEST_DEFAULT) — $FM_SIM_UNIT written, not enabled, no docker grant"
+    fm_warn "no image digest pinned (${DIGEST_VAR}_DEFAULT) — $FM_SIM_UNIT written, not enabled, no docker grant"
     return 0
   fi
   rc=0
