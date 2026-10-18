@@ -231,13 +231,15 @@ FM_MACHINE_TRANSPORTS=(zenoh dds-lan)
 # so its bridge is the union of `robot` and `processor`. It is its own workload
 # rather than either half: under `processor` the tower's bridge held a session
 # and carried no joint states, which reads as a network fault and is a workload
-# that named half the machine (fm-comms#20). From fm-comms v0.2.6 it also carries
-# every sim publisher, so a workstation hosts sim runs without changing workload.
+# that named half the machine (fm-comms#20). Its bridge runs Humble and cannot
+# see a sim run's Jazzy nodes, so a workstation that hosts sim runs adds
+# fm-comms' second, Jazzy bridge (FM_COMMS_SIM_BRIDGE_UNIT) and keeps its
+# workload; 91-sim.sh names the command when that unit is not running.
 #
 # `sim` is a sim host: it runs one fm-sim run at a time, driven through the sim
 # agent's `fm/sim/<host>/*` verbs, and fm-comms renders bridge-sim.json5 for it —
 # the run's state outward and nothing inward. 91-sim.sh installs the agent and
-# reports when the card names a workload whose bridge carries no sim topics.
+# reports which bridge carries the run for every workload.
 FM_MACHINE_WORKLOADS=(recorder processor robot workstation router cockpit sim)
 
 # Names are fm-<abbrev>-<nn>, so two recorders on one LAN are fm-rec-01 and
@@ -902,10 +904,14 @@ FM_SIM_CLOUD_APT_LOCK_TIMEOUT=600
 # Re-read the commit after a bump with:
 #   git ls-remote https://github.com/first-motive/fm-comms.git 'refs/tags/<tag>^{}'
 FM_COMMS_REPO=first-motive/fm-comms
-FM_COMMS_TAG=v0.2.6
-FM_COMMS_COMMIT=c5dd9f1fed9c2f643f14e1d4f4fbc320ad292fdc
+FM_COMMS_TAG=v0.2.7
+FM_COMMS_COMMIT=5ae60f1d97965f407fbb95d6ea817d3ccfc5705c
 FM_COMMS_ROOT=/opt/fm-comms
 FM_COMMS_BRIDGE_UNIT=fm-zenoh-bridge.service
+# A workstation's second bridge, for the Jazzy nodes of its sim runs
+# (`install.sh --role bridge-sim`, from fm-comms v0.2.7). 91-sim.sh reports it
+# and never installs it: fm_ros2 owns a workstation's fm-comms checkout.
+FM_COMMS_SIM_BRIDGE_UNIT=fm-zenoh-bridge-sim.service
 
 # The ROS distro a sim run's graph is built with: the fm-sim image is Jazzy.
 # fm-comms' bridge parses discovery per distro and defaults to Humble, which
