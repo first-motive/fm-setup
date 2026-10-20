@@ -796,7 +796,7 @@ FM_ISAAC_DRIVER_MIN=535.129.03
 # nothing is pinned, and the step would install no agent.
 # FM_SIM_COMMIT overrides it on the command line, to try a commit before pinning.
 FM_SIM_REPO=first-motive/fm-sim
-FM_SIM_COMMIT_DEFAULT=30a717c168074d5321fdacd738e6254ac31aefb7
+FM_SIM_COMMIT_DEFAULT=3c74c8915b1da218e9f6c25657e42ccd7ed573a8
 
 # The image every run starts from, by digest. Without one the step still pulls
 # the tag and writes the unit, but grants no docker rights and enables nothing:
