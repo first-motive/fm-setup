@@ -388,6 +388,16 @@ assert_eq "units are read from every step that declares them" "one.service quote
   "$(bash "$DRIFT" "$FAKE_STEPS" --declared-units | tr '\n' ' ' | sed 's/ $//')"
 assert_rc "the audit runs against a steps dir that declares none" 0 bash "$DRIFT" "$FM_ROOT/scripts/steps"
 
+# The comms units are installed outside fm-setup on a workstation (fm_ros2 and
+# fm-comms do it), so a step that relies on each must declare it, or every
+# workstation reports its bridges as drift.
+# shellcheck source=../manifest.sh disable=SC1091
+. "$FM_ROOT/scripts/manifest.sh"
+for unit in "$FM_COMMS_BRIDGE_UNIT" "$FM_COMMS_SIM_BRIDGE_UNIT"; do
+  assert_eq "a step declares $unit" "$unit" \
+    "$(bash "$DRIFT" "$FM_ROOT/scripts/steps" --declared-units | grep -x "$unit")"
+done
+
 # --- Result ----------------------------------------------------------------
 
 printf '\n'
