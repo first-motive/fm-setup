@@ -73,9 +73,11 @@ FM_ROOT="$(cd "$_here/../.." && pwd)"
 
 fm_require_linux
 
-# Literal, because the drift audit reads this line with sed. It is FM_SIM_UNIT.
+# Literal, because the drift audit reads this line with sed. It is FM_SIM_UNIT,
+# then FM_COMMS_SIM_BRIDGE_UNIT: this step installs neither the bridge nor its
+# unit, but it reports the unit, so the audit accounts for it here.
 # shellcheck disable=SC2034
-FM_UNITS=(fm-sim-agent.service)
+FM_UNITS=(fm-sim-agent.service fm-zenoh-bridge-sim.service)
 
 # test_knob NAME — echo a test hook's value, or refuse it outside a test run.
 test_knob() {

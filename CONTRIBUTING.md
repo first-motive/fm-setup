@@ -40,9 +40,10 @@ that provisions one cannot.
 3. Confirm each mode holds its contract: `check` never mutates and exits 0,
    `install` is idempotent, `uninstall` reverses what it can and warns about
    what it cannot.
-4. If the step enables a systemd unit, name it in an `FM_UNITS=(…)` array in the
-   step file. The drift audit reads that array to tell an enabled unit somebody
-   chose from one nobody did.
+4. If the step enables a systemd unit, or relies on one that another repo's
+   installer enables (fm-comms' bridges), name it in an `FM_UNITS=(…)` array in
+   the step file. The drift audit reads that array to tell an enabled unit
+   somebody chose from one nobody did.
 
 ### Packages Go Through The Ledger
 
