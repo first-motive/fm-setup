@@ -8,7 +8,9 @@
 #
 #   the image    ghcr.io/first-motive/fm-sim, by the digest the manifest pins;
 #                with FM_SIM_CONTROLLERS=1, the private fm-sim-controllers
-#                overlay by its own pin, which needs docker login ghcr.io
+#                overlay by its own pin, which needs docker login ghcr.io: the
+#                operator's own on a workstation; on the sim-cloud role, one
+#                this step makes from a GHCR token in SSM and removes again
 #   the agent    fm-sim's agent/ at the commit the manifest pins, in a
 #                root-owned tree with a root-built venv, run by systemd as its
 #                own account
@@ -70,6 +72,8 @@ FM_ROOT="$(cd "$_here/../.." && pwd)"
 . "$FM_ROOT/scripts/manifest.sh"
 # shellcheck source=../internal/sim-lib.sh disable=SC1091
 . "$FM_ROOT/scripts/internal/sim-lib.sh"
+# shellcheck source=../internal/ghcr-lib.sh disable=SC1091
+. "$FM_ROOT/scripts/internal/ghcr-lib.sh"
 
 fm_require_linux
 
@@ -163,14 +167,7 @@ commit_pinned() {
 image_ref() {
   case "$SIM_CONTROLLERS" in
     0) ;;
-    1)
-      # The sim-cloud stack pins the public image's digest in host.env, and
-      # comms-bridge names that image in /etc/fm-comms.env; neither knows the
-      # overlay, and the instance holds no GHCR credential to pull it.
-      if [ "${FM_ROLE:-}" = sim-cloud ]; then
-        fm_err "FM_SIM_CONTROLLERS=1 is a workstation option — the sim-cloud role runs the public image"
-        return 1
-      fi ;;
+    1) ;;
     *)
       fm_err "FM_SIM_CONTROLLERS is malformed: '$SIM_CONTROLLERS' (want 0 or 1)"
       return 1 ;;
@@ -190,6 +187,8 @@ image_ref() {
 # With the controllers image chosen, say that it is private and how to reach it.
 private_image_note() {
   [ "$SIM_CONTROLLERS" = 1 ] || return 0
+  # The cloud host logs itself in with its stack's token (ghcr-lib.sh).
+  ghcr_pull_needed && return 0
   fm_info "FM_SIM_CONTROLLERS=1: ${SIM_IMAGE%:*} is private — the pull needs docker login ghcr.io"
   fm_info "  with a token that can read first-motive packages; without one the pull fails and runs cannot start"
 }
@@ -573,7 +572,11 @@ do_install() {
   fm_has_docker || { fm_err "docker is not reachable — run the docker step first"; return 1; }
   fm_has_cmd systemctl || { fm_err "no systemctl — the sim agent is a systemd service"; return 1; }
 
-  pull_image "$ref"
+  if ghcr_pull_needed && ! docker image inspect "$ref" >/dev/null 2>&1; then
+    ghcr_pull "$ref" || return 1
+  else
+    pull_image "$ref"
+  fi
   if [ "$rc" = 1 ]; then
     fm_warn "no fm-sim commit pinned (FM_SIM_COMMIT_DEFAULT) — no agent installed"
     return 0

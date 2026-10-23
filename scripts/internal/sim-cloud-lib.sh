@@ -44,6 +44,27 @@ sim_cloud_env_ok() {
   _sim_cloud_match FM_TS_AUTHKEY_SSM_PARAMETER "$FM_TS_AUTHKEY_SSM_PARAMETER" '^(/[A-Za-z0-9_.-]+)+$' "an SSM parameter name" || bad=1
   _sim_cloud_match FM_TS_TAG "$FM_TS_TAG" '^tag:[a-z0-9-]+$' "tag:<name>" || bad=1
   _sim_cloud_match FM_SIM_CLOUD_REGION "$FM_SIM_CLOUD_REGION" '^[a-z]{2}(-[a-z]+)+-[0-9]+$' "an AWS region" || bad=1
+  sim_cloud_controllers_env_ok || bad=1
+  [ "$bad" = 0 ]
+}
+
+# sim_cloud_controllers_env_ok — 0 when the optional controllers lines are
+# absent, off, or complete: FM_SIM_CONTROLLERS=1 needs the token's SSM name and
+# the GitHub login, since docker login wants both and a host that cannot pull
+# should stop here rather than bill.
+sim_cloud_controllers_env_ok() {
+  local bad=0
+  _sim_cloud_match FM_SIM_CONTROLLERS "${FM_SIM_CONTROLLERS:-0}" '^[01]$' "0 or 1" || return 1
+  [ "${FM_SIM_CONTROLLERS:-0}" = 1 ] || return 0
+  # Empty takes this checkout's pin; grep sees no line in an empty value.
+  if [ -n "${FM_SIM_CONTROLLERS_IMAGE_DIGEST:-}" ]; then
+    _sim_cloud_match FM_SIM_CONTROLLERS_IMAGE_DIGEST "$FM_SIM_CONTROLLERS_IMAGE_DIGEST" \
+      '^sha256:[0-9a-f]{64}$' "empty or sha256:<64 hex>" || bad=1
+  fi
+  _sim_cloud_match FM_GHCR_TOKEN_SSM_PARAMETER "${FM_GHCR_TOKEN_SSM_PARAMETER:-}" \
+    '^(/[A-Za-z0-9_.-]+)+$' "an SSM parameter name" || bad=1
+  _sim_cloud_match FM_GHCR_USERNAME "${FM_GHCR_USERNAME:-}" \
+    '^[A-Za-z0-9][A-Za-z0-9-]{0,38}$' "a GitHub login" || bad=1
   [ "$bad" = 0 ]
 }
 
@@ -67,16 +88,16 @@ sim_cloud_preflight() {
   sim_cloud_setup_sha_ok "$1"
 }
 
-# sim_cloud_load_host_env [FILE] — export host.env's required variables, for a
+# sim_cloud_load_host_env [FILE] — export host.env's required and optional variables, for a
 # caller that did not get them from the bootstrap (`fm update` on the host).
 #
-# Read as data, never sourced: only KEY=value lines whose KEY the role requires,
+# Read as data, never sourced: only KEY=value lines whose KEY the role names,
 # and only for a variable the environment does not already set.
 sim_cloud_load_host_env() {
   local file="${1:-$FM_SIM_CLOUD_HOST_ENV}" key value
   [ -f "$file" ] || return 0
   while IFS='=' read -r key value; do
-    _fm_in_list "$key" "${FM_SIM_CLOUD_REQUIRED_ENV[@]}" || continue
+    _fm_in_list "$key" "${FM_SIM_CLOUD_REQUIRED_ENV[@]}" "${FM_SIM_CLOUD_OPTIONAL_ENV[@]}" || continue
     [ -z "${!key:-}" ] || continue
     printf -v "$key" '%s' "$value"
     export "${key?}"
