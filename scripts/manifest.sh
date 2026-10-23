@@ -945,7 +945,7 @@ FM_SIM_CLOUD_ACL_TEMPLATE=templates/tailscale/sim-cloud-acl.hujson
 # it decides what a machine with no tailscale gets; it is not a demand that
 # every machine converge on it.
 FM_TAILSCALE_VERSION=1.102.3
-FM_TAILSCALE_INSTALLER_SHA256=805e85ed6f6f81a7ea2e70d52d47e7d5290863299e5c922b2787d71aa312f22e
+FM_TAILSCALE_INSTALLER_SHA256=4207f322e10ad26b3054abe7c99dfb54da09843c8d0a50d0a82f8eff4972a0d1
 
 # CycloneDDS asks for a 128 MB socket receive buffer and treats a shortfall as
 # fatal. 134217728 = 128 MiB.
