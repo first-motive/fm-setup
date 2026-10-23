@@ -212,6 +212,17 @@ jobs:
       - name: Exercise the pinned key and installer
         run: ./scripts/dev/test-supply-chain.sh
 
+  # An image with Docker preinstalled carries its own entry for Docker's apt
+  # repo, and a second Signed-By beside ours stops apt reading any source at
+  # all. Which entries the docker step moves aside is asserted here, against a
+  # temp sources directory, rather than discovered on an unattended bootstrap.
+  docker-repo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - name: Exercise the docker apt repo cleanup
+        run: ./scripts/dev/test-docker-repo.sh
+
   # The one verb here that widens sudo. It writes into /etc/sudoers.d on a robot
   # the vendor still supports, and a malformed file there breaks sudo for every
   # account on the host — including the one that would have to repair it. So the
