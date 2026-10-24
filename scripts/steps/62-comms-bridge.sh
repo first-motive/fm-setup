@@ -14,7 +14,8 @@
 #   - /etc/fm-comms.env is placed from that commit's example when absent, then
 #     given this host's three values: FM_ROUTER_ENDPOINT from host.env,
 #     FM_ROS_DISTRO (the sim image's Jazzy), and FM_SIM_IMAGE at
-#     FM_SIM_IMAGE_DIGEST. Every other line is the example's, or whatever was
+#     FM_SIM_IMAGE_DIGEST — or, with FM_SIM_CONTROLLERS=1, the controllers
+#     image at its digest. Every other line is the example's, or whatever was
 #     there before.
 #   - fm-comms' installer pins and holds zenoh-bridge-ros2dds, renders the
 #     profile the card's `workload: sim` selects — bridge-sim.json5, outbound
@@ -66,7 +67,16 @@ GIT_ENV=(env -i PATH=/usr/bin:/bin HOME=/nonexistent GIT_NO_REPLACE_OBJECTS=1
 tree_git() { sudo "${GIT_ENV[@]}" git -c "safe.directory=$TREE" -C "$TREE" "$@"; }
 tree_head() { "${GIT_ENV[@]}" git -c "safe.directory=$TREE" -C "$TREE" rev-parse --verify --quiet HEAD 2>/dev/null || true; }
 
-image_ref() { printf '%s@%s\n' "${FM_SIM_IMAGE%:*}" "$FM_SIM_IMAGE_DIGEST"; }
+# The image runs start from, as 91-sim.sh chooses it: the public image at the
+# stack's digest, or with FM_SIM_CONTROLLERS=1 the controllers overlay at its own.
+image_ref() {
+  if [ "${FM_SIM_CONTROLLERS:-0}" = 1 ]; then
+    printf '%s@%s\n' "${FM_SIM_CONTROLLERS_IMAGE%:*}" \
+      "${FM_SIM_CONTROLLERS_IMAGE_DIGEST:-$FM_SIM_CONTROLLERS_IMAGE_DIGEST_DEFAULT}"
+  else
+    printf '%s@%s\n' "${FM_SIM_IMAGE%:*}" "$FM_SIM_IMAGE_DIGEST"
+  fi
+}
 
 # The env file's text once this host's three values are set.
 comms_text() {

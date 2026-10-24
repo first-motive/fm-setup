@@ -761,8 +761,9 @@ FM_SIM_CONTROLLERS=1 ./install.sh --workstation --check --only sim
 
 Without the login, the pull fails with a warning and the agent's runs cannot
 start. Re-running without `FM_SIM_CONTROLLERS=1` returns the unit to the
-public image. The `sim-cloud` role refuses the switch: its stack pins the
-public image's digest in host.env, and the instance holds no GHCR credential.
+public image. The `sim-cloud` role takes the switch from its stack's host.env
+and logs itself in for one pull with a GHCR token the stack keeps in SSM (see
+below), since nobody is at a cloud host to run `docker login`.
 
 ### Cloud Sim Host
 
@@ -788,6 +789,18 @@ installs no GPU driver; the image ships one.
 | `FM_ROUTER_ENDPOINT` | `FM_ROUTER_ENDPOINT` in `/etc/fm-comms.env`, which the agent's and the bridge's units read |
 | `FM_TS_AUTHKEY_SSM_PARAMETER`, `FM_SIM_CLOUD_REGION` | where the Tailscale auth key is read from |
 | `FM_TS_TAG` | the tag the node advertises (`tag:sim-cloud`) |
+| `FM_SIM_CONTROLLERS` (optional) | `1` runs the private controllers image (OpenArm, `fm_skills`); empty or `0` the public one |
+| `FM_SIM_CONTROLLERS_IMAGE_DIGEST` (optional) | the controllers image digest; empty uses this checkout's pin |
+| `FM_GHCR_TOKEN_SSM_PARAMETER`, `FM_GHCR_USERNAME` | with `FM_SIM_CONTROLLERS=1`: where the GHCR token (Packages: read) is read from, and the login it belongs to |
+
+With `FM_SIM_CONTROLLERS=1` the sim step reads the token through the instance
+role into a 0600 file in a 0700 directory under `/run`, hands it to
+`docker login ghcr.io --password-stdin` with a `DOCKER_CONFIG` inside that
+directory, pulls the pinned controllers digest, and shreds the directory,
+whether the pull worked or not. The token never reaches argv or the log, and no
+docker config outlives the pull; the pulled image stays, so runs need no login. A pull
+that fails stops the role, since a host without its image cannot serve a run.
+The bridge's `/etc/fm-comms.env` names the same image.
 
 `install.sh` checks every one of these, and the checkout's commit, before any
 step runs, and names each one that is missing or malformed. `scripts/update.sh`

@@ -425,6 +425,88 @@ rc=0; FM_MACHINE_FILE="$TMP/other.json" bash "$FM_ROOT/scripts/run/machine.sh" i
 assert_eq "machine init refuses the name sim-cloud on another role" 2 "$rc"
 assert_eq "  and writes no card" false "$([ -e "$TMP/other.json" ] && echo true || echo false)"
 
+printf '\n── controllers image: host.env and the GHCR login ──\n'
+lib_ok() { env "$@" bash -c ". '$FM_ROOT/lib.sh'; . '$FM_ROOT/scripts/manifest.sh'
+  . '$FM_ROOT/scripts/internal/sim-cloud-lib.sh'; sim_cloud_controllers_env_ok" >/dev/null 2>&1; }
+GOOD_GHCR=(FM_SIM_CONTROLLERS=1 FM_GHCR_TOKEN_SSM_PARAMETER=/fm-sim/cloud-host/ghcr-token FM_GHCR_USERNAME=TeamUbundi)
+assert_rc "no controllers lines run the public image" 0 lib_ok FM_SIM_CONTROLLERS=
+assert_rc "controllers with a token name and login are accepted" 0 lib_ok "${GOOD_GHCR[@]}"
+assert_rc "  without the login they are refused" 1 lib_ok FM_SIM_CONTROLLERS=1 FM_GHCR_TOKEN_SSM_PARAMETER=/fm-sim/cloud-host/ghcr-token
+assert_rc "  without the token name they are refused" 1 lib_ok FM_SIM_CONTROLLERS=1 FM_GHCR_USERNAME=TeamUbundi
+assert_rc "  a login that reads as a flag is refused" 1 lib_ok FM_SIM_CONTROLLERS=1 FM_GHCR_TOKEN_SSM_PARAMETER=/p FM_GHCR_USERNAME=-x
+assert_rc "  a malformed digest is refused" 1 lib_ok "${GOOD_GHCR[@]}" FM_SIM_CONTROLLERS_IMAGE_DIGEST=latest
+assert_rc "a switch that is not 0 or 1 is refused" 1 lib_ok FM_SIM_CONTROLLERS=yes
+
+need() { env "$@" bash -c ". '$FM_ROOT/lib.sh'; . '$FM_ROOT/scripts/internal/ghcr-lib.sh'; ghcr_pull_needed"; }
+assert_rc "the cloud host pulls the controllers image with its stack's token" 0 need FM_ROLE=sim-cloud FM_SIM_CONTROLLERS=1
+assert_rc "  not the public image" 1 need FM_ROLE=sim-cloud FM_SIM_CONTROLLERS=0
+assert_rc "  and a workstation keeps its own docker login" 1 need FM_ROLE=workstation FM_SIM_CONTROLLERS=1
+assert_has "the sim step takes that path" "$(cat "$FM_ROOT/scripts/steps/91-sim.sh")" 'if ghcr_pull_needed && ! docker image inspect'
+
+HE2="$TMP/host-controllers.env"
+printf '%s\n' "${HOST_ENV[@]}" FM_SIM_CONTROLLERS=1 FM_SIM_CONTROLLERS_IMAGE_DIGEST= \
+  FM_GHCR_TOKEN_SSM_PARAMETER=/fm-sim/cloud-host/ghcr-token FM_GHCR_USERNAME=TeamUbundi FM_UNKNOWN=x > "$HE2"
+out="$(env -u FM_SIM_CONTROLLERS -u FM_GHCR_USERNAME -u FM_GHCR_TOKEN_SSM_PARAMETER bash -c ". '$FM_ROOT/lib.sh'
+  . '$FM_ROOT/scripts/manifest.sh'; . '$FM_ROOT/scripts/internal/sim-cloud-lib.sh'; sim_cloud_load_host_env '$HE2'
+  printf '%s|%s|%s|%s' \"\$FM_SIM_CONTROLLERS\" \"\$FM_GHCR_USERNAME\" \"\$FM_GHCR_TOKEN_SSM_PARAMETER\" \"\${FM_UNKNOWN:-unset}\"")"
+assert_eq "fm update reads the controllers lines from host.env, and nothing else" \
+  "1|TeamUbundi|/fm-sim/cloud-host/ghcr-token|unset" "$out"
+
+GBIN="$TMP/gbin"; mkdir -p "$GBIN" "$R/run"
+GLOG="$TMP/ghcr.log"; : > "$GLOG"
+GTOKEN="github_pat_FAKE0123456789abcdefTOKEN"
+# aws prints the token as `--output text` does; docker login checks it arrived
+# on stdin, writes its config where DOCKER_CONFIG says, and pull needs that config.
+cat > "$GBIN/aws" <<EOF
+#!/usr/bin/env bash
+printf 'aws %s\n' "\$*" >> "$GLOG"
+case "\${FAKE_GHCR_AWS:-ok}" in
+  ok)  printf '%s\n' "$GTOKEN" ;;
+  bad) printf 'not-a-token\n' ;;
+  *)   echo "An error occurred (ParameterNotFound) when calling the GetParameter operation" >&2; exit 254 ;;
+esac
+EOF
+cat > "$GBIN/docker" <<EOF
+#!/usr/bin/env bash
+printf 'docker %s DOCKER_CONFIG=%s\n' "\$*" "\${DOCKER_CONFIG:-}" >> "$GLOG"
+case "\$1" in
+  login) read -r pw; [ "\$pw" = "$GTOKEN" ] || exit 1
+         mkdir -p "\$DOCKER_CONFIG"; echo '{"auths":{"ghcr.io":{}}}' > "\$DOCKER_CONFIG/config.json"
+         stat -c %a "\$(dirname "\$DOCKER_CONFIG")" > "$TMP/ghcr.dirmode"
+         stat -c %a "\$(dirname "\$DOCKER_CONFIG")/token" > "$TMP/ghcr.tokenmode" ;;
+  pull)  [ -f "\$DOCKER_CONFIG/config.json" ] || exit 1; [ "\${FAKE_PULL:-ok}" = ok ] ;;
+esac
+EOF
+chmod 0755 "$GBIN/aws" "$GBIN/docker"
+# What a pull leaves under /run; empty once the login is removed.
+ghcr_left() { compgen -G "$R/run/fm-ghcr.*" || true; }
+CREF="ghcr.io/first-motive/fm-sim-controllers@sha256:$(printf 'a%.0s' $(seq 64))"
+ghcr() {
+  env PATH="$GBIN:$SYS_PATH" FM_SIM_CLOUD_REGION=us-east-2 FM_GHCR_TOKEN_SSM_PARAMETER=/fm-sim/cloud-host/ghcr-token \
+    FM_GHCR_USERNAME=TeamUbundi bash -c ". '$FM_ROOT/lib.sh'; R='$R'; . '$FM_ROOT/scripts/internal/ghcr-lib.sh'
+    ghcr_pull '$CREF'" 2>&1
+}
+rc=0; out="$(ghcr)" || rc=$?
+assert_eq "the controllers image is pulled with the stack's token" 0 "$rc"
+assert_has "  read from SSM in the stack's region" "$(cat "$GLOG")" "aws ssm get-parameter --region us-east-2 --name /fm-sim/cloud-host/ghcr-token --with-decryption"
+assert_has "  logged in on stdin, never argv" "$(cat "$GLOG")" "docker login ghcr.io -u TeamUbundi --password-stdin"
+assert_has "  the pull uses that login" "$(cat "$GLOG")" "docker pull $CREF DOCKER_CONFIG=$R/run/fm-ghcr."
+assert_eq "  in a 0700 directory" 700 "$(cat "$TMP/ghcr.dirmode")"
+assert_eq "  with the token file 0600" 600 "$(cat "$TMP/ghcr.tokenmode")"
+assert_lacks "  the token is never printed" "$out" "$GTOKEN"
+assert_lacks "  nor in any argv" "$(cat "$GLOG")" "$GTOKEN"
+assert_eq "  and the login is gone afterwards" "" "$(ghcr_left)"
+rc=0; out="$(FAKE_GHCR_AWS=bad ghcr)" || rc=$?
+assert_eq "a parameter that is not a GitHub token fails the pull" 1 "$rc"
+assert_has "  and says so without the value" "$out" "does not hold a GitHub token"
+assert_eq "  leaving nothing behind" "" "$(ghcr_left)"
+rc=0; out="$(FAKE_GHCR_AWS=missing ghcr)" || rc=$?
+assert_eq "an unreadable parameter fails the pull" 1 "$rc"
+assert_has "  with aws's reason" "$out" "ParameterNotFound"
+rc=0; out="$(FAKE_PULL=no ghcr)" || rc=$?
+assert_eq "a failed pull is an error on a cloud host" 1 "$rc"
+assert_eq "  and the login is still removed" "" "$(ghcr_left)"
+
 # --- Result ----------------------------------------------------------------
 
 echo

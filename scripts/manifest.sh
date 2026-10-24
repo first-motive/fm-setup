@@ -893,6 +893,17 @@ FM_SIM_CLOUD_REQUIRED_ENV=(
   FM_SIM_CLOUD_REGION
 )
 
+# The host.env variables a stack may leave empty: the private controllers image,
+# chosen by FM_SIM_CONTROLLERS=1 with the SSM name of a GHCR token and the login
+# it belongs to. A stack that predates them writes none, which runs the public
+# image as before.
+FM_SIM_CLOUD_OPTIONAL_ENV=(
+  FM_SIM_CONTROLLERS
+  FM_SIM_CONTROLLERS_IMAGE_DIGEST
+  FM_GHCR_TOKEN_SSM_PARAMETER
+  FM_GHCR_USERNAME
+)
+
 # How long apt waits for a lock another process holds, in seconds. A fresh
 # instance runs apt-daily and unattended-upgrades on its first boot, the same
 # minutes the bootstrap runs this role, and apt's default is to fail at once.

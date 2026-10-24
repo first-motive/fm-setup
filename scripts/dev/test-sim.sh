@@ -373,8 +373,8 @@ rc=0; out="$(dry FM_SIM_CONTROLLERS=yes)" || rc=$?
 assert_eq "a switch value other than 0 or 1 is refused" 1 "$rc"
 assert_has "  and named" "$out" "FM_SIM_CONTROLLERS is malformed: 'yes' (want 0 or 1)"
 rc=0; out="$(dry FM_SIM_CONTROLLERS=1 FM_ROLE=sim-cloud)" || rc=$?
-assert_eq "the sim-cloud role refuses the controllers image" 1 "$rc"
-assert_has "  and says why" "$out" "the sim-cloud role runs the public image"
+assert_eq "the sim-cloud role takes the controllers image" 0 "$rc"
+assert_has "  and plans it" "$out" "${FM_SIM_CONTROLLERS_IMAGE%:*}@$FM_SIM_CONTROLLERS_IMAGE_DIGEST_DEFAULT"
 
 # --- The install path ----------------------------------------------------------------
 
