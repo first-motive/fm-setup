@@ -96,6 +96,31 @@ install_agent() {
     sudo systemctl start "$AGENT_UNIT"
   fi
   sudo systemctl is-active --quiet "$AGENT_UNIT" || { fm_err "storage agent is not active"; return 1; }
+  publish_agent_key
+}
+
+# publish_agent_key — write the agent's public key to the card as
+# storage.agent_key. Desktop reads it from the card over tailnet SSH and trusts
+# only replies it signed, so the key travels by SSH, never by the fabric.
+publish_agent_key() {
+  local key card staged
+  key="$(sudo -u "$account" "$AGENT_BIN" --public-key)" || { fm_err "the storage agent printed no key"; return 1; }
+  if ! [[ "$key" =~ ^MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE[A-Za-z0-9+/]{86}==$ ]]; then
+    fm_err "the storage agent's key is not a P-256 public key"
+    return 1
+  fi
+  card="$(fm_machine_file)"
+  [ "$(jq -r '.storage.agent_key // ""' "$card")" = "$key" ] && return 0
+  staged="$(sudo mktemp "$(dirname "$card")/.machine.XXXXXX")" || return 1
+  if jq --arg key "$key" '.storage.agent_key = $key' "$card" | sudo tee "$staged" >/dev/null &&
+     sudo chmod --reference="$card" "$staged" && sudo chown --reference="$card" "$staged"; then
+    sudo mv -- "$staged" "$card"
+    fm_ok "storage agent key published on the card"
+  else
+    sudo rm -f -- "$staged"
+    fm_err "could not write the storage agent key to $card"
+    return 1
+  fi
 }
 
 configuration() {
@@ -128,8 +153,9 @@ do_check() {
     fm_warn "cloud storage provisioning is incomplete"
   fi
   if [ -f "$AGENT_UNIT_PATH" ] && [ "$(cat "$AGENT_UNIT_PATH")" = "$(agent_unit)" ] &&
-     systemctl is-active --quiet "$AGENT_UNIT"; then
-    fm_ok "storage agent serving on zenoh"
+     systemctl is-active --quiet "$AGENT_UNIT" &&
+     [ -n "$(jq -r '.storage.agent_key // ""' "$(fm_machine_file)")" ]; then
+    fm_ok "storage agent serving on zenoh, its key on the card"
   else
     fm_warn "storage agent is not installed or not running"
   fi

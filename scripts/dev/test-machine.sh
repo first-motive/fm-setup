@@ -433,6 +433,11 @@ jq --arg key "$KEY" '.operators = [{"name":"nish","public_key":$key},{"name":"ni
 assert_rc "a repeated operator name is refused" 3 card init --storage-config "$TMP/twin-operator-storage.json"
 jq --arg key "$KEY" '.operators = [{"name":"nish","public_key":$key},{"name":"matt","public_key":$key}]' "$TMP/storage.json" > "$TMP/shared-key-storage.json"
 assert_rc "one key under two names is refused" 3 card init --storage-config "$TMP/shared-key-storage.json"
+jq --arg key "$KEY" '.agent_key = $key' "$TMP/storage.json" > "$TMP/agent-key-storage.json"
+assert_rc "an agent key is accepted" 0 card init --storage-config "$TMP/agent-key-storage.json"
+assert_eq "the agent key survives init" "$KEY" "$(field '.storage.agent_key')"
+jq '.agent_key = "not-a-key"' "$TMP/storage.json" > "$TMP/bad-agent-key-storage.json"
+assert_rc "a malformed agent key is refused" 3 card init --storage-config "$TMP/bad-agent-key-storage.json"
 printf '{"contract_version":99}' > "$TMP/invalid-storage.json"
 assert_rc "unknown storage contract is refused" 3 card init --storage-config "$TMP/invalid-storage.json"
 

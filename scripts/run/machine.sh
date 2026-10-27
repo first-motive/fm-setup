@@ -243,7 +243,9 @@ resolve_storage() {
   fi
   [ "$STORAGE_JSON" = null ] && return 0
   if ! jq -e '
-    (keys - ["contract_version","account","state_dir","locations","operators"] | length == 0) and
+    (keys - ["contract_version","account","state_dir","locations","operators","agent_key"] | length == 0) and
+    (if has("agent_key") then (.agent_key | type == "string" and length == 124 and
+      startswith("MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE") and test("^[A-Za-z0-9+/]{122}==$")) else true end) and
     ((.operators // []) | type == "array" and length <= 100 and
       ([.[].name] | length == (unique | length)) and
       ([.[].public_key] | length == (unique | length)) and
