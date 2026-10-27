@@ -762,6 +762,11 @@ FM_SYNC_SOURCE_DEFAULT=fm@fm-rec-01:/home/fm/recordings
 # and the workstation runs 26.04. Pinned to a tag: a moving `latest` would
 # change what a sim run means between two days.
 FM_ISAAC_IMAGE=nvcr.io/nvidia/isaac-sim:4.5.0
+# The sim agent starts an isaac run's Isaac Sim from this image, by digest, so a
+# retagged 4.5.0 never changes a run silently. It is the tag's digest as pulled
+# on fm-ws-01; read it with:
+#   docker image inspect nvcr.io/nvidia/isaac-sim:4.5.0 --format '{{json .RepoDigests}}'
+FM_ISAAC_IMAGE_DIGEST=sha256:c2f47dc82a7714af08d3766efe80ac9d084c2b37b5d0dfbd074797ec56390fc7
 
 # Isaac Sim rebuilds its shader and asset caches from cold on every start unless
 # they live on the host. Entries are "host-subdir|container-path"; the host side
@@ -800,7 +805,7 @@ FM_ISAAC_DRIVER_MIN=535.129.03
 # nothing is pinned, and the step would install no agent.
 # FM_SIM_COMMIT overrides it on the command line, to try a commit before pinning.
 FM_SIM_REPO=first-motive/fm-sim
-FM_SIM_COMMIT_DEFAULT=fa4161fbddfda78f2c6642c45fe850317e0464e5
+FM_SIM_COMMIT_DEFAULT=b039eca398706d0704de65f9f1d5b543578c4568
 
 # The image every run starts from, by digest. Without one the step still pulls
 # the tag and writes the unit, but grants no docker rights and enables nothing:
@@ -811,7 +816,7 @@ FM_SIM_COMMIT_DEFAULT=fa4161fbddfda78f2c6642c45fe850317e0464e5
 #   docker buildx imagetools inspect ghcr.io/first-motive/fm-sim:jazzy
 # FM_SIM_IMAGE_DIGEST overrides it on the command line.
 FM_SIM_IMAGE=ghcr.io/first-motive/fm-sim:jazzy
-FM_SIM_IMAGE_DIGEST_DEFAULT=sha256:33a921684664ee6e5ae32e049d2459a0c0bdc6150c1871a8bcb1369806a93795
+FM_SIM_IMAGE_DIGEST_DEFAULT=sha256:6ededdb300434ff931baa71a3b1a9ff9f6f6618d26466f93fc835b9fc142c128
 
 # The private overlay of that image, which adds the fm_skills, classical,
 # policy_serve, and fastwam controllers. A host runs it only when it opts in
@@ -826,7 +831,7 @@ FM_SIM_IMAGE_DIGEST_DEFAULT=sha256:33a921684664ee6e5ae32e049d2459a0c0bdc6150c187
 #   docker buildx imagetools inspect ghcr.io/first-motive/fm-sim-controllers:jazzy
 # FM_SIM_CONTROLLERS_IMAGE_DIGEST overrides it on the command line.
 FM_SIM_CONTROLLERS_IMAGE=ghcr.io/first-motive/fm-sim-controllers:jazzy
-FM_SIM_CONTROLLERS_IMAGE_DIGEST_DEFAULT=sha256:417d39dd1b58a192f4040b60944d5d126669640f00eb1f5e619d036d560d996c
+FM_SIM_CONTROLLERS_IMAGE_DIGEST_DEFAULT=sha256:f656d277fe14d0c8a41b689f98dcec867c00000e571d26125b2526ea0b4b8b2f
 
 # The account the agent runs as. Its own system user rather than a person's,
 # and outside the fm group so the roster steps never treat it as somebody. It is
@@ -861,8 +866,11 @@ FM_SIM_UNIT=fm-sim-agent.service
 # Operator flags for the agent, on the unit's ExecStart. Host networking and
 # host IPC are the agent's default and need no flag. `--image` and `--runs-dir`
 # come from the values above.
-#   --gpus               every GPU to each run: Isaac needs one
-#   --memory 32g         Isaac Sim 4.5 asks for 32 GB of RAM
+#   --gpus               every GPU to each run (MuJoCo and Gazebo render on it)
+#   --memory 32g         the run container's ceiling
+#   --isaac-image        an isaac run's Isaac Sim, in its own container beside
+#                        the run, as the agent's user with its own 24 GiB
+#                        ceiling; its shader caches persist in the agent's home
 #   --pids-limit 4096    the agent's own default, stated
 #   --max-run-minutes    the agent's own default, stated
 #   --min-free-gb 50     refuse `up` below 50 GB free; /data also holds the
@@ -870,6 +878,7 @@ FM_SIM_UNIT=fm-sim-agent.service
 FM_SIM_AGENT_FLAGS=(
   --gpus
   --memory 32g
+  --isaac-image "${FM_ISAAC_IMAGE%:*}@$FM_ISAAC_IMAGE_DIGEST"
   --pids-limit 4096
   --max-run-minutes 120
   --min-free-gb 50
