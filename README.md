@@ -910,8 +910,9 @@ fm/host/<host>/disk-users   queryable, request {refresh?: bool}
   report yet, one older than 15 minutes, or `refresh: true` starts a scan, and
   only that query waits, on `systemctl start --no-block`, for at most 5 seconds.
   Starts are at least 5 minutes apart, and a refresh inside that window is
-  refused with `too_soon`. When a scan ends, the agent publishes the same body
-  on `fm/host/<host>/disk-users`.
+  refused with `too_soon`. A restarted agent takes the last start from the
+  report's `scanned_at`, so a restart does not open the window early. When a
+  scan ends, the agent publishes the same body on `fm/host/<host>/disk-users`.
 - A refusal is a Zenoh error reply carrying `{ok: false, error: {code,
   message}}`, as fm-sim-agent sends.
 
@@ -947,9 +948,8 @@ Counting every account's files needs root, so that one job is a root oneshot,
   hard-linked file once, up to 500,000 of them; past that, a file is counted
   once per name.
 
-One input is not pinned yet, as with the sim agent: `host-agent/pyproject.toml`'s
-`[build-system]` names `hatchling` without a version, and root runs that build
-backend once at install time. Pinning it is a follow-up here.
+`host-agent/pyproject.toml` pins its build backend (`hatchling==1.32.4`), which
+root runs once at install time; fm-sim's is not pinned yet.
 
 ```
 /etc/systemd/system/fm-host-agent.service       the agent (User=fm-host)

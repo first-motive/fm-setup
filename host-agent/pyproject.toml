@@ -33,8 +33,10 @@ fm-host-disk-scan = "fm_host_agent.diskscan:main"
 [project.optional-dependencies]
 dev = ["pytest==8.4.2", "ruff==0.14.0"]
 
+# Pinned because root runs the build backend at install time: a new hatchling
+# release changes nothing until this line moves. Bump it deliberately.
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling==1.32.4"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]

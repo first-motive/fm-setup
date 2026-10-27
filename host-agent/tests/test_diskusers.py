@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from fm_host_agent.diskusers import RESCAN_S, STALE_S, DiskUsers, parse_request
+from fm_host_agent.diskusers import FUTURE_SLACK_S, RESCAN_S, STALE_S, DiskUsers, parse_request
 from tests.fakes import Systemd
 
 REPORT = {"scanned_at": 1000.0, "roots": ["/data", "/home"], "users": [{"user": "ana", "bytes": 5}]}
@@ -25,12 +25,16 @@ def report(tmp_path):
     return tmp_path / "disk-users.json"
 
 
-@pytest.fixture
-def disk(report, systemd, clock):
+def build(report, systemd, clock) -> DiskUsers:
     # One clock stands in for both: the tests move them together.
     return DiskUsers(
         report, start=systemd.start, running=systemd.running, now=lambda: clock["t"], clock=lambda: clock["t"]
     )
+
+
+@pytest.fixture
+def disk(report, systemd, clock):
+    return build(report, systemd, clock)
 
 
 def ask(disk, **request) -> dict:
@@ -138,3 +142,41 @@ def test_a_malformed_request_is_refused(disk, payload):
 
 def test_an_empty_body_is_a_plain_ask():
     assert parse_request(b"") is False
+
+
+def restarted(report, systemd, clock) -> DiskUsers:
+    """A DiskUsers built after the report exists, as on an agent restart."""
+    return build(report, systemd, clock)
+
+
+def test_a_restart_keeps_the_spacing_from_the_last_report(systemd, report, clock):
+    report.write_text(json.dumps(REPORT))
+    clock["t"] = 1000.0 + 100
+    disk = restarted(report, systemd, clock)
+    assert ask(disk, refresh=True)["error"]["code"] == "too_soon"
+    clock["t"] = 1000.0 + RESCAN_S
+    assert ask(disk, refresh=True)["state"] == "scanning"
+    assert systemd.starts == 1
+
+
+def test_a_report_stamped_slightly_ahead_spaces_from_now(systemd, report, clock):
+    report.write_text(json.dumps({**REPORT, "scanned_at": 1000.0 + FUTURE_SLACK_S}))
+    disk = restarted(report, systemd, clock)
+    assert ask(disk, refresh=True)["error"]["code"] == "too_soon"
+    clock["t"] += RESCAN_S
+    assert ask(disk, refresh=True)["state"] == "scanning"
+
+
+def test_a_report_stamped_far_ahead_is_stale(systemd, report, clock):
+    report.write_text(json.dumps({**REPORT, "scanned_at": 1001.0 + FUTURE_SLACK_S}))
+    disk = restarted(report, systemd, clock)
+    body = ask(disk)
+    assert (body["state"], body["scanned_at"]) == ("scanning", None)
+
+
+@pytest.mark.parametrize("scanned_at", [None, True, "1000", float("nan"), float("inf"), 10**400])
+def test_a_report_with_no_usable_time_leaves_no_spacing(systemd, report, clock, scanned_at):
+    report.write_text(json.dumps({**REPORT, "scanned_at": scanned_at}))
+    disk = restarted(report, systemd, clock)
+    assert disk.started_at is None
+    assert ask(disk, refresh=True)["state"] == "scanning"
