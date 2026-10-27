@@ -243,7 +243,16 @@ resolve_storage() {
   fi
   [ "$STORAGE_JSON" = null ] && return 0
   if ! jq -e '
-    (keys - ["contract_version","account","state_dir","locations"] | length == 0) and
+    (keys - ["contract_version","account","state_dir","locations","operators","agent_key"] | length == 0) and
+    (if has("agent_key") then (.agent_key | type == "string" and length == 124 and
+      startswith("MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE") and test("^[A-Za-z0-9+/]{122}==$")) else true end) and
+    ((.operators // []) | type == "array" and length <= 100 and
+      ([.[].name] | length == (unique | length)) and
+      ([.[].public_key] | length == (unique | length)) and
+      all(.[]; type == "object" and (keys == ["name","public_key"]) and
+        (.name | type == "string" and test("^[a-z0-9][a-z0-9._-]{0,63}$")) and
+        (.public_key | type == "string" and length == 124 and
+          startswith("MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE") and test("^[A-Za-z0-9+/]{122}==$")))) and
     .contract_version == 1 and
     (.account | type == "string" and test("^[a-z_][a-z0-9_-]*[$]?$")) and
     (.state_dir | type == "string" and startswith("/") and (split("/") | index("..") == null)) and

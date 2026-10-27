@@ -15,6 +15,25 @@
       "properties": {
         "contract_version": {"const": 1},
         "account": {"type": "string", "pattern": "^[a-z_][a-z0-9_-]*[$]?$"},
+        "agent_key": {
+          "description": "The storage agent's own P-256 public key (base64 DER SubjectPublicKeyInfo), written by the cloud-storage step. Desktop trusts only agent replies this key signed.",
+          "type": "string",
+          "pattern": "^MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE[A-Za-z0-9+/]{86}==$"
+        },
+        "operators": {
+          "description": "People whose Desktop may use the coordinator over Zenoh, each by a P-256 public key (base64 DER SubjectPublicKeyInfo). The fabric's analogue of SSH authorized_keys: listing a key authorises it, removing it revokes it.",
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "public_key"],
+            "properties": {
+              "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$", "description": "Who acted, as the library records it."},
+              "public_key": {"type": "string", "pattern": "^MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE[A-Za-z0-9+/]{86}==$"}
+            }
+          }
+        },
         "state_dir": {"type": "string", "pattern": "^/"},
         "locations": {
           "type": "array",

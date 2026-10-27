@@ -42,7 +42,8 @@ fm_require_linux
 fm_tools_spec() {
   local extras=""
   if jq -e '.storage.contract_version == 1' "$(fm_machine_file)" >/dev/null 2>&1; then
-    extras="[archive]"
+    # storage-agent serves the coordinator on Zenoh (step cloud-storage runs it).
+    extras="[archive,storage-agent]"
   fi
   printf 'fm-tools%s @ git+https://github.com/%s@%s\n' "$extras" "$FM_TOOLS_REPO" "$FM_TOOLS_VERSION"
 }
