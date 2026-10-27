@@ -947,9 +947,8 @@ Counting every account's files needs root, so that one job is a root oneshot,
   hard-linked file once, up to 500,000 of them; past that, a file is counted
   once per name.
 
-One input is not pinned yet, as with the sim agent: `host-agent/pyproject.toml`'s
-`[build-system]` names `hatchling` without a version, and root runs that build
-backend once at install time. Pinning it is a follow-up here.
+`host-agent/pyproject.toml` pins its build backend (`hatchling==1.32.4`), which
+root runs once at install time; fm-sim's is not pinned yet.
 
 ```
 /etc/systemd/system/fm-host-agent.service       the agent (User=fm-host)
