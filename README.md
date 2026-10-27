@@ -864,6 +864,108 @@ scripts/update.sh            # `fm update` on the host: reads host.env itself, t
 ./scripts/dev/test-sim-cloud.sh     # stand-in aws, tailscale, sudo, systemctl; no root, no network
 ```
 
+## Host Agent
+
+The `host-agent` step (`scripts/steps/93-host-agent.sh`, on in the workstation
+role) publishes the workstation's load on the fabric, so anyone can open it in
+fm-desktop's Devices view and see whether the tower is free without opening an
+SSH session. The agent's code is this repo's [`host-agent/`](host-agent/README.md).
+
+```
+fm-host-agent (fm-host)  ── every 2 s ──►  fm/host/<host>/load          fm-desktop
+        │                 ◄── query ─────  fm/host/<host>/disk-users    Devices
+        │ systemctl start (polkit: this unit only)
+        ▼
+fm-host-disk-scan (root, oneshot) ──► /var/lib/fm-host-agent/disk-users.json
+```
+
+### What It Publishes
+
+`<host>` is the identity card's name with `-` turned into `_` (`fm_ws_01`), as
+fm-sim-agent derives it. Every body is JSON; sizes are bytes and times are Unix
+seconds.
+
+```
+fm/host/<host>/load         published every 2 s, also a queryable
+  {ok, host, t, version,
+   cpu:    {percent, cores, load: [1m, 5m, 15m]},
+   memory: {used, total},
+   gpus:   [{index, name, util, mem_used, mem_total,
+             processes: [{pid, user, name, mem}]}],
+   mounts: [{path, used, total}],
+   users:  [{user, cpu_percent, rss, sessions}]}
+
+fm/host/<host>/disk-users   queryable, request {refresh?: bool}
+  {ok, state: "idle" | "scanning", scanned_at: t | null,
+   roots: ["/data", "/home"], users: [{user, bytes}]}
+```
+
+- `users` lists login accounts (uid 1000 and up, except nobody), with CPU summed over their
+  processes (so above 100% on several cores) and their login sessions.
+- A GPU process is named by its `comm`, never its command line, whose arguments
+  can carry tokens.
+- A mount's `total` is used plus free-to-users, so `used / total` is `df`'s
+  Use% and a full disk reads as 100%.
+- `disk-users` replies with the last report and whether a scan is running. No
+  report yet, one older than 15 minutes, or `refresh: true` starts a scan, and
+  only that query waits, on `systemctl start --no-block`, for at most 5 seconds.
+  Starts are at least 5 minutes apart, and a refresh inside that window is
+  refused with `too_soon`. When a scan ends, the agent publishes the same body
+  on `fm/host/<host>/disk-users`.
+- A refusal is a Zenoh error reply carrying `{ok: false, error: {code,
+  message}}`, as fm-sim-agent sends.
+
+Anyone on the tailnet who can reach the router's 7447 can read these keys: who
+is logged in, what they run on the GPUs, and how much disk each account holds.
+A `disk-users` query can also start a root scan, at most once every 5 minutes.
+The tailnet ACL is the boundary, as it is for the sim agent.
+
+### Privilege Model
+
+The agent holds no privilege. The `fm-host` account is a system account with no
+home, no login and no group beyond its own — not docker, not fm — and the agent
+reads only what any account may: `/proc`, the NVIDIA driver, `statvfs`, the
+identity card, `/etc/fm-comms.env`, and the scan's report.
+
+Counting every account's files needs root, so that one job is a root oneshot,
+`fm-host-disk-scan.service`, which the agent may start but not change:
+
+- A polkit rule (`50-fm-host-agent.rules`) lets `fm-host` start that unit and
+  nothing else. Every other systemd action it asks for falls through to
+  polkit's defaults, which refuse an account with no session.
+- The scan runs the code in `/opt/fm-host-agent`, which root copies out of this
+  checkout, refusing anything but plain files and directories, and keeps
+  root:root, directories 755 and files 644. Root builds the venv with the uv the
+  sim step pins (`FM_UV_VERSION`, checked against `FM_SIM_UV_SHA256_MAP`), with
+  no uv config file and a fixed PATH (`uv sync --frozen --no-editable`). Every
+  install hands the tree and `/var/lib/fm-host-agent` back to root and closes
+  them to other writers; `check` flags any file in either that root does not
+  own alone.
+- The scan keeps only the capability to read past file modes, writes only into
+  `/var/lib/fm-host-agent`, has no network, and runs at idle CPU and I/O
+  priority. It follows no symlink, stays on each root's filesystem, and counts a
+  hard-linked file once, up to 500,000 of them; past that, a file is counted
+  once per name.
+
+One input is not pinned yet, as with the sim agent: `host-agent/pyproject.toml`'s
+`[build-system]` names `hatchling` without a version, and root runs that build
+backend once at install time. Pinning it is a follow-up here.
+
+```
+/etc/systemd/system/fm-host-agent.service       the agent (User=fm-host)
+/etc/systemd/system/fm-host-disk-scan.service   the root scan, started on request
+/etc/polkit-1/rules.d/50-fm-host-agent.rules    fm-host may start the scan, nothing else
+/opt/fm-host-agent/{project,venv,bin/uv}        the agent, its venv, and the pinned uv (root:root)
+/var/cache/fm-host-agent/                       root's uv cache for that build
+/var/lib/fm-host-agent/disk-users.json          the scan's report (root:root, 644)
+```
+
+```bash
+bash scripts/steps/93-host-agent.sh install --dry-run   # the plan; changes nothing
+./install.sh --workstation --check --only host-agent
+./scripts/dev/test-host-agent.sh                        # stand-in sudo, systemctl, curl, uv; no root
+```
+
 ## The Data Root
 
 Every machine that holds episodes lays out the same tree inside the workspace
