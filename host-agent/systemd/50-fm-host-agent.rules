@@ -1,0 +1,14 @@
+// fm-host-agent may start fm-host-disk-scan.service, and that is all.
+//
+// The agent runs unprivileged as fm-host. Every other systemd action it asks
+// for falls through to polkit's defaults, which refuse an account with no
+// session to authenticate in. Installed as is by fm-setup's 93-host-agent.sh.
+polkit.addRule(function (action, subject) {
+  if (action.id === "org.freedesktop.systemd1.manage-units" &&
+      action.lookup("unit") === "fm-host-disk-scan.service" &&
+      action.lookup("verb") === "start" &&
+      subject.user === "fm-host") {
+    return polkit.Result.YES;
+  }
+  return polkit.Result.NOT_HANDLED;
+});

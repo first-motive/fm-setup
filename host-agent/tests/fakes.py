@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from collections import namedtuple
 from types import SimpleNamespace
 
@@ -131,3 +132,21 @@ def gpu(**overrides) -> dict:
         "mem_used": 2 * 2**30,
         "mem_total": 48 * 2**30,
     } | overrides
+
+
+class Systemd:
+    """The scan unit: started on request, running until the test ends it."""
+
+    def __init__(self) -> None:
+        self.starts = 0
+        self.active = False
+        self.refuse = False
+
+    def start(self) -> None:
+        if self.refuse:
+            raise subprocess.CalledProcessError(1, "systemctl", stderr=b"Access denied")
+        self.starts += 1
+        self.active = True
+
+    def running(self) -> bool:
+        return self.active

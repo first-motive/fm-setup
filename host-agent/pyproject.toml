@@ -27,6 +27,8 @@ dependencies = [
 
 [project.scripts]
 fm-host-agent = "fm_host_agent.service:main"
+# Run as root by fm-host-disk-scan.service, never by the agent.
+fm-host-disk-scan = "fm_host_agent.diskscan:main"
 
 [project.optional-dependencies]
 dev = ["pytest==8.4.2", "ruff==0.14.0"]
