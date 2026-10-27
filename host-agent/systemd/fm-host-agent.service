@@ -1,0 +1,34 @@
+# fm-host-agent — this host's load, published over Zenoh.
+#
+# Installed as is by fm-setup's 93-host-agent.sh; edit here and re-run it. Its
+# own account, in no group that grants anything: it reads /proc, the GPU driver
+# and the disk scan's report, and starts that scan through polkit.
+[Unit]
+Description=fm-host-agent: this host's load over Zenoh
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=fm-host
+Group=fm-host
+# The router endpoint, as every other First Motive unit reads it.
+EnvironmentFile=/etc/fm-comms.env
+ExecStart=/opt/fm-host-agent/venv/bin/fm-host-agent
+Restart=always
+RestartSec=2
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+RestrictSUIDSGID=yes
+# The router over TCP, systemd over its socket; nothing else.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+ProtectSystem=strict
+# Read-only rather than hidden: the agent reports /home's mount, which statvfs
+# can only measure while the mount is visible.
+ProtectHome=read-only
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

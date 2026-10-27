@@ -58,6 +58,10 @@ WORKSTATION_STEPS=(
   # After the container toolkit and fm-cli (whose uv builds the agent's venv):
   # the fm-sim image and the sim agent unit.
   "sim|91-sim.sh|on"
+  # Unprivileged, and after fm-cli for the same reason as sim: this checkout's
+  # host-agent/ built into a root-owned venv. Publishes the tower's load so
+  # Devices can show who is using it.
+  "host-agent|93-host-agent.sh|on"
   # Derived archive writes are an explicit operator action after provider
   # scope and retention approval.
   "archive-derived|95-archive-derived.sh|off"
@@ -870,6 +874,27 @@ FM_SIM_AGENT_FLAGS=(
   --max-run-minutes 120
   --min-free-gb 50
 )
+
+# --- Host agent --------------------------------------------------------------
+
+# fm-host-agent publishes this host's CPU, memory, GPU and disk load under
+# fm/host/<host>/. 93-host-agent.sh builds it from this checkout's host-agent/
+# into a root-owned tree and venv, with the same pinned uv the sim step checks
+# against FM_SIM_UV_SHA256_MAP, and runs it as its own account.
+#
+# The account holds no group and no sudo: not docker, not fm. Its one right is
+# a polkit rule letting it start FM_HOST_DISK_SCAN_UNIT, a root oneshot that
+# walks /data and /home and writes its report to FM_HOST_AGENT_STATE.
+#
+# The units and the rule in host-agent/systemd/ name these paths literally, so
+# a change here is a change there.
+FM_HOST_AGENT_USER=fm-host
+FM_HOST_AGENT_ROOT=/opt/fm-host-agent
+FM_HOST_AGENT_UV_CACHE=/var/cache/fm-host-agent
+FM_HOST_AGENT_STATE=/var/lib/fm-host-agent
+FM_HOST_AGENT_UNIT=fm-host-agent.service
+FM_HOST_DISK_SCAN_UNIT=fm-host-disk-scan.service
+FM_HOST_AGENT_POLKIT_RULE=/etc/polkit-1/rules.d/50-fm-host-agent.rules
 
 # --- Cloud sim host --------------------------------------------------------
 
