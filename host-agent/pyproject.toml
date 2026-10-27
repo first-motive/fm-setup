@@ -7,6 +7,9 @@
 # psutil and nvidia-ml-py rather than parsing /proc and nvidia-smi's text: both
 # are the readers those tools are built on, and their output does not change
 # shape between driver releases.
+#
+# The zenoh wheel is pinned to the version fm-sim-agent and fm-robot-agent lock,
+# on the same 1.9.x line as fm-comms' router: the fleet's single pin.
 
 [project]
 name = "fm-host-agent"
@@ -17,9 +20,13 @@ requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
 authors = [{ name = "First Motive", email = "nish@ubundi.co.za" }]
 dependencies = [
+    "eclipse-zenoh==1.9.0",
     "nvidia-ml-py==13.615.71",
     "psutil==7.2.2",
 ]
+
+[project.scripts]
+fm-host-agent = "fm_host_agent.service:main"
 
 [project.optional-dependencies]
 dev = ["pytest==8.4.2", "ruff==0.14.0"]
