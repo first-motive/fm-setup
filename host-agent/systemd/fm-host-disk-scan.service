@@ -1,0 +1,31 @@
+# fm-host-disk-scan — sums disk use under /data and /home by file owner.
+#
+# Root, because only root can stat every account's files. Started on demand by
+# fm-host-agent, whose account a polkit rule (50-fm-host-agent.rules) allows to
+# start this unit and nothing else; the agent reads the report it writes.
+# Installed as is by fm-setup's 93-host-agent.sh; edit here and re-run it.
+[Unit]
+Description=fm-host-disk-scan: per-user disk use under /data and /home
+
+[Service]
+Type=oneshot
+ExecStart=/opt/fm-host-agent/venv/bin/fm-host-disk-scan
+# Out of everyone's way: a walk of a full /data is hours of metadata reads.
+Nice=19
+CPUSchedulingPolicy=idle
+IOSchedulingClass=idle
+# A scan cut off here writes nothing; the agent keeps the last report, logs
+# the miss, and the viewer sees the report's age.
+TimeoutStartSec=3h
+# Reads everything, writes only its report, and talks to nobody. Root, with no
+# capability beyond reading past permissions: it writes only into its own
+# root-owned directory, which needs none. Accounts resolve from local files,
+# so no network is needed to name a file's owner.
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH
+ProtectSystem=strict
+ReadWritePaths=/var/lib/fm-host-agent
+ProtectKernelTunables=yes
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+PrivateTmp=yes
+NoNewPrivileges=yes

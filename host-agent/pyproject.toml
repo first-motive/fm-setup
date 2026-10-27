@@ -1,0 +1,47 @@
+# fm-host-agent — publishes this host's load on the fleet fabric.
+#
+# Its own uv project, not a colcon package (host-agent/COLCON_IGNORE keeps
+# colcon out): it runs on the host as a systemd service, outside any ROS
+# environment. 93-host-agent.sh builds its venv as root from this directory.
+#
+# psutil and nvidia-ml-py rather than parsing /proc and nvidia-smi's text: both
+# are the readers those tools are built on, and their output does not change
+# shape between driver releases.
+#
+# The zenoh wheel is pinned to the version fm-sim-agent and fm-robot-agent lock,
+# on the same 1.9.x line as fm-comms' router: the fleet's single pin.
+
+[project]
+name = "fm-host-agent"
+version = "0.1.0"
+description = "Publish a First Motive host's CPU, memory, GPU and disk load over Zenoh"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "First Motive", email = "nish@ubundi.co.za" }]
+dependencies = [
+    "eclipse-zenoh==1.9.0",
+    "nvidia-ml-py==13.615.71",
+    "psutil==7.2.2",
+]
+
+[project.scripts]
+fm-host-agent = "fm_host_agent.service:main"
+# Run as root by fm-host-disk-scan.service, never by the agent.
+fm-host-disk-scan = "fm_host_agent.diskscan:main"
+
+[project.optional-dependencies]
+dev = ["pytest==8.4.2", "ruff==0.14.0"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/fm_host_agent"]
+
+[tool.ruff]
+line-length = 110
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
