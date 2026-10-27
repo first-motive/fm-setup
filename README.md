@@ -910,8 +910,9 @@ fm/host/<host>/disk-users   queryable, request {refresh?: bool}
   report yet, one older than 15 minutes, or `refresh: true` starts a scan, and
   only that query waits, on `systemctl start --no-block`, for at most 5 seconds.
   Starts are at least 5 minutes apart, and a refresh inside that window is
-  refused with `too_soon`. When a scan ends, the agent publishes the same body
-  on `fm/host/<host>/disk-users`.
+  refused with `too_soon`. A restarted agent takes the last start from the
+  report's `scanned_at`, so a restart does not open the window early. When a
+  scan ends, the agent publishes the same body on `fm/host/<host>/disk-users`.
 - A refusal is a Zenoh error reply carrying `{ok: false, error: {code,
   message}}`, as fm-sim-agent sends.
 

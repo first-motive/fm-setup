@@ -8,7 +8,8 @@ Every reply is immediate: the report on disk, as old as it is, and whether a
 scan is running. A query starts a scan when the report is older than
 ``STALE_S`` or the caller asks for a refresh; starts, including refused ones,
 are spaced ``RESCAN_S`` apart, so a viewer held on Scan Again cannot keep a
-disk busy or keep polkit asked.
+disk busy or keep polkit asked. A restart takes the last start from the
+report's age, so it does not reset the spacing.
 
 Whether a scan is still running is learned by :meth:`DiskUsers.finished`,
 which the service calls on a thread of its own. A query reads the flag it
@@ -18,6 +19,7 @@ leaves and never waits on systemd, except to start a scan.
 from __future__ import annotations
 
 import json
+import math
 import subprocess
 import threading
 import time
@@ -29,6 +31,8 @@ SCAN_UNIT = "fm-host-disk-scan.service"
 SYSTEMCTL = "/usr/bin/systemctl"
 STALE_S = 15 * 60
 RESCAN_S = 5 * 60
+#: A report stamped further ahead of the wall clock than this counts as unstamped.
+FUTURE_SLACK_S = 60
 #: The service refuses a larger body before copying it out of Zenoh.
 MAX_REQUEST_BYTES = 1024
 SYSTEMCTL_TIMEOUT_S = 5
@@ -80,6 +84,25 @@ def parse_request(payload: bytes | None) -> bool:
     return refresh
 
 
+def scanned_at(report: dict | None, now: float) -> float | None:
+    """The report's ``scanned_at``, or None when it is missing, not a finite
+    number, or more than ``FUTURE_SLACK_S`` ahead of ``now``.
+
+    A stamp far ahead, as after a wall-clock step back, would otherwise keep
+    the report fresh, and stop the stale rescan, until the clock caught up.
+    """
+    stamp = report.get("scanned_at") if report else None
+    if isinstance(stamp, bool) or not isinstance(stamp, (int, float)):
+        return None
+    try:
+        stamp = float(stamp)  # an integer too large for a float overflows here
+    except OverflowError:
+        return None
+    if not math.isfinite(stamp) or stamp > now + FUTURE_SLACK_S:
+        return None
+    return stamp
+
+
 class DiskUsers:
     """Answers ``disk-users`` queries and notices when a scan it started has finished.
 
@@ -103,8 +126,20 @@ class DiskUsers:
         self.clock = clock
         # Held only around the fields below, never across a systemctl call.
         self.lock = threading.Lock()
-        self.started_at: float | None = None
+        self.started_at = self.restored_start()
         self.scanning = False
+
+    def restored_start(self) -> float | None:
+        """The last scan's start on ``clock``, taken from the report's age.
+
+        Keeps the spacing across a restart of the agent, which would otherwise
+        allow one more scan at once. A report stamped slightly ahead of ``now``
+        counts as just written.
+        """
+        stamp = scanned_at(self.read_report(), self.now())
+        if stamp is None:
+            return None
+        return self.clock() - max(self.now() - stamp, 0)
 
     def read_report(self) -> dict | None:
         try:
@@ -118,7 +153,7 @@ class DiskUsers:
         return {
             "ok": True,
             "state": state,
-            "scanned_at": report.get("scanned_at"),
+            "scanned_at": scanned_at(report, self.now()),
             "roots": report.get("roots", list(ROOTS)),
             "users": report.get("users", []),
         }
@@ -139,7 +174,8 @@ class DiskUsers:
                 return error_body(
                     "too_soon", f"a scan started under {RESCAN_S // 60} minutes ago; scan again in {wait_s} s"
                 )
-            stale = report is None or self.now() - (report.get("scanned_at") or 0) > STALE_S
+            stamp = scanned_at(report, self.now())
+            stale = stamp is None or self.now() - stamp > STALE_S
             if not spaced or not (refresh or stale):
                 return self.body(report, "idle")
             self.started_at, self.scanning = clock, True
@@ -168,7 +204,8 @@ class DiskUsers:
                 return None  # another thread already saw it end
             self.scanning = False
         report = self.read_report()
-        report_age_s = self.now() - (report.get("scanned_at") or 0) if report else None
+        stamp = scanned_at(report, self.now())
+        report_age_s = self.now() - stamp if stamp is not None else None
         scan_took_s = self.clock() - started_at
         # A report this scan wrote is younger than the scan; the minute of slack
         # covers the wall and monotonic clocks drifting apart over a long scan.
