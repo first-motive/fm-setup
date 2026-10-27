@@ -811,7 +811,7 @@ FM_SIM_COMMIT_DEFAULT=fa4161fbddfda78f2c6642c45fe850317e0464e5
 #   docker buildx imagetools inspect ghcr.io/first-motive/fm-sim:jazzy
 # FM_SIM_IMAGE_DIGEST overrides it on the command line.
 FM_SIM_IMAGE=ghcr.io/first-motive/fm-sim:jazzy
-FM_SIM_IMAGE_DIGEST_DEFAULT=sha256:4b25cf45b890ed1783d3126681c79cddd87a9fd74606996652cb4f37c47a3f97
+FM_SIM_IMAGE_DIGEST_DEFAULT=sha256:33a921684664ee6e5ae32e049d2459a0c0bdc6150c1871a8bcb1369806a93795
 
 # The private overlay of that image, which adds the fm_skills, classical,
 # policy_serve, and fastwam controllers. A host runs it only when it opts in
@@ -826,7 +826,7 @@ FM_SIM_IMAGE_DIGEST_DEFAULT=sha256:4b25cf45b890ed1783d3126681c79cddd87a9fd746069
 #   docker buildx imagetools inspect ghcr.io/first-motive/fm-sim-controllers:jazzy
 # FM_SIM_CONTROLLERS_IMAGE_DIGEST overrides it on the command line.
 FM_SIM_CONTROLLERS_IMAGE=ghcr.io/first-motive/fm-sim-controllers:jazzy
-FM_SIM_CONTROLLERS_IMAGE_DIGEST_DEFAULT=sha256:d62c863eabe790b56798829e93f858838d3dc5df1e1c14b0b84ad73c6c2db5d2
+FM_SIM_CONTROLLERS_IMAGE_DIGEST_DEFAULT=sha256:417d39dd1b58a192f4040b60944d5d126669640f00eb1f5e619d036d560d996c
 
 # The account the agent runs as. Its own system user rather than a person's,
 # and outside the fm group so the roster steps never treat it as somebody. It is
