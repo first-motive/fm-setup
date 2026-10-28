@@ -19,7 +19,8 @@ import zenoh
 
 from fm_host_agent.diskusers import MAX_REQUEST_BYTES, DiskUsers
 from fm_host_agent.service import Fabric, key_of, main
-from tests.fakes import Systemd
+from fm_host_agent.simunit import SimUnit
+from tests.fakes import SimSystemd, Systemd
 
 HOST = "fm_ws_01"
 TIMEOUT_S = 5.0
@@ -73,8 +74,12 @@ class Readings:
 
 
 def get_disk_users(client, payload: bytes | None = None) -> list[tuple[bool, dict]]:
+    return get_answers(client, "disk-users", payload)
+
+
+def get_answers(client, name: str, payload: bytes | None = None) -> list[tuple[bool, dict]]:
     replies = []
-    for reply in client.get(key_of(HOST, "disk-users"), payload=payload, timeout=1.0):
+    for reply in client.get(key_of(HOST, name), payload=payload, timeout=1.0):
         sample = reply.ok if reply.ok is not None else reply.err
         replies.append((reply.ok is not None, json.loads(sample.payload.to_bytes())))
     return replies
@@ -87,11 +92,17 @@ def wire(tmp_path):
     readings, systemd = Readings(), Systemd()
     report = tmp_path / "disk-users.json"
     disk_users = DiskUsers(report, start=systemd.start, running=systemd.running)
-    fabric = Fabric(server, HOST, readings, disk_users, period_s=0.05, wake_floor_s=0.01, scan_poll_s=0.05)
+    sim_systemd = SimSystemd()
+    sim_unit = SimUnit(read=sim_systemd.read, change=sim_systemd.change)
+    fabric = Fabric(
+        server, HOST, readings, disk_users, sim_unit, period_s=0.05, wake_floor_s=0.01, scan_poll_s=0.05
+    )
     # The two sessions find each other asynchronously; an answer is the signal the route is up.
     wait_for(lambda: bool(get_load(client)), timeout_s=10)
     try:
-        yield SimpleNamespace(client=client, readings=readings, systemd=systemd, report=report)
+        yield SimpleNamespace(
+            client=client, readings=readings, systemd=systemd, report=report, sim_systemd=sim_systemd
+        )
     finally:
         fabric.close()
         client.close()
@@ -105,7 +116,11 @@ def slow_wire(tmp_path):
     server, client = peer(listen=endpoint), peer(connect=endpoint)
     readings, systemd = Readings(), Systemd()
     disk_users = DiskUsers(tmp_path / "disk-users.json", start=systemd.start, running=systemd.running)
-    fabric = Fabric(server, HOST, readings, disk_users, period_s=600, wake_floor_s=1.0, scan_poll_s=0.05)
+    sim_systemd = SimSystemd()
+    sim_unit = SimUnit(read=sim_systemd.read, change=sim_systemd.change)
+    fabric = Fabric(
+        server, HOST, readings, disk_users, sim_unit, period_s=600, wake_floor_s=1.0, scan_poll_s=0.05
+    )
     wait_for(lambda: bool(get_load(client)), timeout_s=10)
     try:
         yield SimpleNamespace(client=client, readings=readings)
@@ -220,3 +235,14 @@ def test_help_needs_no_zenoh():
     probe = "import sys; import fm_host_agent.service as s; s.build_parser(); print('zenoh' in sys.modules)"
     result = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, check=True)
     assert result.stdout.strip() == "False"
+
+
+def test_sim_reads_and_starts_the_unit_and_a_refusal_is_an_error_reply(wire):
+    assert get_answers(wire.client, "sim") == [
+        (True, {"ok": True, "unit": "fm-sim-agent.service", "installed": True, "state": "inactive"})
+    ]
+    [(ok, body)] = get_answers(wire.client, "sim", json.dumps({"action": "start"}).encode())
+    assert ok and body["state"] == "active"
+    assert wire.sim_systemd.changes == ["start"]
+    [(ok, body)] = get_answers(wire.client, "sim", b'{"action": "explode"}')
+    assert not ok and body["error"]["code"] == "invalid_request"

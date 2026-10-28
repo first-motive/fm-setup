@@ -7,7 +7,8 @@ same key as a queryable, so a viewer that opens between two publishes is not
 left blank. A query also wakes the load thread, so a viewer that asks (on
 opening, or with Refresh) hears a fresh reading within a moment instead of
 waiting out the period. It also serves ``disk-users`` (see :mod:`diskusers`), and publishes
-that body on the same key when a scan it started has finished.
+that body on the same key when a scan it started has finished, and ``sim`` (see
+:mod:`simunit`), which reads, starts, stops or restarts this host's sim agent unit.
 
 Client mode, not peer: every byte crosses the fleet through the router on 7447,
 the one port the tailnet ACL opens.
@@ -20,6 +21,8 @@ back what that thread last read, then sets an event the thread waits on.
 ``disk-users`` is answered on Zenoh's thread from what the agent already
 knows. tradeoff: a query that starts a scan calls systemctl once, which returns
 in milliseconds and is cut off at five seconds, at most once per five minutes.
+A ``sim`` query calls systemctl once to read the unit and, for a change, twice
+more, each with ``--no-block`` and the same five-second cut-off.
 Whether a running scan has ended is asked of systemd on a third thread, so
 neither a query nor the load ever waits on it.
 
@@ -40,6 +43,7 @@ from importlib.metadata import PackageNotFoundError, version
 from fm_host_agent.card import CardError, host_segment, read_host
 from fm_host_agent.diskusers import MAX_REQUEST_BYTES, DiskUsers, error_body
 from fm_host_agent.env import EndpointError, router_endpoint
+from fm_host_agent.simunit import SimUnit
 
 KEY_PREFIX = "fm/host"
 # tradeoff: a tower's load moves slowly next to a person's glance, so 30 s keeps
@@ -86,7 +90,9 @@ def _reply(query, key: str, body: dict) -> None:
         query.reply_err(encode(body), encoding=zenoh.Encoding.APPLICATION_JSON)
 
 
-def _disk_users_handler(disk_users: DiskUsers, key: str):
+def _answer_handler(answerer, key: str):
+    """A queryable that hands a size-checked body to ``answerer.answer`` and replies."""
+
     def handle(query) -> None:
         # Measured before it is copied out of Zenoh: an oversized body is
         # refused without the agent ever holding it.
@@ -96,7 +102,7 @@ def _disk_users_handler(disk_users: DiskUsers, key: str):
             )
             return
         payload = query.payload.to_bytes() if query.payload is not None else None
-        _reply(query, key, disk_users.answer(payload))
+        _reply(query, key, answerer.answer(payload))
 
     return handle
 
@@ -116,6 +122,7 @@ class Fabric:
         host: str,
         read_load,
         disk_users: DiskUsers,
+        sim_unit: SimUnit,
         period_s: float = PUBLISH_PERIOD_S,
         wake_floor_s: float = WAKE_FLOOR_S,
         scan_poll_s: float = SCAN_POLL_S,
@@ -125,6 +132,7 @@ class Fabric:
         self.read_load = read_load
         self.disk_users = disk_users
         self.disk_key = key_of(host, "disk-users")
+        sim_key = key_of(host, "sim")
         # Encoded once per reading, not once per viewer that asks for it.
         self.latest = encode(read_load())
         self.stop = threading.Event()
@@ -133,7 +141,8 @@ class Fabric:
         self.publisher = session.declare_publisher(load_key)
         self.queryables = [
             session.declare_queryable(load_key, self._answer_load(load_key)),
-            session.declare_queryable(self.disk_key, _disk_users_handler(disk_users, self.disk_key)),
+            session.declare_queryable(self.disk_key, _answer_handler(disk_users, self.disk_key)),
+            session.declare_queryable(sim_key, _answer_handler(sim_unit, sim_key)),
         ]
         self.threads = [
             threading.Thread(target=self._publish, args=(period_s, wake_floor_s), name="load", daemon=True),
@@ -204,12 +213,12 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def serve(host: str, endpoint: str, read_load, disk_users: DiskUsers, wait) -> None:
+def serve(host: str, endpoint: str, read_load, disk_users: DiskUsers, sim_unit: SimUnit, wait) -> None:
     """Publish on a client session to ``endpoint`` until ``wait()`` returns."""
     import zenoh
 
     with zenoh.open(_session_config(endpoint)) as session:
-        fabric = Fabric(session, host, read_load, disk_users)
+        fabric = Fabric(session, host, read_load, disk_users, sim_unit)
         log(f"publishing {KEY_PREFIX}/{host}/* via {endpoint}")
         try:
             wait()
@@ -243,7 +252,7 @@ def main(argv: list[str] | None = None) -> int:
     stop_signals = {signal.SIGINT, signal.SIGTERM}
     signal.pthread_sigmask(signal.SIG_BLOCK, stop_signals)
     try:
-        serve(host, endpoint, read_load, DiskUsers(), wait=lambda: signal.sigwait(stop_signals))
+        serve(host, endpoint, read_load, DiskUsers(), SimUnit(), wait=lambda: signal.sigwait(stop_signals))
     finally:
         gpus.close()
     log("stopped")
