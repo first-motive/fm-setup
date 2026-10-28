@@ -874,7 +874,9 @@ SSH session. The agent's code is this repo's [`host-agent/`](host-agent/README.m
 ```
 fm-host-agent (fm-host)  ── every 30 s ─►  fm/host/<host>/load          fm-desktop
         │                 ◄── query ─────  fm/host/<host>/disk-users    Devices
-        │ systemctl start (polkit: this unit only)
+        │                 ◄── query ─────  fm/host/<host>/sim           Simulation
+        │ systemctl start (polkit: the scan unit)
+        │ systemctl start|stop|restart (polkit: fm-sim-agent.service)
         ▼
 fm-host-disk-scan (root, oneshot) ──► /var/lib/fm-host-agent/disk-users.json
 ```
@@ -898,6 +900,9 @@ fm/host/<host>/load         published every 30 s, also a queryable; a query wake
 fm/host/<host>/disk-users   queryable, request {refresh?: bool}
   {ok, state: "idle" | "scanning", scanned_at: t | null,
    roots: ["/data", "/home"], users: [{user, bytes}]}
+
+fm/host/<host>/sim          queryable, request {action?: "status" | "start" | "stop" | "restart"}
+  {ok, unit: "fm-sim-agent.service", installed: bool, state: systemd ActiveState}
 ```
 
 - `users` lists login accounts (uid 1000 and up, except nobody), with CPU summed over their
@@ -909,6 +914,12 @@ fm/host/<host>/disk-users   queryable, request {refresh?: bool}
 - `load` is published every 30 s. A `load` query answers with the last reading
   at once and wakes the agent to publish a fresh one, at most once per 2 s, so
   Devices fills in on opening and its Refresh button costs one read.
+- `sim` reads the sim agent unit, and a `start`, `stop` or `restart` queues that
+  change with `systemctl --no-block` and answers with the state systemd reports
+  at once (often `activating`); ask again to see where it settled. A host
+  without the unit answers `installed: false` and refuses every change. Changes
+  are at least 5 seconds apart; one sooner is refused `too_soon`. This is how
+  fm-desktop's Simulation screen starts a stopped workstation sim agent.
 - `disk-users` replies with the last report and whether a scan is running. No
   report yet, one older than 15 minutes, or `refresh: true` starts a scan, and
   only that query waits, on `systemctl start --no-block`, for at most 5 seconds.

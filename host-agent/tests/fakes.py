@@ -150,3 +150,27 @@ class Systemd:
 
     def running(self) -> bool:
         return self.active
+
+
+class SimSystemd:
+    """The sim agent unit: installed, stopped, and moved by each change the test asks for."""
+
+    STATES = {"start": "active", "restart": "active", "stop": "inactive"}
+
+    def __init__(self, installed: bool = True) -> None:
+        self.installed = installed
+        self.state = "inactive"
+        self.changes: list[str] = []
+        self.refuse = False
+        self.unreadable = False
+
+    def read(self) -> tuple[bool, str]:
+        if self.unreadable:
+            raise subprocess.TimeoutExpired("systemctl", 5)
+        return self.installed, self.state if self.installed else "inactive"
+
+    def change(self, action: str) -> None:
+        if self.refuse:
+            raise subprocess.CalledProcessError(1, "systemctl", stderr=b"Access denied")
+        self.changes.append(action)
+        self.state = self.STATES[action]

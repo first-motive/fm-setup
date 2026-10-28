@@ -13,7 +13,8 @@
 #                  under /data and /home by owner and writes a report to
 #                  FM_HOST_AGENT_STATE
 #   the rule       a polkit rule that lets the agent's account start that one
-#                  unit, and nothing else
+#                  unit, and start, stop or restart fm-sim-agent.service, and
+#                  nothing else
 #
 # The agent never holds a privilege. Its account is in no group — not docker,
 # not fm — and it reads only what any account may: /proc, the GPU driver, and

@@ -10,9 +10,10 @@ section.
 ## Layout
 
 ```
-service.py     the Zenoh session: publishes load, serves load and disk-users
+service.py     the Zenoh session: publishes load, serves load, disk-users and sim
   ├─ load.py       readers over psutil and NVML, one load body per call
   ├─ diskusers.py  the disk-users answer; starts the scan unit, watches it end
+  ├─ simunit.py    the sim answer; reads, starts, stops or restarts fm-sim-agent.service
   ├─ card.py       this host's key segment, from /etc/fm/machine.json
   └─ env.py        the router endpoint, from /etc/fm-comms.env
 diskscan.py    run as root by fm-host-disk-scan.service; writes the report
@@ -27,6 +28,7 @@ at most 5 seconds:
 load thread       read load (tens of ms) → publish → sleep 30 s; a load query wakes it, at most once per 2 s
 disk-scan thread  scan started? → systemctl show → ended? publish disk-users
 zenoh thread      load query → last bytes, wake load thread · disk-users query → answer from state
+                  · sim query → systemctl show, and for a change systemctl --no-block (5 s cut-off each)
 ```
 
 ## Develop
