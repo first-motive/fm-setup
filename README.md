@@ -872,7 +872,7 @@ fm-desktop's Devices view and see whether the tower is free without opening an
 SSH session. The agent's code is this repo's [`host-agent/`](host-agent/README.md).
 
 ```
-fm-host-agent (fm-host)  ── every 2 s ──►  fm/host/<host>/load          fm-desktop
+fm-host-agent (fm-host)  ── every 30 s ─►  fm/host/<host>/load          fm-desktop
         │                 ◄── query ─────  fm/host/<host>/disk-users    Devices
         │ systemctl start (polkit: this unit only)
         ▼
@@ -886,7 +886,7 @@ fm-sim-agent derives it. Every body is JSON; sizes are bytes and times are Unix
 seconds.
 
 ```
-fm/host/<host>/load         published every 2 s, also a queryable
+fm/host/<host>/load         published every 30 s, also a queryable; a query wakes a fresh publish
   {ok, host, t, version,
    cpu:    {percent, cores, load: [1m, 5m, 15m]},
    memory: {used, total},
@@ -906,6 +906,9 @@ fm/host/<host>/disk-users   queryable, request {refresh?: bool}
   can carry tokens.
 - A mount's `total` is used plus free-to-users, so `used / total` is `df`'s
   Use% and a full disk reads as 100%.
+- `load` is published every 30 s. A `load` query answers with the last reading
+  at once and wakes the agent to publish a fresh one, at most once per 2 s, so
+  Devices fills in on opening and its Refresh button costs one read.
 - `disk-users` replies with the last report and whether a scan is running. No
   report yet, one older than 15 minutes, or `refresh: true` starts a scan, and
   only that query waits, on `systemctl start --no-block`, for at most 5 seconds.
