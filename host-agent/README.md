@@ -24,9 +24,9 @@ Three threads, so the load and the scan watch never wait on a query. A
 at most 5 seconds:
 
 ```
-load thread       read load (tens of ms) → publish → sleep 2 s
+load thread       read load (tens of ms) → publish → sleep 30 s; a load query wakes it, at most once per 2 s
 disk-scan thread  scan started? → systemctl show → ended? publish disk-users
-zenoh thread      load query → last bytes · disk-users query → answer from state
+zenoh thread      load query → last bytes, wake load thread · disk-users query → answer from state
 ```
 
 ## Develop

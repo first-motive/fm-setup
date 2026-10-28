@@ -57,16 +57,18 @@ def get_load(client) -> list[dict]:
 
 
 class Readings:
-    """A ``read_load`` that counts its calls and can be told to fail."""
+    """A ``read_load`` that counts its calls, notes when each ran, and can be told to fail."""
 
     def __init__(self) -> None:
         self.calls = 0
+        self.times: list[float] = []
         self.fail = False
 
     def __call__(self) -> dict:
         if self.fail:
             raise RuntimeError("psutil fell over")
         self.calls += 1
+        self.times.append(time.monotonic())
         return {"ok": True, "host": HOST, "n": self.calls}
 
 
@@ -85,7 +87,7 @@ def wire(tmp_path):
     readings, systemd = Readings(), Systemd()
     report = tmp_path / "disk-users.json"
     disk_users = DiskUsers(report, start=systemd.start, running=systemd.running)
-    fabric = Fabric(server, HOST, readings, disk_users, period_s=0.05)
+    fabric = Fabric(server, HOST, readings, disk_users, period_s=0.05, wake_floor_s=0.01, scan_poll_s=0.05)
     # The two sessions find each other asynchronously; an answer is the signal the route is up.
     wait_for(lambda: bool(get_load(client)), timeout_s=10)
     try:
@@ -94,6 +96,53 @@ def wire(tmp_path):
         fabric.close()
         client.close()
         server.close()
+
+
+@pytest.fixture
+def slow_wire(tmp_path):
+    """A fabric whose period never ends inside a test, so only a query reads the load again."""
+    endpoint = f"tcp/127.0.0.1:{free_port()}"
+    server, client = peer(listen=endpoint), peer(connect=endpoint)
+    readings, systemd = Readings(), Systemd()
+    disk_users = DiskUsers(tmp_path / "disk-users.json", start=systemd.start, running=systemd.running)
+    fabric = Fabric(server, HOST, readings, disk_users, period_s=600, wake_floor_s=1.0, scan_poll_s=0.05)
+    wait_for(lambda: bool(get_load(client)), timeout_s=10)
+    try:
+        yield SimpleNamespace(client=client, readings=readings)
+    finally:
+        fabric.close()
+        client.close()
+        server.close()
+
+
+def test_a_query_wakes_a_fresh_reading_and_publishes_it(slow_wire):
+    client, readings = slow_wire.client, slow_wire.readings
+    wait_for(lambda: readings.calls >= 2)  # the wake from the fixture's own query
+    seen = []
+    subscriber = client.declare_subscriber(key_of(HOST, "load"), lambda sample: seen.append(sample))
+    try:
+        before = readings.calls
+        get_load(client)
+        wait_for(lambda: readings.calls > before and bool(seen))
+    finally:
+        subscriber.undeclare()
+    assert json.loads(seen[-1].payload.to_bytes())["n"] == readings.calls
+
+
+def test_queries_read_the_load_no_more_than_once_per_floor(slow_wire):
+    client, readings = slow_wire.client, slow_wire.readings
+    wait_for(lambda: readings.calls >= 2)
+    time.sleep(1.1)  # past the floor, so the thread waits on the period
+    before = readings.calls
+    get_load(client)
+    wait_for(lambda: readings.calls == before + 1)
+    # Asked again at once, and again: one more reading, held back to the floor.
+    for _ in range(10):
+        get_load(client)
+    wait_for(lambda: readings.calls == before + 2)
+    time.sleep(0.2)
+    assert readings.calls == before + 2
+    assert readings.times[before + 1] - readings.times[before] >= 1.0
 
 
 def test_the_queryable_answers_with_the_latest_reading(wire):
