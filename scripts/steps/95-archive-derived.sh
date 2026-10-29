@@ -14,6 +14,11 @@ fm_require_linux
 
 ENVFILE=/etc/fm-archive-uploader.env
 UNIT="fm-archive-uploader.service"
+# Literal, because the drift audit reads this line with sed. It is UNIT: fm-data
+# installs the uploader, and this step turns its derived upload on, so the audit
+# accounts for the unit here.
+# shellcheck disable=SC2034
+FM_UNITS=(fm-archive-uploader.service)
 FLAG=FM_ARCHIVE_UPLOADER_DERIVED_ENABLED
 EDIT_TMP=""
 BACKUP_TMP=""

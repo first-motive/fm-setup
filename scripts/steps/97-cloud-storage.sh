@@ -14,6 +14,9 @@ ENVFILE=/etc/fm-archive-uploader.env
 # fm-tools (step fm-cli installs the storage-agent extra on a storage host), so
 # this step writes only the unit, from the card's account.
 AGENT_UNIT=fm-storage-agent.service
+# Literal, because the drift audit reads this line with sed. It is AGENT_UNIT.
+# shellcheck disable=SC2034
+FM_UNITS=(fm-storage-agent.service)
 AGENT_UNIT_PATH=/etc/systemd/system/$AGENT_UNIT
 AGENT_BIN="$FM_CLI_TOOL_DIR/fm-tools/bin/fm-storage-agent"
 
