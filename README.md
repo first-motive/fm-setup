@@ -741,7 +741,7 @@ The tailnet ACL on the router's 7447 is the boundary on who can call the agent.
 /var/lib/fm-sim/                            the account's home; nothing installed there
 /data/sim-runs/                             run summaries and MCAPs (fm-sim:fm, 2770)
 /data/sim-models/                           object packs every run mounts read-only (root:fm, 2775)
-/data/sim-assets/                           USD assets each Isaac run mounts read-only (root:fm, 2775)
+/data/sim-assets/                           USD assets each Isaac run mounts read-only (fm-sim:fm, 555 once fetched)
 ```
 
 Members of the `fm` group copy object packs in by hand, as
@@ -752,8 +752,16 @@ agent refuses a run while the tree holds a symlink or a directory it cannot read
 so copy real files. Uninstall leaves the directory and its packs in place, and
 `./run.sh backup` does not cover them.
 
-Fetch SimReady assets with fm-sim's `tools/fetch_simready.py --assets-dir
-/data/sim-assets`, from a checkout at the pinned commit. The same rules apply.
+Once the step has created `/data/sim-assets`, fetch SimReady assets as the agent's
+account, which owns that directory. Read the tool from root's copy of the pinned commit, and run it with `-I` from `/`, so that
+account imports nothing from a directory people can write. These are the packages
+the `tabletop_simready` scenario names:
+
+```bash
+sudo git -C /opt/fm-sim-agent/src.git show <pinned commit>:tools/fetch_simready.py \
+  | (cd / && sudo -u fm-sim /usr/bin/python3 -I - --assets-dir /data/sim-assets \
+      food_beverage_can_e01 food_can_tomatoSoup_a01 food_box_gelatin_a01)
+```
 
 ```bash
 bash scripts/steps/91-sim.sh install --dry-run   # the plan and the rendered unit; changes nothing

@@ -368,7 +368,7 @@ assert_has "dry run names the uv checksum" "$out" "checked against sha256 $UV_SH
 assert_has "no digest: the plan grants and enables nothing" "$out" "would write the unit, grant nothing, enable nothing"
 assert_has "dry run plans the models directory" "$out" "would create $FM_SIM_MODELS_DIR (root:$(id -gn), 2775)"
 assert_eq "  and does not create it" "false" "$(exists "$R$FM_SIM_MODELS_DIR")"
-assert_has "dry run plans the assets directory" "$out" "would create $FM_SIM_ASSETS_DIR (root:$(id -gn), 2775)"
+assert_has "dry run plans the assets directory" "$out" "would create $FM_SIM_ASSETS_DIR ($FM_SIM_USER:$(id -gn), 755)"
 assert_eq "  and does not create it" "false" "$(exists "$R$FM_SIM_ASSETS_DIR")"
 assert_has "no pinned commit: the plan installs no agent" "$(unpinned install --dry-run)" "would install no agent"
 assert_rc "a commit that is not a full SHA is refused" 1 env FM_SIM_COMMIT=main PATH="$BIN:$SYS_PATH" bash "$STEP" install --dry-run
@@ -439,10 +439,12 @@ assert_eq "the models dir is /data/sim-models, not the checkpoints in /data/mode
   "/data/sim-models" "$FM_SIM_MODELS_DIR"
 assert_eq "the models dir is 2775" "2775" "$(stat -c '%a' "$R$FM_SIM_MODELS_DIR")"
 assert_eq "the assets dir is /data/sim-assets" "/data/sim-assets" "$FM_SIM_ASSETS_DIR"
-assert_eq "  and is 2775" "2775" "$(stat -c '%a' "$R$FM_SIM_ASSETS_DIR")"
-assert_has "  created by a command that fails on anything there" "$(log)" 'mkdir -m 2775 "$1"'
-assert_has "  and handed to root and the group from inside it" "$(log)" 'chown "root:$2" . && chmod 2775 .'
-assert_has "  before the unit is written" "$(grep -e '-m 2775' -e '-m 0644 .*unit' "$SIM_LOG" | head -1)" "-m 2775"
+assert_has "  and its owner is the agent's account" "$(log)" "$FM_SIM_USER:$FM_GROUP 755"
+assert_eq "  closed to group writes" "0" "$(( 0$(stat -c '%a' "$R$FM_SIM_ASSETS_DIR") & 020 ))"
+assert_has "  created by a command that fails on anything there" "$(log)" 'mkdir -m "$3" "$1"'
+assert_has "  and handed over from inside it" "$(log)" 'chown "$2" . && chmod "$3" .'
+assert_has "  to root and the group" "$(log)" "root:$FM_GROUP 2775"
+assert_has "  before the unit is written" "$(grep -e 'mkdir -m' -e '-m 0644 .*unit' "$SIM_LOG" | head -1)" "mkdir -m"
 assert_has "the account is created" "$(log)" "useradd --system --user-group --create-home --home-dir $FM_SIM_HOME"
 assert_has "the declined grant is said" "$out" "docker grant declined"
 assert_eq "usermod never ran" 0 "$(count '^usermod')"
@@ -479,6 +481,9 @@ out="$(printf 'y\n' | inst)"
 assert_has "a wrong mode is reported" "$out" "$FM_SIM_MODELS_DIR is mode 2700, wanted 2775"
 assert_eq "  and left for a person" "2700" "$(stat -c '%a' "$R$FM_SIM_MODELS_DIR")"
 assert_eq "  with no root command on it" 0 "$(grep -c -E "(chown|chmod|mkdir) .*$FM_SIM_MODELS_DIR" "$SIM_LOG" || true)"
+# An assets directory someone else owns is not one the fetch can seal.
+assert_has "an assets directory of another owner is reported" "$out" "$FM_SIM_ASSETS_DIR is owned by $(id -un), wanted $FM_SIM_USER"
+assert_eq "  with no root command on it" 0 "$(grep -c -E "(chown|chmod|mkdir) .*$FM_SIM_ASSETS_DIR" "$SIM_LOG" || true)"
 chmod 2775 "$R$FM_SIM_MODELS_DIR"
 
 # The sim-cloud role, unattended: the grant is given without a prompt, and the
@@ -629,13 +634,13 @@ reset_host
 rc=0; out="$(NONINTERACTIVE=1 FAKE_PLANT_LINK="$R$FM_SIM_MODELS_DIR" inst)" || rc=$?
 assert_eq "a symlink planted during the build fails install" 1 "$rc"
 assert_has "  and is named" "$out" "it is a symlink"
-assert_eq "  and root never reaches it" 0 "$(count -e "-m 2775")"
+assert_eq "  and root never reaches it" 0 "$(count -e "mkdir -m")"
 assert_eq "  no unit is written" "false" "$(exists "$UNIT")"
 # Swapped in at the last moment, after the second check: mkdir refuses, because
 # something is at the path.
 reset_host
 chmod 0700 "$TMP/link-target"
-rc=0; out="$(NONINTERACTIVE=1 FAKE_PLANT_LINK="$R$FM_SIM_MODELS_DIR" FAKE_PLANT_ON="-m 2775" FAKE_PLANT_TARGET="$TMP/link-target" inst)" || rc=$?
+rc=0; out="$(NONINTERACTIVE=1 FAKE_PLANT_LINK="$R$FM_SIM_MODELS_DIR" FAKE_PLANT_ON="mkdir -m" FAKE_PLANT_TARGET="$TMP/link-target" inst)" || rc=$?
 assert_eq "a symlink swapped in before mkdir fails install" 1 "$rc"
 assert_has "  and is named" "$out" "creating $FM_SIM_MODELS_DIR failed"
 assert_eq "  and its target keeps its mode" "700" "$(stat -c '%a' "$TMP/link-target")"
@@ -684,7 +689,7 @@ SITES=(
   "sync --quiet --frozen|building $FM_SIM_AGENT_ROOT/venv failed"
   "chmod -R u+rwX|setting venv modes failed"
   "-m 2770|creating $FM_SIM_RUNS_DIR failed"
-  "-m 2775|creating $FM_SIM_MODELS_DIR failed"
+  "mkdir -m|creating $FM_SIM_MODELS_DIR failed"
   "mktemp -d $AGENT/.unit|creating a staging directory failed"
   "tee $AGENT/.unit|staging /etc/systemd/system/$FM_SIM_UNIT failed"
   "install -d -m 0755 $R/etc/systemd|creating /etc/systemd/system failed"
@@ -735,7 +740,14 @@ out="$(unpinned check)"
 assert_has "check accepts one in the wanted group and mode" "$out" "$FM_SIM_MODELS_DIR $(id -un):$(id -gn) 2775"
 mkdir -p "$TMP/keep" && mv "$R$FM_SIM_MODELS_DIR" "$TMP/keep/models"
 assert_has "check names a missing models directory" "$(step check)" "$FM_SIM_MODELS_DIR missing"
-assert_has "check reports the assets directory too" "$(step check)" "$FM_SIM_ASSETS_DIR"
+chmod 0555 "$R$FM_SIM_ASSETS_DIR"
+assert_has "check accepts a sealed assets directory" "$(step check)" "$FM_SIM_ASSETS_DIR $(id -un):$(id -gn)"
+chmod 0775 "$R$FM_SIM_ASSETS_DIR"
+assert_has "check names one the group can write" "$(step check)" "wanted owner $FM_SIM_USER and no group write"
+chmod 0755 "$R$FM_SIM_ASSETS_DIR"
+mv "$R$FM_SIM_ASSETS_DIR" "$TMP/keep/assets"
+assert_has "check names a missing assets directory" "$(step check)" "$FM_SIM_ASSETS_DIR missing"
+mv "$TMP/keep/assets" "$R$FM_SIM_ASSETS_DIR"
 mv "$TMP/keep/models" "$R$FM_SIM_MODELS_DIR"
 : > "$SIM_LOG"
 rc=0; out="$(FAKE_FAIL="systemctl disable" step uninstall)" || rc=$?
