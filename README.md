@@ -716,9 +716,8 @@ pinned sources root fetches and keeps in root-owned places:
   are the agent's default.
 - `/data/sim-models` is created before the agent starts, because the agent will
   not start without it. The step refuses a symlink or a file at that path, uses
-  only commands that do not follow a symlink there, sets the owner on the
-  directory alone, and refuses an fm-sim commit without `--models-dir`. It reports
-  a wrong mode on the directory and leaves the repair to a person.
+  only commands that do not follow a symlink there, sets the owner and mode on
+  the directory alone, and refuses an fm-sim commit without `--models-dir`.
 - The docker grant is asked for and auto-declines under `NONINTERACTIVE=1`.
   Without a pinned image digest the step writes the unit but grants nothing and
   enables nothing. The unit starts once `/etc/fm-comms.env` exists.

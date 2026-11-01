@@ -16,8 +16,9 @@
 # userdel, systemctl, curl, uv, docker, nvidia-smi — is a stand-in on PATH that
 # records its argv. FAKE_FAIL=<text> makes sudo fail any command whose argv
 # holds that text, so each privileged call site can be failed on its own, and
-# FAKE_PLANT_LINK=<path> makes it plant a symlink there during the venv's build. The step's
-# test hooks (FM_SIM_TEST=1 with FM_SIM_TEST_ROOT, FM_SIM_TEST_SOURCE and
+# FAKE_PLANT_LINK=<path> makes it replace that path with a symlink to
+# FAKE_PLANT_TARGET when a command holds FAKE_PLANT_ON, by default during the
+# venv's build. The step's test hooks (FM_SIM_TEST=1 with FM_SIM_TEST_ROOT, FM_SIM_TEST_SOURCE and
 # FM_SIM_TEST_UV_SHA256) point it at a temp root, a local upstream repository,
 # and a stand-in uv tarball. No root, daemon, GPU, or network is needed.
 #
@@ -108,8 +109,9 @@ stub() {
 stub sudo 'printf "sudo %s\n" "$*" >> @LOG@
 while [ $# -gt 0 ]; do case "$1" in -n) shift ;; -u) shift 2 ;; *) break ;; esac; done
 if [ -n "${FAKE_FAIL:-}" ]; then case "$*" in *"$FAKE_FAIL"*) exit 1 ;; esac; fi
-if [ -n "${FAKE_PLANT_LINK:-}" ]; then case "$*" in *"chmod -R u+rwX"*)
-  mkdir -p "$(dirname "$FAKE_PLANT_LINK")"; ln -s /nonexistent "$FAKE_PLANT_LINK" ;; esac; fi
+if [ -n "${FAKE_PLANT_LINK:-}" ]; then case "$*" in *"${FAKE_PLANT_ON:-chmod -R u+rwX}"*)
+  mkdir -p "$(dirname "$FAKE_PLANT_LINK")"; rm -rf "$FAKE_PLANT_LINK"
+  ln -s "${FAKE_PLANT_TARGET:-/nonexistent}" "$FAKE_PLANT_LINK" ;; esac; fi
 exec "$@"'
 # install keeps everything but the ownership, which needs root.
 stub install 'args=()
@@ -457,20 +459,18 @@ assert_eq "the commit is not fetched again" 0 "$(count ' fetch ')"
 # nothing recursive ever reaches it.
 mkdir -p "$R$FM_SIM_MODELS_DIR/pack"
 : > "$R$FM_SIM_MODELS_DIR/pack/best.xml"
-chmod 0750 "$R$FM_SIM_MODELS_DIR/pack"
+assert_eq "a pack's directory inherits the setgid bit" "true" "$([ -g "$R$FM_SIM_MODELS_DIR/pack" ] && echo true || echo false)"
+chmod 2750 "$R$FM_SIM_MODELS_DIR/pack"
 chmod 0640 "$R$FM_SIM_MODELS_DIR/pack/best.xml"
-assert_eq "a pack's directory inherits the setgid bit" "2750" "$(stat -c '%a' "$R$FM_SIM_MODELS_DIR/pack")"
 : > "$SIM_LOG"
 printf 'y\n' | inst >/dev/null
 assert_eq "a re-run leaves a pack's directory mode" "2750" "$(stat -c '%a' "$R$FM_SIM_MODELS_DIR/pack")"
 assert_eq "  and its file mode" "640" "$(stat -c '%a' "$R$FM_SIM_MODELS_DIR/pack/best.xml")"
 assert_eq "no recursive command names the models directory" 0 "$(grep -c -E -e "-R .*$FM_SIM_MODELS_DIR" -e "find .*$FM_SIM_MODELS_DIR" "$SIM_LOG" || true)"
-assert_eq "no chmod names it either, since chmod follows a symlink" 0 "$(grep -c "chmod .*$FM_SIM_MODELS_DIR" "$SIM_LOG" || true)"
 chmod 0700 "$R$FM_SIM_MODELS_DIR"
-out="$(printf 'y\n' | inst)"
-assert_has "a wrong mode is reported" "$out" "$FM_SIM_MODELS_DIR is mode 2700, wanted 2775"
-assert_eq "  and left for a person" "2700" "$(stat -c '%a' "$R$FM_SIM_MODELS_DIR")"
-chmod 2775 "$R$FM_SIM_MODELS_DIR"
+printf 'y\n' | inst >/dev/null
+assert_eq "a wrong mode is repaired" "2775" "$(stat -c '%a' "$R$FM_SIM_MODELS_DIR")"
+assert_eq "  on the directory alone" "2750" "$(stat -c '%a' "$R$FM_SIM_MODELS_DIR/pack")"
 
 # The sim-cloud role, unattended: the grant is given without a prompt, and the
 # unit enabled. Its stack's bootstrap made the account already.
@@ -599,6 +599,15 @@ assert_eq "a symlink planted during the build fails install" 1 "$rc"
 assert_has "  and is named" "$out" "it is a symlink"
 assert_eq "  and root never reaches it" 0 "$(count -e "-m 2775" -e "chown -h")"
 assert_eq "  no unit is written" "false" "$(exists "$UNIT")"
+# Swapped in at the last moment, after the second check and before the mode is
+# set: the chmod refuses, because the directory it entered is not this path.
+reset_host
+chmod 0700 "$TMP/link-target"
+rc=0; out="$(NONINTERACTIVE=1 FAKE_PLANT_LINK="$R$FM_SIM_MODELS_DIR" FAKE_PLANT_ON="chown -h" FAKE_PLANT_TARGET="$TMP/link-target" inst)" || rc=$?
+assert_eq "a symlink swapped in before the mode is set fails install" 1 "$rc"
+assert_has "  and is named" "$out" "setting the mode of $FM_SIM_MODELS_DIR failed"
+assert_eq "  and its target keeps its mode" "700" "$(stat -c '%a' "$TMP/link-target")"
+assert_eq "  no unit is written" "false" "$(exists "$UNIT")"
 
 # A uv tarball that does not match its pin.
 make_upstream
@@ -645,6 +654,7 @@ SITES=(
   "-m 2770|creating $FM_SIM_RUNS_DIR failed"
   "-m 2775|creating $FM_SIM_MODELS_DIR failed"
   "chown -h|handing $FM_SIM_MODELS_DIR to root failed"
+  "chmod 2775 .|setting the mode of $FM_SIM_MODELS_DIR failed"
   "mktemp -d $AGENT/.unit|creating a staging directory failed"
   "tee $AGENT/.unit|staging /etc/systemd/system/$FM_SIM_UNIT failed"
   "install -d -m 0755 $R/etc/systemd|creating /etc/systemd/system failed"
