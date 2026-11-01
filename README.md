@@ -710,9 +710,15 @@ pinned sources root fetches and keeps in root-owned places:
   (`scripts/internal/sim-lib.sh`): known sections and keys, each once, every
   value in its expected shape, `User=@USER@`, and `ExecStart` exactly as fm-sim
   ships it. The step then replaces `ExecStart` with the installed entrypoint
-  and this host's flags: `--image`, `--runs-dir /data/sim-runs`, and
-  `FM_SIM_AGENT_FLAGS` (`--gpus` and the memory, process, duration and
-  free-disk limits). Host networking and host IPC are the agent's default.
+  and this host's flags: `--image`, `--runs-dir /data/sim-runs`,
+  `--models-dir /data/sim-models`, and `FM_SIM_AGENT_FLAGS` (`--gpus` and the
+  memory, process, duration and free-disk limits). Host networking and host IPC
+  are the agent's default.
+- `/data/sim-models` is created before the agent starts, because the agent will
+  not start without it. The step refuses a symlink or a file at that path, uses
+  only commands that do not follow a symlink there, sets the owner on the
+  directory alone, and refuses an fm-sim commit without `--models-dir`. It reports
+  a wrong mode on the directory and leaves the repair to a person.
 - The docker grant is asked for and auto-declines under `NONINTERACTIVE=1`.
   Without a pinned image digest the step writes the unit but grants nothing and
   enables nothing. The unit starts once `/etc/fm-comms.env` exists.
@@ -732,7 +738,16 @@ The tailnet ACL on the router's 7447 is the boundary on who can call the agent.
 /var/cache/fm-sim-agent/                    root's uv cache for that build
 /var/lib/fm-sim/                            the account's home; nothing installed there
 /data/sim-runs/                             run summaries and MCAPs (fm-sim:fm, 2770)
+/data/sim-models/                           object packs every run mounts read-only (root:fm, 2775)
 ```
+
+Members of the `fm` group copy object packs in by hand, as
+`/data/sim-models/<pack>/{best.xml,best.bin,pack.yaml}`. The agent's account is
+outside that group, so it reads through the bits for others: run
+`chmod -R a+rX` on a pack that was copied from a private directory. The pinned
+agent refuses a run while the tree holds a symlink or a directory it cannot read,
+so copy real files. Uninstall leaves the directory and its packs in place, and
+`./run.sh backup` does not cover them.
 
 ```bash
 bash scripts/steps/91-sim.sh install --dry-run   # the plan and the rendered unit; changes nothing
