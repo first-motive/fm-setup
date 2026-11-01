@@ -524,21 +524,33 @@ ensure_runs_dir() {
 # people write what is inside it, so nothing here reaches past the directory.
 #
 # Judged again here because the build before this can take minutes, and /data
-# lets any fm member replace this entry at any moment, so root uses only commands
-# that do not follow a symlink there. mkdir fails on one and chown -h changes the
-# link itself. chmod would follow one, so it runs on the directory root has already
-# entered, once that directory is shown to be this path and not a link's target.
-# It is not left to mkdir -m, because uutils' mkdir on Ubuntu 26.04 drops setgid.
+# lets any fm member replace this entry at any moment. Root therefore changes only
+# the directory it has just made: any member could rename someone's private
+# directory to this path, and a chown and chmod here would open it to the group.
+# One that is already here is reported, not repaired.
+#
+# mkdir fails on anything at the path. A swap straight after it is caught by what
+# root finds once inside: a link's target has another path, and a directory with a
+# stricter mode is not the one mkdir made. The mode is set again because uutils'
+# mkdir on Ubuntu 26.04 drops setgid.
 ensure_models_dir() {
-  local path="$R$FM_SIM_MODELS_DIR"
+  local path="$R$FM_SIM_MODELS_DIR" mode
   models_dir_ok || return 1
-  if [ ! -d "$path" ]; then
-    must "creating $FM_SIM_MODELS_DIR" sudo mkdir -m 2775 "$path" || return 1
+  if [ -d "$path" ]; then
+    mode="$(stat -c '%a' "$path")"
+    if [ "$mode" != 2775 ]; then
+      fm_warn "$FM_SIM_MODELS_DIR is mode $mode, wanted 2775 — fix it with: sudo chmod 2775 $FM_SIM_MODELS_DIR"
+      return 0
+    fi
+    fm_ok "$FM_SIM_MODELS_DIR already there ($(stat -c '%U:%G' "$path"), 2775)"
+    return 0
   fi
-  must "handing $FM_SIM_MODELS_DIR to root" sudo chown -h "root:$FM_GROUP" "$path" || return 1
-  # shellcheck disable=SC2016  # expanded by the inner shell, from its own $1
-  must "setting the mode of $FM_SIM_MODELS_DIR" sudo sh -c \
-    'cd "$1" && [ "$(pwd -P)" = "$(cd "$(dirname "$1")" && pwd -P)/$(basename "$1")" ] && chmod 2775 .' sh "$path" || return 1
+  # shellcheck disable=SC2016  # expanded by the inner shell, from its own arguments
+  must "creating $FM_SIM_MODELS_DIR" sudo sh -c '
+    mkdir -m 2775 "$1" && cd "$1" &&
+      [ "$(pwd -P)" = "$(cd "$(dirname "$1")" && pwd -P)/$(basename "$1")" ] &&
+      case "$(stat -c %a .)" in 775 | 2775) ;; *) exit 1 ;; esac &&
+      chown "root:$2" . && chmod 2775 .' sh "$path" "$FM_GROUP" || return 1
   fm_ok "$FM_SIM_MODELS_DIR ready (root:$FM_GROUP, 2775)"
 }
 

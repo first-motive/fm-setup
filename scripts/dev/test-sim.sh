@@ -436,8 +436,8 @@ assert_eq "the runs dir is 2770" "2770" "$(stat -c '%a' "$R$FM_SIM_RUNS_DIR")"
 assert_eq "the models dir is /data/sim-models, not the checkpoints in /data/models" \
   "/data/sim-models" "$FM_SIM_MODELS_DIR"
 assert_eq "the models dir is 2775" "2775" "$(stat -c '%a' "$R$FM_SIM_MODELS_DIR")"
-assert_has "  created without following a symlink" "$(log)" "sudo mkdir -m 2775 $R$FM_SIM_MODELS_DIR"
-assert_has "  and handed to root and the group the same way" "$(log)" "sudo chown -h root:$FM_GROUP $R$FM_SIM_MODELS_DIR"
+assert_has "  created by a command that fails on anything there" "$(log)" 'mkdir -m 2775 "$1"'
+assert_has "  and handed to root and the group from inside it" "$(log)" 'chown "root:$2" . && chmod 2775 .'
 assert_has "  before the unit is written" "$(grep -e '-m 2775' -e '-m 0644 .*unit' "$SIM_LOG" | head -1)" "-m 2775"
 assert_has "the account is created" "$(log)" "useradd --system --user-group --create-home --home-dir $FM_SIM_HOME"
 assert_has "the declined grant is said" "$out" "docker grant declined"
@@ -467,10 +467,15 @@ printf 'y\n' | inst >/dev/null
 assert_eq "a re-run leaves a pack's directory mode" "2750" "$(stat -c '%a' "$R$FM_SIM_MODELS_DIR/pack")"
 assert_eq "  and its file mode" "640" "$(stat -c '%a' "$R$FM_SIM_MODELS_DIR/pack/best.xml")"
 assert_eq "no recursive command names the models directory" 0 "$(grep -c -E -e "-R .*$FM_SIM_MODELS_DIR" -e "find .*$FM_SIM_MODELS_DIR" "$SIM_LOG" || true)"
-chmod 0700 "$R$FM_SIM_MODELS_DIR"
-printf 'y\n' | inst >/dev/null
-assert_eq "a wrong mode is repaired" "2775" "$(stat -c '%a' "$R$FM_SIM_MODELS_DIR")"
-assert_eq "  on the directory alone" "2750" "$(stat -c '%a' "$R$FM_SIM_MODELS_DIR/pack")"
+assert_eq "root does not touch a directory already there" 0 "$(grep -c -E "(chown|chmod) .*$FM_SIM_MODELS_DIR" "$SIM_LOG" || true)"
+# A member can rename a private directory to this path; root must not open it.
+chmod 2700 "$R$FM_SIM_MODELS_DIR"
+: > "$SIM_LOG"
+out="$(printf 'y\n' | inst)"
+assert_has "a wrong mode is reported" "$out" "$FM_SIM_MODELS_DIR is mode 2700, wanted 2775"
+assert_eq "  and left for a person" "2700" "$(stat -c '%a' "$R$FM_SIM_MODELS_DIR")"
+assert_eq "  with no root command on it" 0 "$(grep -c -E "(chown|chmod|mkdir) .*$FM_SIM_MODELS_DIR" "$SIM_LOG" || true)"
+chmod 2775 "$R$FM_SIM_MODELS_DIR"
 
 # The sim-cloud role, unattended: the grant is given without a prompt, and the
 # unit enabled. Its stack's bootstrap made the account already.
@@ -597,15 +602,15 @@ reset_host
 rc=0; out="$(NONINTERACTIVE=1 FAKE_PLANT_LINK="$R$FM_SIM_MODELS_DIR" inst)" || rc=$?
 assert_eq "a symlink planted during the build fails install" 1 "$rc"
 assert_has "  and is named" "$out" "it is a symlink"
-assert_eq "  and root never reaches it" 0 "$(count -e "-m 2775" -e "chown -h")"
+assert_eq "  and root never reaches it" 0 "$(count -e "-m 2775")"
 assert_eq "  no unit is written" "false" "$(exists "$UNIT")"
-# Swapped in at the last moment, after the second check and before the mode is
-# set: the chmod refuses, because the directory it entered is not this path.
+# Swapped in at the last moment, after the second check: mkdir refuses, because
+# something is at the path.
 reset_host
 chmod 0700 "$TMP/link-target"
-rc=0; out="$(NONINTERACTIVE=1 FAKE_PLANT_LINK="$R$FM_SIM_MODELS_DIR" FAKE_PLANT_ON="chown -h" FAKE_PLANT_TARGET="$TMP/link-target" inst)" || rc=$?
-assert_eq "a symlink swapped in before the mode is set fails install" 1 "$rc"
-assert_has "  and is named" "$out" "setting the mode of $FM_SIM_MODELS_DIR failed"
+rc=0; out="$(NONINTERACTIVE=1 FAKE_PLANT_LINK="$R$FM_SIM_MODELS_DIR" FAKE_PLANT_ON="-m 2775" FAKE_PLANT_TARGET="$TMP/link-target" inst)" || rc=$?
+assert_eq "a symlink swapped in before mkdir fails install" 1 "$rc"
+assert_has "  and is named" "$out" "creating $FM_SIM_MODELS_DIR failed"
 assert_eq "  and its target keeps its mode" "700" "$(stat -c '%a' "$TMP/link-target")"
 assert_eq "  no unit is written" "false" "$(exists "$UNIT")"
 
@@ -653,8 +658,6 @@ SITES=(
   "chmod -R u+rwX|setting venv modes failed"
   "-m 2770|creating $FM_SIM_RUNS_DIR failed"
   "-m 2775|creating $FM_SIM_MODELS_DIR failed"
-  "chown -h|handing $FM_SIM_MODELS_DIR to root failed"
-  "chmod 2775 .|setting the mode of $FM_SIM_MODELS_DIR failed"
   "mktemp -d $AGENT/.unit|creating a staging directory failed"
   "tee $AGENT/.unit|staging /etc/systemd/system/$FM_SIM_UNIT failed"
   "install -d -m 0755 $R/etc/systemd|creating /etc/systemd/system failed"

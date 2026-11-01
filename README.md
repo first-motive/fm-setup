@@ -715,9 +715,11 @@ pinned sources root fetches and keeps in root-owned places:
   memory, process, duration and free-disk limits). Host networking and host IPC
   are the agent's default.
 - `/data/sim-models` is created before the agent starts, because the agent will
-  not start without it. The step refuses a symlink or a file at that path, uses
-  only commands that do not follow a symlink there, sets the owner and mode on
-  the directory alone, and refuses an fm-sim commit without `--models-dir`.
+  not start without it. The step refuses a symlink or a file at that path, and
+  refuses an fm-sim commit without `--models-dir`. Root sets the owner and mode
+  only on a directory it has just made, because any fm member can rename another
+  directory to that path. It reports a wrong mode on one already there and leaves
+  the repair to a person.
 - The docker grant is asked for and auto-declines under `NONINTERACTIVE=1`.
   Without a pinned image digest the step writes the unit but grants nothing and
   enables nothing. The unit starts once `/etc/fm-comms.env` exists.
