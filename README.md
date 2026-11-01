@@ -711,12 +711,13 @@ pinned sources root fetches and keeps in root-owned places:
   value in its expected shape, `User=@USER@`, and `ExecStart` exactly as fm-sim
   ships it. The step then replaces `ExecStart` with the installed entrypoint
   and this host's flags: `--image`, `--runs-dir /data/sim-runs`,
-  `--models-dir /data/sim-models`, and `FM_SIM_AGENT_FLAGS` (`--gpus` and the
+  `--models-dir /data/sim-models`, `--assets-dir /data/sim-assets`, and
+  `FM_SIM_AGENT_FLAGS` (`--gpus` and the
   memory, process, duration and free-disk limits). Host networking and host IPC
   are the agent's default.
-- `/data/sim-models` is created before the agent starts, because the agent will
-  not start without it. The step refuses a symlink or a file at that path, and
-  refuses an fm-sim commit without `--models-dir`. Root sets the owner and mode
+- `/data/sim-models` and `/data/sim-assets` are created before the agent starts,
+  because the agent will not start without them. The step refuses a symlink or a
+  file at either path, and refuses an fm-sim commit without both flags. Root sets the owner and mode
   only on a directory it has just made, because any fm member can rename another
   directory to that path. It reports a wrong mode on one already there and leaves
   the repair to a person.
@@ -740,6 +741,7 @@ The tailnet ACL on the router's 7447 is the boundary on who can call the agent.
 /var/lib/fm-sim/                            the account's home; nothing installed there
 /data/sim-runs/                             run summaries and MCAPs (fm-sim:fm, 2770)
 /data/sim-models/                           object packs every run mounts read-only (root:fm, 2775)
+/data/sim-assets/                           USD assets each Isaac run mounts read-only (root:fm, 2775)
 ```
 
 Members of the `fm` group copy object packs in by hand, as
@@ -749,6 +751,9 @@ outside that group, so it reads through the bits for others: run
 agent refuses a run while the tree holds a symlink or a directory it cannot read,
 so copy real files. Uninstall leaves the directory and its packs in place, and
 `./run.sh backup` does not cover them.
+
+Fetch SimReady assets with fm-sim's `tools/fetch_simready.py --assets-dir
+/data/sim-assets`, from a checkout at the pinned commit. The same rules apply.
 
 ```bash
 bash scripts/steps/91-sim.sh install --dry-run   # the plan and the rendered unit; changes nothing

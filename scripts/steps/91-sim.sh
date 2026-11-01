@@ -197,7 +197,7 @@ private_image_note() {
 exec_line() {
   local ref word line=""
   ref="$(image_ref)" || return 1
-  for word in "$ENTRYPOINT" --image "$ref" --runs-dir "$FM_SIM_RUNS_DIR" --models-dir "$FM_SIM_MODELS_DIR" "${FM_SIM_AGENT_FLAGS[@]}"; do
+  for word in "$ENTRYPOINT" --image "$ref" --runs-dir "$FM_SIM_RUNS_DIR" --models-dir "$FM_SIM_MODELS_DIR" --assets-dir "$FM_SIM_ASSETS_DIR" "${FM_SIM_AGENT_FLAGS[@]}"; do
     sim_safe_word "$word" || return 1
     line="${line:+$line }$word"
   done
@@ -224,8 +224,25 @@ uv_sha() {
   return 1
 }
 
-# The models directory, judged where this run sees it.
-models_dir_ok() { sim_models_dir_ok "$FM_SIM_MODELS_DIR" "$R$FM_SIM_MODELS_DIR"; }
+# The directories every run may mount, judged where this run sees them.
+mount_dirs_ok() {
+  sim_mount_dir_ok "$FM_SIM_MODELS_DIR" "$R$FM_SIM_MODELS_DIR" && sim_mount_dir_ok "$FM_SIM_ASSETS_DIR" "$R$FM_SIM_ASSETS_DIR"
+}
+
+# report_mount_dir PATH — what check says about one of them. sim_mount_dir_ok names
+# what it refuses, so its message is left on stderr.
+report_mount_dir() {
+  local dir="$1"
+  if ! sim_mount_dir_ok "$dir" "$R$dir"; then
+    fm_warn "$dir is refused — install will fail, and the agent will not start, until it is fixed"
+  elif [ ! -d "$R$dir" ]; then
+    fm_warn "$dir missing"
+  elif [ "$(stat -c '%G %a' "$R$dir")" != "$FM_GROUP 2775" ]; then
+    fm_warn "$dir is $(stat -c '%U:%G %a' "$R$dir"), wanted group $FM_GROUP and mode 2775"
+  else
+    fm_ok "$dir $(stat -c '%U:%G %a' "$R$dir")"
+  fi
+}
 
 # --- Reports ------------------------------------------------------------------
 
@@ -308,16 +325,8 @@ do_check() {
     fm_warn "account $FM_SIM_USER missing"
   fi
   if [ -d "$R$FM_SIM_RUNS_DIR" ]; then fm_ok "$FM_SIM_RUNS_DIR present"; else fm_warn "$FM_SIM_RUNS_DIR missing"; fi
-  # models_dir_ok names what it refuses, so its message is left on stderr.
-  if ! models_dir_ok; then
-    fm_warn "$FM_SIM_MODELS_DIR is refused — install will fail, and the agent will not start, until it is fixed"
-  elif [ ! -d "$R$FM_SIM_MODELS_DIR" ]; then
-    fm_warn "$FM_SIM_MODELS_DIR missing"
-  elif [ "$(stat -c '%G %a' "$R$FM_SIM_MODELS_DIR")" != "$FM_GROUP 2775" ]; then
-    fm_warn "$FM_SIM_MODELS_DIR is $(stat -c '%U:%G %a' "$R$FM_SIM_MODELS_DIR"), wanted group $FM_GROUP and mode 2775"
-  else
-    fm_ok "$FM_SIM_MODELS_DIR $(stat -c '%U:%G %a' "$R$FM_SIM_MODELS_DIR")"
-  fi
+  report_mount_dir "$FM_SIM_MODELS_DIR"
+  report_mount_dir "$FM_SIM_ASSETS_DIR"
 
   # image_ref names what it refuses, so its message is left on stderr.
   if ref="$(image_ref)"; then
@@ -355,7 +364,7 @@ dry_run_plan() {
   ref="$(image_ref)" || return 1
   commit_pinned || rc=$?
   [ "$rc" = 2 ] && return 1
-  models_dir_ok || return 1
+  mount_dirs_ok || return 1
   fm_log "dry run — nothing on this host changes"
   fm_info "would pull   $ref"
   private_image_note
@@ -370,6 +379,7 @@ dry_run_plan() {
   fm_info "would create system account $FM_SIM_USER (home $FM_SIM_HOME, no login)"
   fm_info "would create $FM_SIM_RUNS_DIR ($FM_SIM_USER:$FM_GROUP, 2770)"
   fm_info "would create $FM_SIM_MODELS_DIR (root:$FM_GROUP, 2775), not its contents"
+  fm_info "would create $FM_SIM_ASSETS_DIR (root:$FM_GROUP, 2775), not its contents"
   if have_commit; then
     unit="$(render "$(read_src_git show "$SIM_COMMIT:$TEMPLATE_PATH")")" || return 1
     fm_info "would write  $UNIT_PATH:"
@@ -530,38 +540,44 @@ ensure_runs_dir() {
 # One that is already here is reported, not repaired.
 #
 # mkdir fails on anything at the path. A swap straight after it is caught by what
-# root finds once inside: a link's target has another path, and a directory with a
-# stricter mode is not the one mkdir made. The mode is set again because uutils'
-# mkdir on Ubuntu 26.04 drops setgid.
-ensure_models_dir() {
-  local path="$R$FM_SIM_MODELS_DIR" mode
-  models_dir_ok || return 1
+# root finds once inside: a link's target has another path, and a member's directory
+# has another owner or a stricter mode than the one mkdir made. The mode is set again
+# because uutils' mkdir on Ubuntu 26.04 drops setgid.
+#
+# ensure_mount_dir PATH
+ensure_mount_dir() {
+  local dir="$1" path="$R$1" mode
+  sim_mount_dir_ok "$dir" "$path" || return 1
   if [ -d "$path" ]; then
     mode="$(stat -c '%a' "$path")"
     if [ "$mode" != 2775 ]; then
-      fm_warn "$FM_SIM_MODELS_DIR is mode $mode, wanted 2775 — fix it with: sudo chmod 2775 $FM_SIM_MODELS_DIR"
+      fm_warn "$dir is mode $mode, wanted 2775 — fix it with: sudo chmod 2775 $dir"
       return 0
     fi
-    fm_ok "$FM_SIM_MODELS_DIR already there ($(stat -c '%U:%G' "$path"), 2775)"
+    fm_ok "$dir already there ($(stat -c '%U:%G' "$path"), 2775)"
     return 0
   fi
   # shellcheck disable=SC2016  # expanded by the inner shell, from its own arguments
-  must "creating $FM_SIM_MODELS_DIR" sudo sh -c '
+  must "creating $dir" sudo sh -c '
     mkdir -m 2775 "$1" && cd "$1" &&
       [ "$(pwd -P)" = "$(cd "$(dirname "$1")" && pwd -P)/$(basename "$1")" ] &&
+      [ "$(stat -c %u .)" = "$(id -u)" ] &&
       case "$(stat -c %a .)" in 775 | 2775) ;; *) exit 1 ;; esac &&
       chown "root:$2" . && chmod 2775 .' sh "$path" "$FM_GROUP" || return 1
-  fm_ok "$FM_SIM_MODELS_DIR ready (root:$FM_GROUP, 2775)"
+  fm_ok "$dir ready (root:$FM_GROUP, 2775)"
 }
 
-# An agent older than the flag exits on it, and Restart=always would hide that
+# An agent older than a flag exits on it, and Restart=always would hide that
 # behind a unit that looks started. FM_SIM_COMMIT can name such a commit.
 # tradeoff: a string match on the source, which a mention alone would satisfy;
 # fm-sim offers no way to ask a commit for its flags without building it.
-agent_has_models_flag() {
-  read_src_git grep -q -e --models-dir "$SIM_COMMIT" -- agent/src && return 0
-  fm_err "fm-sim $SIM_COMMIT has no --models-dir, which the unit passes — pin a newer commit"
-  return 1
+agent_has_mount_flags() {
+  local flag
+  for flag in --models-dir --assets-dir; do
+    read_src_git grep -q -e "$flag" "$SIM_COMMIT" -- agent/src && continue
+    fm_err "fm-sim $SIM_COMMIT has no $flag, which the unit passes — pin a newer commit"
+    return 1
+  done
 }
 
 # install_unit TEXT — 0 when the unit changed, 3 when it was already current,
@@ -624,7 +640,7 @@ do_install() {
   local ref rc=0 template unit changed=1
   ref="$(image_ref)" || return 1
   exec_line >/dev/null || return 1
-  models_dir_ok || return 1
+  mount_dirs_ok || return 1
   commit_pinned || rc=$?
   [ "$rc" = 2 ] && return 1
 
@@ -643,7 +659,7 @@ do_install() {
   fi
 
   fetch_source || return 1
-  agent_has_models_flag || return 1
+  agent_has_mount_flags || return 1
   template="$(src_git show "$SIM_COMMIT:$TEMPLATE_PATH")" \
     || { fm_err "fm-sim $SIM_COMMIT has no $TEMPLATE_PATH"; return 1; }
   unit="$(render "$template")" || return 1
@@ -653,7 +669,8 @@ do_install() {
   install_uv || return 1
   build_venv || return 1
   ensure_runs_dir || return 1
-  ensure_models_dir || return 1
+  ensure_mount_dir "$FM_SIM_MODELS_DIR" || return 1
+  ensure_mount_dir "$FM_SIM_ASSETS_DIR" || return 1
   rc=0
   install_unit "$unit" || rc=$?
   case "$rc" in
@@ -727,6 +744,7 @@ do_uninstall() {
 
   fm_warn "$FM_SIM_RUNS_DIR left in place — run summaries and MCAPs are data"
   fm_warn "$FM_SIM_MODELS_DIR left in place — people copied those object packs in by hand"
+  fm_warn "$FM_SIM_ASSETS_DIR left in place — people fetched those USD assets by hand"
   return 0
 }
 

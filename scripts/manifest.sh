@@ -805,7 +805,7 @@ FM_ISAAC_DRIVER_MIN=535.129.03
 # nothing is pinned, and the step would install no agent.
 # FM_SIM_COMMIT overrides it on the command line, to try a commit before pinning.
 FM_SIM_REPO=first-motive/fm-sim
-FM_SIM_COMMIT_DEFAULT=93f8808d41b21bee438717b3830b824b075e624a
+FM_SIM_COMMIT_DEFAULT=9c2af46b840b0c34c39acb82ee662840b7922338
 
 # The image every run starts from, by digest. Without one the step still pulls
 # the tag and writes the unit, but grants no docker rights and enables nothing:
@@ -816,7 +816,7 @@ FM_SIM_COMMIT_DEFAULT=93f8808d41b21bee438717b3830b824b075e624a
 #   docker buildx imagetools inspect ghcr.io/first-motive/fm-sim:jazzy
 # FM_SIM_IMAGE_DIGEST overrides it on the command line.
 FM_SIM_IMAGE=ghcr.io/first-motive/fm-sim:jazzy
-FM_SIM_IMAGE_DIGEST_DEFAULT=sha256:1732565ee22e57adf58253112de348e07ddd58eeb7bcd0db2b388c1026c3d622
+FM_SIM_IMAGE_DIGEST_DEFAULT=sha256:8b08bdd1f896b9ba68e10b4bf0dd92ac18b7ad6a31d12a6925774ed232df6eff
 
 # The private overlay of that image, which adds the fm_skills, classical,
 # policy_serve, and fastwam controllers. A host runs it only when it opts in
@@ -831,7 +831,7 @@ FM_SIM_IMAGE_DIGEST_DEFAULT=sha256:1732565ee22e57adf58253112de348e07ddd58eeb7bcd
 #   docker buildx imagetools inspect ghcr.io/first-motive/fm-sim-controllers:jazzy
 # FM_SIM_CONTROLLERS_IMAGE_DIGEST overrides it on the command line.
 FM_SIM_CONTROLLERS_IMAGE=ghcr.io/first-motive/fm-sim-controllers:jazzy
-FM_SIM_CONTROLLERS_IMAGE_DIGEST_DEFAULT=sha256:9acc04a82a8bdf252e6a0083edc2275f5b5783a17c4764a1ee74c7f241480ece
+FM_SIM_CONTROLLERS_IMAGE_DIGEST_DEFAULT=sha256:a1141a76adee005ef7a0935c685147beb6afcde1ec6e593280e507474d167fb6
 
 # The account the agent runs as. Its own system user rather than a person's,
 # and outside the fm group so the roster steps never treat it as somebody. It is
@@ -867,11 +867,15 @@ FM_SIM_RUNS_DIR="$FM_DATA_DIR/sim-runs"
 # the agent's account is outside the fm group.
 FM_SIM_MODELS_DIR="$FM_DATA_DIR/sim-models"
 
+# USD assets, fetched by hand with fm-sim's tools/fetch_simready.py, that each Isaac
+# run mounts read-only. Owned and readable as the object packs are.
+FM_SIM_ASSETS_DIR="$FM_DATA_DIR/sim-assets"
+
 FM_SIM_UNIT=fm-sim-agent.service
 
 # Operator flags for the agent, on the unit's ExecStart. Host networking and
 # host IPC are the agent's default and need no flag. `--image`, `--runs-dir` and
-# `--models-dir` come from the values above.
+# `--models-dir` and `--assets-dir` come from the values above.
 #   --gpus               every GPU to each run (MuJoCo and Gazebo render on it)
 #   --memory 32g         the run container's ceiling
 #   --isaac-image        an isaac run's Isaac Sim, in its own container beside

@@ -215,7 +215,7 @@ make_upstream() {
   printf '%s\n' "${1:-$GOOD_TEMPLATE}" > "$UPSTREAM/agent/systemd/fm-sim-agent.service.in"
   printf '[project]\nname = "fm-sim-agent"\n' > "$UPSTREAM/agent/pyproject.toml"
   printf 'print("agent")\n' > "$UPSTREAM/agent/src/fm_sim_agent/__init__.py"
-  printf 'parser.add_argument("--models-dir")\n' > "$UPSTREAM/agent/src/fm_sim_agent/service.py"
+  printf 'parser.add_argument("--models-dir")\nparser.add_argument("--assets-dir")\n' > "$UPSTREAM/agent/src/fm_sim_agent/service.py"
   git init --quiet "$UPSTREAM"
   git -C "$UPSTREAM" config uploadpack.allowAnySHA1InWant true
   gitc add -A
@@ -298,19 +298,19 @@ assert_rc "sim_safe_word refuses a space" 1 sim_safe_word "a b"
 assert_rc "sim_safe_word refuses \$" 1 sim_safe_word 'a$b'
 assert_rc "sim_safe_word accepts a path" 0 sim_safe_word /data/sim-runs
 
-assert_rc "the models dir may not exist yet" 0 sim_models_dir_ok "$TMP/absent"
+assert_rc "the models dir may not exist yet" 0 sim_mount_dir_ok "$TMP/absent"
 mkdir "$TMP/real-dir"
-assert_rc "sim_models_dir_ok accepts a real directory" 0 sim_models_dir_ok "$TMP/real-dir"
-assert_rc "sim_models_dir_ok refuses a relative path" 1 sim_models_dir_ok data/sim-models
-assert_rc "sim_models_dir_ok refuses a colon" 1 sim_models_dir_ok /data/sim:models
-assert_rc "sim_models_dir_ok refuses a comma" 1 sim_models_dir_ok /data/sim,models
+assert_rc "sim_mount_dir_ok accepts a real directory" 0 sim_mount_dir_ok "$TMP/real-dir"
+assert_rc "sim_mount_dir_ok refuses a relative path" 1 sim_mount_dir_ok data/sim-models
+assert_rc "sim_mount_dir_ok refuses a colon" 1 sim_mount_dir_ok /data/sim:models
+assert_rc "sim_mount_dir_ok refuses a comma" 1 sim_mount_dir_ok /data/sim,models
 ln -s "$TMP/real-dir" "$TMP/dir-link"
-assert_rc "sim_models_dir_ok refuses a symlink to a directory" 1 sim_models_dir_ok "$TMP/dir-link"
+assert_rc "sim_mount_dir_ok refuses a symlink to a directory" 1 sim_mount_dir_ok "$TMP/dir-link"
 ln -s "$TMP/absent" "$TMP/dangling-link"
-assert_rc "sim_models_dir_ok refuses a dangling symlink" 1 sim_models_dir_ok "$TMP/dangling-link"
+assert_rc "sim_mount_dir_ok refuses a dangling symlink" 1 sim_mount_dir_ok "$TMP/dangling-link"
 : > "$TMP/plain-file"
-assert_rc "sim_models_dir_ok refuses a file" 1 sim_models_dir_ok "$TMP/plain-file"
-assert_rc "  and looks on disk where it is told" 1 sim_models_dir_ok /data/sim-models "$TMP/plain-file"
+assert_rc "sim_mount_dir_ok refuses a file" 1 sim_mount_dir_ok "$TMP/plain-file"
+assert_rc "  and looks on disk where it is told" 1 sim_mount_dir_ok /data/sim-models "$TMP/plain-file"
 
 tree_line() { printf '%s blob %s\t%s\n' "$1" "$(printf '%040d' 0)" "$2"; }
 assert_rc "sim_tree_ok accepts plain files" 0 bash -c \
@@ -368,6 +368,8 @@ assert_has "dry run names the uv checksum" "$out" "checked against sha256 $UV_SH
 assert_has "no digest: the plan grants and enables nothing" "$out" "would write the unit, grant nothing, enable nothing"
 assert_has "dry run plans the models directory" "$out" "would create $FM_SIM_MODELS_DIR (root:$(id -gn), 2775)"
 assert_eq "  and does not create it" "false" "$(exists "$R$FM_SIM_MODELS_DIR")"
+assert_has "dry run plans the assets directory" "$out" "would create $FM_SIM_ASSETS_DIR (root:$(id -gn), 2775)"
+assert_eq "  and does not create it" "false" "$(exists "$R$FM_SIM_ASSETS_DIR")"
 assert_has "no pinned commit: the plan installs no agent" "$(unpinned install --dry-run)" "would install no agent"
 assert_rc "a commit that is not a full SHA is refused" 1 env FM_SIM_COMMIT=main PATH="$BIN:$SYS_PATH" bash "$STEP" install --dry-run
 assert_rc "a malformed digest is refused" 1 env FM_SIM_COMMIT="$COMMIT" FM_SIM_IMAGE_DIGEST='sha256:nope; rm -rf /' \
@@ -415,7 +417,7 @@ out="$(printf 'y\n' | NONINTERACTIVE=1 UV_INDEX_URL=http://evil.example UV_EXTRA
 assert_eq "install exits 0 unattended" 0 "$rc"
 assert_eq "the unit is written" "true" "$(exists "$UNIT")"
 assert_has "the unit runs the entrypoint with the pinned image" "$(cat "$UNIT")" \
-  "ExecStart=$FM_SIM_AGENT_ROOT/venv/bin/fm-sim-agent --image ${FM_SIM_IMAGE%:*}@$DIGEST --runs-dir $FM_SIM_RUNS_DIR --models-dir $FM_SIM_MODELS_DIR ${FM_SIM_AGENT_FLAGS[*]}"
+  "ExecStart=$FM_SIM_AGENT_ROOT/venv/bin/fm-sim-agent --image ${FM_SIM_IMAGE%:*}@$DIGEST --runs-dir $FM_SIM_RUNS_DIR --models-dir $FM_SIM_MODELS_DIR --assets-dir $FM_SIM_ASSETS_DIR ${FM_SIM_AGENT_FLAGS[*]}"
 assert_has "the unit names its commit" "$(cat "$UNIT")" "from fm-sim $COMMIT:agent/systemd"
 assert_eq "root fetched the commit into its own repository" "$COMMIT" \
   "$(git --git-dir="$AGENT/src.git" rev-parse --verify "$COMMIT^{commit}")"
@@ -436,6 +438,8 @@ assert_eq "the runs dir is 2770" "2770" "$(stat -c '%a' "$R$FM_SIM_RUNS_DIR")"
 assert_eq "the models dir is /data/sim-models, not the checkpoints in /data/models" \
   "/data/sim-models" "$FM_SIM_MODELS_DIR"
 assert_eq "the models dir is 2775" "2775" "$(stat -c '%a' "$R$FM_SIM_MODELS_DIR")"
+assert_eq "the assets dir is /data/sim-assets" "/data/sim-assets" "$FM_SIM_ASSETS_DIR"
+assert_eq "  and is 2775" "2775" "$(stat -c '%a' "$R$FM_SIM_ASSETS_DIR")"
 assert_has "  created by a command that fails on anything there" "$(log)" 'mkdir -m 2775 "$1"'
 assert_has "  and handed to root and the group from inside it" "$(log)" 'chown "root:$2" . && chmod 2775 .'
 assert_has "  before the unit is written" "$(grep -e '-m 2775' -e '-m 0644 .*unit' "$SIM_LOG" | head -1)" "-m 2775"
@@ -568,6 +572,29 @@ assert_has "  and is named" "$out" "fm-sim $COMMIT has no --models-dir"
 assert_eq "  no unit is written" "false" "$(exists "$UNIT")"
 assert_eq "  no agent is copied" "false" "$(exists "$AGENT/project")"
 
+# One with --models-dir but older than --assets-dir.
+make_upstream
+printf 'parser.add_argument("--models-dir")\n' > "$UPSTREAM/agent/src/fm_sim_agent/service.py"
+gitc add -A
+gitc commit --quiet -m old
+COMMIT="$(git -C "$UPSTREAM" rev-parse HEAD)"
+reset_host
+rc=0; out="$(NONINTERACTIVE=1 inst)" || rc=$?
+assert_eq "an agent without --assets-dir fails install" 1 "$rc"
+assert_has "  and is named" "$out" "fm-sim $COMMIT has no --assets-dir"
+assert_eq "  no unit is written" "false" "$(exists "$UNIT")"
+
+# The assets directory is held to the same rule as the models directory below.
+make_upstream
+reset_host
+mkdir -p "$R$(dirname "$FM_SIM_ASSETS_DIR")" "$TMP/assets-target"
+chmod 0700 "$TMP/assets-target"
+ln -s "$TMP/assets-target" "$R$FM_SIM_ASSETS_DIR"
+rc=0; out="$(NONINTERACTIVE=1 inst)" || rc=$?
+assert_eq "a symlink at the assets directory fails install" 1 "$rc"
+assert_has "  and is named" "$out" "refusing mount directory '$FM_SIM_ASSETS_DIR' — it is a symlink"
+assert_eq "  and is not followed" "700" "$(stat -c '%a' "$TMP/assets-target")"
+
 # A symlink or a file at the models directory, refused and never followed. The
 # target's mode is what `install -d` would have changed through the link.
 make_upstream
@@ -577,7 +604,7 @@ chmod 0700 "$TMP/link-target"
 ln -s "$TMP/link-target" "$R$FM_SIM_MODELS_DIR"
 rc=0; out="$(NONINTERACTIVE=1 inst)" || rc=$?
 assert_eq "a symlink at the models directory fails install" 1 "$rc"
-assert_has "  and is named" "$out" "refusing models directory '$FM_SIM_MODELS_DIR' — it is a symlink"
+assert_has "  and is named" "$out" "refusing mount directory '$FM_SIM_MODELS_DIR' — it is a symlink"
 assert_eq "  and is not followed" "700" "$(stat -c '%a' "$TMP/link-target")"
 assert_eq "  and still a symlink" "$TMP/link-target" "$(readlink "$R$FM_SIM_MODELS_DIR")"
 assert_eq "  no privileged command ran" "" "$(grep '^sudo' "$SIM_LOG" || true)"
@@ -708,6 +735,7 @@ out="$(unpinned check)"
 assert_has "check accepts one in the wanted group and mode" "$out" "$FM_SIM_MODELS_DIR $(id -un):$(id -gn) 2775"
 mkdir -p "$TMP/keep" && mv "$R$FM_SIM_MODELS_DIR" "$TMP/keep/models"
 assert_has "check names a missing models directory" "$(step check)" "$FM_SIM_MODELS_DIR missing"
+assert_has "check reports the assets directory too" "$(step check)" "$FM_SIM_ASSETS_DIR"
 mv "$TMP/keep/models" "$R$FM_SIM_MODELS_DIR"
 : > "$SIM_LOG"
 rc=0; out="$(FAKE_FAIL="systemctl disable" step uninstall)" || rc=$?
@@ -721,6 +749,8 @@ assert_eq "uninstall removes the agent tree" "false" "$(exists "$AGENT")"
 assert_eq "uninstall leaves the runs" "true" "$(exists "$R$FM_SIM_RUNS_DIR")"
 assert_eq "uninstall leaves the object packs" "true" "$(exists "$R$FM_SIM_MODELS_DIR")"
 assert_has "  and says so" "$(step uninstall)" "$FM_SIM_MODELS_DIR left in place"
+assert_eq "uninstall leaves the USD assets" "true" "$(exists "$R$FM_SIM_ASSETS_DIR")"
+assert_has "  and says so" "$(step uninstall)" "$FM_SIM_ASSETS_DIR left in place"
 assert_has "uninstall disables the unit" "$(log)" "systemctl disable --now $FM_SIM_UNIT"
 
 # Opted in, the unit runs the controllers image at its pin, and check says the
