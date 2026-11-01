@@ -229,8 +229,25 @@ mount_dirs_ok() {
   sim_mount_dir_ok "$FM_SIM_MODELS_DIR" "$R$FM_SIM_MODELS_DIR" && sim_mount_dir_ok "$FM_SIM_ASSETS_DIR" "$R$FM_SIM_ASSETS_DIR"
 }
 
-# report_mount_dir PATH — what check says about one of them. sim_mount_dir_ok names
-# what it refuses, so its message is left on stderr.
+# report_assets_dir — what check says about the assets directory. The agent's account
+# owns it and the fetch seals it, so 755 is an empty one and 555 a fetched one, each
+# with the setgid bit if /data passed it down.
+report_assets_dir() {
+  local dir="$FM_SIM_ASSETS_DIR"
+  if ! sim_mount_dir_ok "$dir" "$R$dir"; then
+    fm_warn "$dir is refused — install will fail, and the agent will not start, until it is fixed"
+  elif [ ! -d "$R$dir" ]; then
+    fm_warn "$dir missing"
+  else
+    case "$(stat -c '%a' "$R$dir")" in
+      755 | 2755 | 555 | 2555) fm_ok "$dir $(stat -c '%U:%G %a' "$R$dir")" ;;
+      *) fm_warn "$dir is $(stat -c '%U:%G %a' "$R$dir"), wanted owner $FM_SIM_USER and no group write" ;;
+    esac
+  fi
+}
+
+# report_mount_dir PATH — what check says about the models directory. sim_mount_dir_ok
+# names what it refuses, so its message is left on stderr.
 report_mount_dir() {
   local dir="$1"
   if ! sim_mount_dir_ok "$dir" "$R$dir"; then
@@ -326,7 +343,7 @@ do_check() {
   fi
   if [ -d "$R$FM_SIM_RUNS_DIR" ]; then fm_ok "$FM_SIM_RUNS_DIR present"; else fm_warn "$FM_SIM_RUNS_DIR missing"; fi
   report_mount_dir "$FM_SIM_MODELS_DIR"
-  report_mount_dir "$FM_SIM_ASSETS_DIR"
+  report_assets_dir
 
   # image_ref names what it refuses, so its message is left on stderr.
   if ref="$(image_ref)"; then
@@ -379,7 +396,7 @@ dry_run_plan() {
   fm_info "would create system account $FM_SIM_USER (home $FM_SIM_HOME, no login)"
   fm_info "would create $FM_SIM_RUNS_DIR ($FM_SIM_USER:$FM_GROUP, 2770)"
   fm_info "would create $FM_SIM_MODELS_DIR (root:$FM_GROUP, 2775), not its contents"
-  fm_info "would create $FM_SIM_ASSETS_DIR (root:$FM_GROUP, 2775), not its contents"
+  fm_info "would create $FM_SIM_ASSETS_DIR ($FM_SIM_USER:$FM_GROUP, 755), not its contents"
   if have_commit; then
     unit="$(render "$(read_src_git show "$SIM_COMMIT:$TEMPLATE_PATH")")" || return 1
     fm_info "would write  $UNIT_PATH:"
@@ -530,8 +547,8 @@ ensure_runs_dir() {
   fm_ok "$FM_SIM_RUNS_DIR ready ($FM_SIM_USER:$FM_GROUP, 2770)"
 }
 
-# The same owner and mode as the rest of /data, set on the directory alone:
-# people write what is inside it, so nothing here reaches past the directory.
+# The owner and mode come from the caller and are set on the directory alone, so
+# nothing here reaches past it.
 #
 # Judged again here because the build before this can take minutes, and /data
 # lets any fm member replace this entry at any moment. Root therefore changes only
@@ -544,9 +561,20 @@ ensure_runs_dir() {
 # has another owner or a stricter mode than the one mkdir made. The mode is set again
 # because uutils' mkdir on Ubuntu 26.04 drops setgid.
 #
-# ensure_mount_dir PATH
-ensure_mount_dir() {
-  local dir="$1" path="$R$1" mode
+# make_mount_dir PATH OWNER MODE — the new directory, or a failure.
+make_mount_dir() {
+  # shellcheck disable=SC2016  # expanded by the inner shell, from its own arguments
+  must "creating $1" sudo sh -c '
+    mkdir -m "$3" "$1" && cd "$1" &&
+      [ "$(pwd -P)" = "$(cd "$(dirname "$1")" && pwd -P)/$(basename "$1")" ] &&
+      [ "$(stat -c %u .)" = "$(id -u)" ] &&
+      [ "$(( 0$(stat -c %a .) & 0777 ))" = "$(( 0$3 & 0777 ))" ] &&
+      chown "$2" . && chmod "$3" .' sh "$R$1" "$2" "$3"
+}
+
+# People write what is inside this one, as with the rest of /data.
+ensure_models_dir() {
+  local dir="$FM_SIM_MODELS_DIR" path="$R$FM_SIM_MODELS_DIR" mode
   sim_mount_dir_ok "$dir" "$path" || return 1
   if [ -d "$path" ]; then
     mode="$(stat -c '%a' "$path")"
@@ -557,14 +585,25 @@ ensure_mount_dir() {
     fm_ok "$dir already there ($(stat -c '%U:%G' "$path"), 2775)"
     return 0
   fi
-  # shellcheck disable=SC2016  # expanded by the inner shell, from its own arguments
-  must "creating $dir" sudo sh -c '
-    mkdir -m 2775 "$1" && cd "$1" &&
-      [ "$(pwd -P)" = "$(cd "$(dirname "$1")" && pwd -P)/$(basename "$1")" ] &&
-      [ "$(stat -c %u .)" = "$(id -u)" ] &&
-      case "$(stat -c %a .)" in 775 | 2775) ;; *) exit 1 ;; esac &&
-      chown "root:$2" . && chmod 2775 .' sh "$path" "$FM_GROUP" || return 1
+  make_mount_dir "$dir" "root:$FM_GROUP" 2775 || return 1
   fm_ok "$dir ready (root:$FM_GROUP, 2775)"
+}
+
+# The agent's account owns this one, and fetch_simready.py, run as that account, seals
+# it read-only. No fm member writes here, so it holds only what the fetch checked.
+ensure_assets_dir() {
+  local dir="$FM_SIM_ASSETS_DIR" path="$R$FM_SIM_ASSETS_DIR"
+  sim_mount_dir_ok "$dir" "$path" || return 1
+  if [ -d "$path" ]; then
+    if [ "$(stat -c '%U' "$path")" != "$FM_SIM_USER" ]; then
+      fm_warn "$dir is owned by $(stat -c '%U' "$path"), wanted $FM_SIM_USER — if it is empty, sudo rmdir $dir and run this again"
+      return 0
+    fi
+    fm_ok "$dir already there ($(stat -c '%U:%G %a' "$path"))"
+    return 0
+  fi
+  make_mount_dir "$dir" "$FM_SIM_USER:$FM_GROUP" 755 || return 1
+  fm_ok "$dir ready ($FM_SIM_USER:$FM_GROUP, 755)"
 }
 
 # An agent older than a flag exits on it, and Restart=always would hide that
@@ -669,8 +708,8 @@ do_install() {
   install_uv || return 1
   build_venv || return 1
   ensure_runs_dir || return 1
-  ensure_mount_dir "$FM_SIM_MODELS_DIR" || return 1
-  ensure_mount_dir "$FM_SIM_ASSETS_DIR" || return 1
+  ensure_models_dir || return 1
+  ensure_assets_dir || return 1
   rc=0
   install_unit "$unit" || rc=$?
   case "$rc" in
@@ -744,7 +783,7 @@ do_uninstall() {
 
   fm_warn "$FM_SIM_RUNS_DIR left in place — run summaries and MCAPs are data"
   fm_warn "$FM_SIM_MODELS_DIR left in place — people copied those object packs in by hand"
-  fm_warn "$FM_SIM_ASSETS_DIR left in place — people fetched those USD assets by hand"
+  fm_warn "$FM_SIM_ASSETS_DIR left in place — its USD assets were fetched by hand"
   return 0
 }
 

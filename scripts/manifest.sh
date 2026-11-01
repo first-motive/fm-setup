@@ -868,7 +868,8 @@ FM_SIM_RUNS_DIR="$FM_DATA_DIR/sim-runs"
 FM_SIM_MODELS_DIR="$FM_DATA_DIR/sim-models"
 
 # USD assets, fetched by hand with fm-sim's tools/fetch_simready.py, that each Isaac
-# run mounts read-only. Owned and readable as the object packs are.
+# run mounts read-only. The agent's account owns it and runs the fetch, because the
+# tool seals what it owns and its checks do not hold in a directory others can write.
 FM_SIM_ASSETS_DIR="$FM_DATA_DIR/sim-assets"
 
 FM_SIM_UNIT=fm-sim-agent.service
