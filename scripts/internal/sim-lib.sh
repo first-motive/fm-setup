@@ -25,6 +25,32 @@ sim_safe_word() {
   esac
 }
 
+# sim_models_dir_ok PATH [ON_DISK] — 0 when PATH may become the agent's
+# --models-dir: what the agent itself would accept, or nothing there yet for the
+# step to create. ON_DISK is where to look, when a test root prefixes PATH.
+#
+# A symlink is refused rather than followed, because the agent would refuse it
+# anyway. As in the agent, only the last component is judged: the parent is
+# /data, which the users step makes. Docker splits mount values on `:` and `,`.
+sim_models_dir_ok() {
+  local path="$1" disk="${2:-$1}"
+  case "$path" in
+    /*) ;;
+    *) fm_err "refusing models directory '$path' — not an absolute path"; return 1 ;;
+  esac
+  case "$path" in
+    *:* | *,*) fm_err "refusing models directory '$path' — it holds ':' or ','"; return 1 ;;
+  esac
+  if [ -L "$disk" ]; then
+    fm_err "refusing models directory '$path' — it is a symlink; replace it with a real directory"
+    return 1
+  fi
+  if [ -e "$disk" ] && [ ! -d "$disk" ]; then
+    fm_err "refusing models directory '$path' — it is not a directory"
+    return 1
+  fi
+}
+
 _sim_refuse_line() {  # line reason
   fm_err "fm-sim's unit template is refused — $2"
   fm_err "  line: $1"

@@ -861,11 +861,17 @@ FM_SIM_UV_SHA256_MAP=(
 # group fm, setgid, and closed to everyone else.
 FM_SIM_RUNS_DIR="$FM_DATA_DIR/sim-runs"
 
+# Object packs, copied in by hand, that every run mounts read-only. It is not
+# /data/models, which holds governed checkpoints no sim run should see. Root owns
+# it, group fm writes it, and the bits for others let the agent read it, because
+# the agent's account is outside the fm group.
+FM_SIM_MODELS_DIR="$FM_DATA_DIR/sim-models"
+
 FM_SIM_UNIT=fm-sim-agent.service
 
 # Operator flags for the agent, on the unit's ExecStart. Host networking and
-# host IPC are the agent's default and need no flag. `--image` and `--runs-dir`
-# come from the values above.
+# host IPC are the agent's default and need no flag. `--image`, `--runs-dir` and
+# `--models-dir` come from the values above.
 #   --gpus               every GPU to each run (MuJoCo and Gazebo render on it)
 #   --memory 32g         the run container's ceiling
 #   --isaac-image        an isaac run's Isaac Sim, in its own container beside

@@ -15,8 +15,10 @@
 # Every privileged tool the step calls — sudo, install, chown, useradd, usermod,
 # userdel, systemctl, curl, uv, docker, nvidia-smi — is a stand-in on PATH that
 # records its argv. FAKE_FAIL=<text> makes sudo fail any command whose argv
-# holds that text, so each privileged call site can be failed on its own. The step's
-# test hooks (FM_SIM_TEST=1 with FM_SIM_TEST_ROOT, FM_SIM_TEST_SOURCE and
+# holds that text, so each privileged call site can be failed on its own, and
+# FAKE_PLANT_LINK=<path> makes it replace that path with a symlink to
+# FAKE_PLANT_TARGET when a command holds FAKE_PLANT_ON, by default during the
+# venv's build. The step's test hooks (FM_SIM_TEST=1 with FM_SIM_TEST_ROOT, FM_SIM_TEST_SOURCE and
 # FM_SIM_TEST_UV_SHA256) point it at a temp root, a local upstream repository,
 # and a stand-in uv tarball. No root, daemon, GPU, or network is needed.
 #
@@ -73,7 +75,7 @@ assert_lacks() {
   case "$2" in *"$3"*) bad "$1"; printf '        found: %s\n' "$3" ;; *) ok "$1" ;; esac
 }
 exists() { [ -e "$1" ] && echo true || echo false; }
-count() { grep -c "$1" "$SIM_LOG" || true; }
+count() { grep -c "$@" "$SIM_LOG" || true; }
 
 card() {  # workload — "" for none
   if [ -n "$1" ]; then
@@ -107,6 +109,9 @@ stub() {
 stub sudo 'printf "sudo %s\n" "$*" >> @LOG@
 while [ $# -gt 0 ]; do case "$1" in -n) shift ;; -u) shift 2 ;; *) break ;; esac; done
 if [ -n "${FAKE_FAIL:-}" ]; then case "$*" in *"$FAKE_FAIL"*) exit 1 ;; esac; fi
+if [ -n "${FAKE_PLANT_LINK:-}" ]; then case "$*" in *"${FAKE_PLANT_ON:-chmod -R u+rwX}"*)
+  mkdir -p "$(dirname "$FAKE_PLANT_LINK")"; rm -rf "$FAKE_PLANT_LINK"
+  ln -s "${FAKE_PLANT_TARGET:-/nonexistent}" "$FAKE_PLANT_LINK" ;; esac; fi
 exec "$@"'
 # install keeps everything but the ownership, which needs root.
 stub install 'args=()
@@ -165,8 +170,11 @@ step()  { env PATH="$BIN:$SYS_PATH" bash "$STEP" "$@" 2>&1; }
 UNPINNED="$TMP/unpinned"
 mkdir -p "$UNPINNED"
 tar -C "$FM_ROOT" --exclude=.git -cf - . | tar -C "$UNPINNED" -xf -
+# Its group is this account's, the one group a stand-in install can leave on a
+# directory, so check's ready case can be reached without root.
 sed -i -e 's/^FM_SIM_COMMIT_DEFAULT=.*/FM_SIM_COMMIT_DEFAULT=/' \
-  -e 's/^FM_SIM_IMAGE_DIGEST_DEFAULT=.*/FM_SIM_IMAGE_DIGEST_DEFAULT=/' "$UNPINNED/scripts/manifest.sh"
+  -e 's/^FM_SIM_IMAGE_DIGEST_DEFAULT=.*/FM_SIM_IMAGE_DIGEST_DEFAULT=/' \
+  -e "s/^FM_GROUP=.*/FM_GROUP=$(id -gn)/" "$UNPINNED/scripts/manifest.sh"
 UNPINNED_STEP="$UNPINNED/scripts/steps/91-sim.sh"
 unpinned() { env PATH="$BIN:$SYS_PATH" bash "$UNPINNED_STEP" "$@" 2>&1; }
 isaac() { env PATH="$BIN:$SYS_PATH" bash "$ISAAC_STEP" "$@" 2>&1; }
@@ -207,6 +215,7 @@ make_upstream() {
   printf '%s\n' "${1:-$GOOD_TEMPLATE}" > "$UPSTREAM/agent/systemd/fm-sim-agent.service.in"
   printf '[project]\nname = "fm-sim-agent"\n' > "$UPSTREAM/agent/pyproject.toml"
   printf 'print("agent")\n' > "$UPSTREAM/agent/src/fm_sim_agent/__init__.py"
+  printf 'parser.add_argument("--models-dir")\n' > "$UPSTREAM/agent/src/fm_sim_agent/service.py"
   git init --quiet "$UPSTREAM"
   git -C "$UPSTREAM" config uploadpack.allowAnySHA1InWant true
   gitc add -A
@@ -289,6 +298,20 @@ assert_rc "sim_safe_word refuses a space" 1 sim_safe_word "a b"
 assert_rc "sim_safe_word refuses \$" 1 sim_safe_word 'a$b'
 assert_rc "sim_safe_word accepts a path" 0 sim_safe_word /data/sim-runs
 
+assert_rc "the models dir may not exist yet" 0 sim_models_dir_ok "$TMP/absent"
+mkdir "$TMP/real-dir"
+assert_rc "sim_models_dir_ok accepts a real directory" 0 sim_models_dir_ok "$TMP/real-dir"
+assert_rc "sim_models_dir_ok refuses a relative path" 1 sim_models_dir_ok data/sim-models
+assert_rc "sim_models_dir_ok refuses a colon" 1 sim_models_dir_ok /data/sim:models
+assert_rc "sim_models_dir_ok refuses a comma" 1 sim_models_dir_ok /data/sim,models
+ln -s "$TMP/real-dir" "$TMP/dir-link"
+assert_rc "sim_models_dir_ok refuses a symlink to a directory" 1 sim_models_dir_ok "$TMP/dir-link"
+ln -s "$TMP/absent" "$TMP/dangling-link"
+assert_rc "sim_models_dir_ok refuses a dangling symlink" 1 sim_models_dir_ok "$TMP/dangling-link"
+: > "$TMP/plain-file"
+assert_rc "sim_models_dir_ok refuses a file" 1 sim_models_dir_ok "$TMP/plain-file"
+assert_rc "  and looks on disk where it is told" 1 sim_models_dir_ok /data/sim-models "$TMP/plain-file"
+
 tree_line() { printf '%s blob %s\t%s\n' "$1" "$(printf '%040d' 0)" "$2"; }
 assert_rc "sim_tree_ok accepts plain files" 0 bash -c \
   ". '$FM_ROOT/lib.sh'; . '$FM_ROOT/scripts/internal/sim-lib.sh'; printf '%s\n%s\n' \"$(tree_line 100644 agent/a)\" \"$(tree_line 100755 agent/b)\" | sim_tree_ok"
@@ -343,6 +366,8 @@ assert_eq "dry run runs no privileged tool" "" "$(grep -v '^docker' "$SIM_LOG" |
 assert_has "dry run plans root's own fetch" "$out" "would fetch  $COMMIT from file://$UPSTREAM into $FM_SIM_AGENT_ROOT/src.git (as root)"
 assert_has "dry run names the uv checksum" "$out" "checked against sha256 $UV_SHA"
 assert_has "no digest: the plan grants and enables nothing" "$out" "would write the unit, grant nothing, enable nothing"
+assert_has "dry run plans the models directory" "$out" "would create $FM_SIM_MODELS_DIR (root:$(id -gn), 2775)"
+assert_eq "  and does not create it" "false" "$(exists "$R$FM_SIM_MODELS_DIR")"
 assert_has "no pinned commit: the plan installs no agent" "$(unpinned install --dry-run)" "would install no agent"
 assert_rc "a commit that is not a full SHA is refused" 1 env FM_SIM_COMMIT=main PATH="$BIN:$SYS_PATH" bash "$STEP" install --dry-run
 assert_rc "a malformed digest is refused" 1 env FM_SIM_COMMIT="$COMMIT" FM_SIM_IMAGE_DIGEST='sha256:nope; rm -rf /' \
@@ -390,7 +415,7 @@ out="$(printf 'y\n' | NONINTERACTIVE=1 UV_INDEX_URL=http://evil.example UV_EXTRA
 assert_eq "install exits 0 unattended" 0 "$rc"
 assert_eq "the unit is written" "true" "$(exists "$UNIT")"
 assert_has "the unit runs the entrypoint with the pinned image" "$(cat "$UNIT")" \
-  "ExecStart=$FM_SIM_AGENT_ROOT/venv/bin/fm-sim-agent --image ${FM_SIM_IMAGE%:*}@$DIGEST --runs-dir $FM_SIM_RUNS_DIR ${FM_SIM_AGENT_FLAGS[*]}"
+  "ExecStart=$FM_SIM_AGENT_ROOT/venv/bin/fm-sim-agent --image ${FM_SIM_IMAGE%:*}@$DIGEST --runs-dir $FM_SIM_RUNS_DIR --models-dir $FM_SIM_MODELS_DIR ${FM_SIM_AGENT_FLAGS[*]}"
 assert_has "the unit names its commit" "$(cat "$UNIT")" "from fm-sim $COMMIT:agent/systemd"
 assert_eq "root fetched the commit into its own repository" "$COMMIT" \
   "$(git --git-dir="$AGENT/src.git" rev-parse --verify "$COMMIT^{commit}")"
@@ -408,6 +433,12 @@ assert_has "  with no uv config" "$(log)" "uvenv UV_NO_CONFIG=1"
 assert_eq "  and no inherited index" 0 "$(count 'uvenv UV_.*INDEX')"
 assert_eq "  and no inherited PATH" "uvenv PATH=/usr/bin:/bin" "$(grep '^uvenv PATH=' "$SIM_LOG")"
 assert_eq "the runs dir is 2770" "2770" "$(stat -c '%a' "$R$FM_SIM_RUNS_DIR")"
+assert_eq "the models dir is /data/sim-models, not the checkpoints in /data/models" \
+  "/data/sim-models" "$FM_SIM_MODELS_DIR"
+assert_eq "the models dir is 2775" "2775" "$(stat -c '%a' "$R$FM_SIM_MODELS_DIR")"
+assert_has "  created by a command that fails on anything there" "$(log)" 'mkdir -m 2775 "$1"'
+assert_has "  and handed to root and the group from inside it" "$(log)" 'chown "root:$2" . && chmod 2775 .'
+assert_has "  before the unit is written" "$(grep -e '-m 2775' -e '-m 0644 .*unit' "$SIM_LOG" | head -1)" "-m 2775"
 assert_has "the account is created" "$(log)" "useradd --system --user-group --create-home --home-dir $FM_SIM_HOME"
 assert_has "the declined grant is said" "$out" "docker grant declined"
 assert_eq "usermod never ran" 0 "$(count '^usermod')"
@@ -423,6 +454,28 @@ assert_eq "an unchanged unit reloads nothing" 0 "$(count 'daemon-reload')"
 assert_eq "the pinned tree is not copied again" 0 "$(count 'chown -R root:root')"
 assert_eq "uv is not fetched again" 0 "$(count '^curl')"
 assert_eq "the commit is not fetched again" 0 "$(count ' fetch ')"
+
+# What people wrote into the models directory survives a re-run untouched, and
+# nothing recursive ever reaches it.
+mkdir -p "$R$FM_SIM_MODELS_DIR/pack"
+: > "$R$FM_SIM_MODELS_DIR/pack/best.xml"
+assert_eq "a pack's directory inherits the setgid bit" "true" "$([ -g "$R$FM_SIM_MODELS_DIR/pack" ] && echo true || echo false)"
+chmod 2750 "$R$FM_SIM_MODELS_DIR/pack"
+chmod 0640 "$R$FM_SIM_MODELS_DIR/pack/best.xml"
+: > "$SIM_LOG"
+printf 'y\n' | inst >/dev/null
+assert_eq "a re-run leaves a pack's directory mode" "2750" "$(stat -c '%a' "$R$FM_SIM_MODELS_DIR/pack")"
+assert_eq "  and its file mode" "640" "$(stat -c '%a' "$R$FM_SIM_MODELS_DIR/pack/best.xml")"
+assert_eq "no recursive command names the models directory" 0 "$(grep -c -E -e "-R .*$FM_SIM_MODELS_DIR" -e "find .*$FM_SIM_MODELS_DIR" "$SIM_LOG" || true)"
+assert_eq "root does not touch a directory already there" 0 "$(grep -c -E "(chown|chmod) .*$FM_SIM_MODELS_DIR" "$SIM_LOG" || true)"
+# A member can rename a private directory to this path; root must not open it.
+chmod 2700 "$R$FM_SIM_MODELS_DIR"
+: > "$SIM_LOG"
+out="$(printf 'y\n' | inst)"
+assert_has "a wrong mode is reported" "$out" "$FM_SIM_MODELS_DIR is mode 2700, wanted 2775"
+assert_eq "  and left for a person" "2700" "$(stat -c '%a' "$R$FM_SIM_MODELS_DIR")"
+assert_eq "  with no root command on it" 0 "$(grep -c -E "(chown|chmod|mkdir) .*$FM_SIM_MODELS_DIR" "$SIM_LOG" || true)"
+chmod 2775 "$R$FM_SIM_MODELS_DIR"
 
 # The sim-cloud role, unattended: the grant is given without a prompt, and the
 # unit enabled. Its stack's bootstrap made the account already.
@@ -503,6 +556,64 @@ assert_has "  and is named" "$out" "refusing a tree entry of mode 120000: agent/
 assert_eq "  nothing is extracted" "" "$(find "$AGENT" -maxdepth 1 -name '.project.*' -o -maxdepth 1 -name project)"
 assert_eq "  no tar ran" 0 "$(count 'tar -x')"
 
+# A commit older than --models-dir, refused before the unit that would pass it.
+make_upstream
+gitc rm --quiet agent/src/fm_sim_agent/service.py
+gitc commit --quiet -m old
+COMMIT="$(git -C "$UPSTREAM" rev-parse HEAD)"
+reset_host
+rc=0; out="$(NONINTERACTIVE=1 inst)" || rc=$?
+assert_eq "an agent without --models-dir fails install" 1 "$rc"
+assert_has "  and is named" "$out" "fm-sim $COMMIT has no --models-dir"
+assert_eq "  no unit is written" "false" "$(exists "$UNIT")"
+assert_eq "  no agent is copied" "false" "$(exists "$AGENT/project")"
+
+# A symlink or a file at the models directory, refused and never followed. The
+# target's mode is what `install -d` would have changed through the link.
+make_upstream
+reset_host
+mkdir -p "$R$(dirname "$FM_SIM_MODELS_DIR")" "$TMP/link-target"
+chmod 0700 "$TMP/link-target"
+ln -s "$TMP/link-target" "$R$FM_SIM_MODELS_DIR"
+rc=0; out="$(NONINTERACTIVE=1 inst)" || rc=$?
+assert_eq "a symlink at the models directory fails install" 1 "$rc"
+assert_has "  and is named" "$out" "refusing models directory '$FM_SIM_MODELS_DIR' — it is a symlink"
+assert_eq "  and is not followed" "700" "$(stat -c '%a' "$TMP/link-target")"
+assert_eq "  and still a symlink" "$TMP/link-target" "$(readlink "$R$FM_SIM_MODELS_DIR")"
+assert_eq "  no privileged command ran" "" "$(grep '^sudo' "$SIM_LOG" || true)"
+assert_eq "  no unit is written" "false" "$(exists "$UNIT")"
+rc=0; out="$(dry)" || rc=$?
+assert_eq "the dry run refuses it too" 1 "$rc"
+assert_has "  and names it" "$out" "it is a symlink"
+rc=0; out="$(step check)" || rc=$?
+assert_eq "check reports it and exits 0" 0 "$rc"
+assert_has "  and says what follows" "$out" "$FM_SIM_MODELS_DIR is refused"
+assert_eq "  and leaves it" "700" "$(stat -c '%a' "$TMP/link-target")"
+reset_host
+mkdir -p "$R$(dirname "$FM_SIM_MODELS_DIR")"
+: > "$R$FM_SIM_MODELS_DIR"
+rc=0; out="$(NONINTERACTIVE=1 inst)" || rc=$?
+assert_eq "a file at the models directory fails install" 1 "$rc"
+assert_has "  and is named" "$out" "it is not a directory"
+# Planted during the build, after the early refusal passed: the second check,
+# right before root touches the path, is the one that catches this.
+make_upstream
+reset_host
+rc=0; out="$(NONINTERACTIVE=1 FAKE_PLANT_LINK="$R$FM_SIM_MODELS_DIR" inst)" || rc=$?
+assert_eq "a symlink planted during the build fails install" 1 "$rc"
+assert_has "  and is named" "$out" "it is a symlink"
+assert_eq "  and root never reaches it" 0 "$(count -e "-m 2775")"
+assert_eq "  no unit is written" "false" "$(exists "$UNIT")"
+# Swapped in at the last moment, after the second check: mkdir refuses, because
+# something is at the path.
+reset_host
+chmod 0700 "$TMP/link-target"
+rc=0; out="$(NONINTERACTIVE=1 FAKE_PLANT_LINK="$R$FM_SIM_MODELS_DIR" FAKE_PLANT_ON="-m 2775" FAKE_PLANT_TARGET="$TMP/link-target" inst)" || rc=$?
+assert_eq "a symlink swapped in before mkdir fails install" 1 "$rc"
+assert_has "  and is named" "$out" "creating $FM_SIM_MODELS_DIR failed"
+assert_eq "  and its target keeps its mode" "700" "$(stat -c '%a' "$TMP/link-target")"
+assert_eq "  no unit is written" "false" "$(exists "$UNIT")"
+
 # A uv tarball that does not match its pin.
 make_upstream
 reset_host
@@ -546,6 +657,7 @@ SITES=(
   "sync --quiet --frozen|building $FM_SIM_AGENT_ROOT/venv failed"
   "chmod -R u+rwX|setting venv modes failed"
   "-m 2770|creating $FM_SIM_RUNS_DIR failed"
+  "-m 2775|creating $FM_SIM_MODELS_DIR failed"
   "mktemp -d $AGENT/.unit|creating a staging directory failed"
   "tee $AGENT/.unit|staging /etc/systemd/system/$FM_SIM_UNIT failed"
   "install -d -m 0755 $R/etc/systemd|creating /etc/systemd/system failed"
@@ -591,6 +703,12 @@ assert_has "check sees a current unit" "$out" "$FM_SIM_UNIT installed and curren
 assert_has "check sees the pinned agent" "$out" "is the agent at the pinned commit"
 assert_has "check sees the pinned uv" "$out" "is the pinned uv $FM_UV_VERSION"
 assert_rc "check exits 0" 0 step check
+assert_has "check names a models directory in another group" "$out" "wanted group $FM_GROUP and mode 2775"
+out="$(unpinned check)"
+assert_has "check accepts one in the wanted group and mode" "$out" "$FM_SIM_MODELS_DIR $(id -un):$(id -gn) 2775"
+mkdir -p "$TMP/keep" && mv "$R$FM_SIM_MODELS_DIR" "$TMP/keep/models"
+assert_has "check names a missing models directory" "$(step check)" "$FM_SIM_MODELS_DIR missing"
+mv "$TMP/keep/models" "$R$FM_SIM_MODELS_DIR"
 : > "$SIM_LOG"
 rc=0; out="$(FAKE_FAIL="systemctl disable" step uninstall)" || rc=$?
 assert_eq "a failing disable fails uninstall" 1 "$rc"
@@ -601,6 +719,8 @@ assert_rc "uninstall exits 0" 0 step uninstall
 assert_eq "uninstall removes the unit" "false" "$(exists "$UNIT")"
 assert_eq "uninstall removes the agent tree" "false" "$(exists "$AGENT")"
 assert_eq "uninstall leaves the runs" "true" "$(exists "$R$FM_SIM_RUNS_DIR")"
+assert_eq "uninstall leaves the object packs" "true" "$(exists "$R$FM_SIM_MODELS_DIR")"
+assert_has "  and says so" "$(step uninstall)" "$FM_SIM_MODELS_DIR left in place"
 assert_has "uninstall disables the unit" "$(log)" "systemctl disable --now $FM_SIM_UNIT"
 
 # Opted in, the unit runs the controllers image at its pin, and check says the
