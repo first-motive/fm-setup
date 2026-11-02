@@ -760,7 +760,7 @@ the `tabletop_simready` scenario names:
 ```bash
 sudo git -C /opt/fm-sim-agent/src.git show <pinned commit>:tools/fetch_simready.py \
   | (cd / && sudo -u fm-sim /usr/bin/python3 -I - --assets-dir /data/sim-assets \
-      food_beverage_can_e01 food_can_tomatoSoup_a01 food_box_gelatin_a01)
+      food_beverage_can_e01 food_canned_beans_a02 food_box_gelatin_a01)
 ```
 
 ```bash
