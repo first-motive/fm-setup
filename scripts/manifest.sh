@@ -801,22 +801,24 @@ FM_ISAAC_DRIVER_MIN=535.129.03
 # is pinned by full SHA and read from nowhere a person or the agent can write —
 # never from the group-writable workspace's own .git.
 #
-# Pinned to a main commit whose CI published the image below. Empty would mean
-# nothing is pinned, and the step would install no agent.
+# Pinned to a main commit whose own image pins (agent/src/fm_sim_agent/service.py)
+# name the digests below. Empty would mean nothing is pinned, and the step would
+# install no agent.
 # FM_SIM_COMMIT overrides it on the command line, to try a commit before pinning.
 FM_SIM_REPO=first-motive/fm-sim
-FM_SIM_COMMIT_DEFAULT=01685663299e36a22e634709cb39e2664c7bf7ec
+FM_SIM_COMMIT_DEFAULT=8a9124ad90d70bf6c737ed0c798dbcf722aedf42
 
 # The image every run starts from, by digest. Without one the step still pulls
 # the tag and writes the unit, but grants no docker rights and enables nothing:
 # an agent whose image can move under it is not one to start unattended.
 # fm-sim's CI pushes only the moving tag, on every main push, so the digest is
-# the multi-arch index that FM_SIM_COMMIT_DEFAULT's run pushed. Its "build +
-# publish image" log names it; read the tag's current one with:
+# the multi-arch index one main run pushed: the one FM_SIM_COMMIT_DEFAULT's
+# DEFAULT_IMAGE_DIGEST names. That run's "publish multi-arch image" log names
+# it; read the tag's current one with:
 #   docker buildx imagetools inspect ghcr.io/first-motive/fm-sim:jazzy
 # FM_SIM_IMAGE_DIGEST overrides it on the command line.
 FM_SIM_IMAGE=ghcr.io/first-motive/fm-sim:jazzy
-FM_SIM_IMAGE_DIGEST_DEFAULT=sha256:727db0b786557e28d1096d65b876828438a2817d5db3c74faaf9dac06907ba34
+FM_SIM_IMAGE_DIGEST_DEFAULT=sha256:2e5ad47cdee6fe118478e42731f0afcff5edb723504cfee8bfc8d64ae0d43522
 
 # The private overlay of that image, which adds the fm_skills, classical,
 # policy_serve, and fastwam controllers. A host runs it only when it opts in
@@ -831,7 +833,7 @@ FM_SIM_IMAGE_DIGEST_DEFAULT=sha256:727db0b786557e28d1096d65b876828438a2817d5db3c
 #   docker buildx imagetools inspect ghcr.io/first-motive/fm-sim-controllers:jazzy
 # FM_SIM_CONTROLLERS_IMAGE_DIGEST overrides it on the command line.
 FM_SIM_CONTROLLERS_IMAGE=ghcr.io/first-motive/fm-sim-controllers:jazzy
-FM_SIM_CONTROLLERS_IMAGE_DIGEST_DEFAULT=sha256:dbb50ec4bbe2676ad7bbb26ee87b2a5351cc2a32a04c2d7b80fd4428a7c8ef43
+FM_SIM_CONTROLLERS_IMAGE_DIGEST_DEFAULT=sha256:a989196d2d12d7ffa77f24d37ae86de38b880f947eaa8792f1fae50aa780e4b4
 
 # The account the agent runs as. Its own system user rather than a person's,
 # and outside the fm group so the roster steps never treat it as somebody. It is
