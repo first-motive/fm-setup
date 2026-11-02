@@ -805,7 +805,7 @@ FM_ISAAC_DRIVER_MIN=535.129.03
 # nothing is pinned, and the step would install no agent.
 # FM_SIM_COMMIT overrides it on the command line, to try a commit before pinning.
 FM_SIM_REPO=first-motive/fm-sim
-FM_SIM_COMMIT_DEFAULT=97d06beb6721b94ff999dea331e5a77261e20abb
+FM_SIM_COMMIT_DEFAULT=01685663299e36a22e634709cb39e2664c7bf7ec
 
 # The image every run starts from, by digest. Without one the step still pulls
 # the tag and writes the unit, but grants no docker rights and enables nothing:
@@ -831,7 +831,7 @@ FM_SIM_IMAGE_DIGEST_DEFAULT=sha256:727db0b786557e28d1096d65b876828438a2817d5db3c
 #   docker buildx imagetools inspect ghcr.io/first-motive/fm-sim-controllers:jazzy
 # FM_SIM_CONTROLLERS_IMAGE_DIGEST overrides it on the command line.
 FM_SIM_CONTROLLERS_IMAGE=ghcr.io/first-motive/fm-sim-controllers:jazzy
-FM_SIM_CONTROLLERS_IMAGE_DIGEST_DEFAULT=sha256:0a3ff1e3c59069e026d590d0614c9e506c9297df2aae9254214e2ec07efb61e2
+FM_SIM_CONTROLLERS_IMAGE_DIGEST_DEFAULT=sha256:dbb50ec4bbe2676ad7bbb26ee87b2a5351cc2a32a04c2d7b80fd4428a7c8ef43
 
 # The account the agent runs as. Its own system user rather than a person's,
 # and outside the fm group so the roster steps never treat it as somebody. It is
