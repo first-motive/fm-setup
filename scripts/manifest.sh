@@ -996,8 +996,8 @@ FM_SIM_CLOUD_APT_LOCK_TIMEOUT=600
 # Re-read the commit after a bump with:
 #   git ls-remote https://github.com/first-motive/fm-comms.git 'refs/tags/<tag>^{}'
 FM_COMMS_REPO=first-motive/fm-comms
-FM_COMMS_TAG=v0.2.12
-FM_COMMS_COMMIT=713b403d5dd35ec07fa4eb39f1883ecce061c958
+FM_COMMS_TAG=v0.2.13
+FM_COMMS_COMMIT=8509d029817b6f71fc8700783a96f0faf15fe42a
 FM_COMMS_ROOT=/opt/fm-comms
 FM_COMMS_BRIDGE_UNIT=fm-zenoh-bridge.service
 # A workstation's second bridge, for the Jazzy nodes of its sim runs
