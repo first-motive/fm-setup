@@ -548,7 +548,7 @@ FM_ROS_RMW_REQUIRED=(
 # fm-tools' own install.sh does. Pinned here rather than tracking latest: two
 # machines provisioned months apart should get the same CLI.
 FM_TOOLS_REPO=first-motive/fm-tools
-FM_TOOLS_VERSION=v0.30.0
+FM_TOOLS_VERSION=v0.31.0
 
 # Where the machine-wide copy of the CLI lives, and the command every account
 # reaches it by.
@@ -938,7 +938,7 @@ FM_HOST_AGENT_POLKIT_RULE=/etc/polkit-1/rules.d/50-fm-host-agent.rules
 #   git ls-remote https://github.com/first-motive/fm-twin.git refs/heads/main
 # FM_TWIN_COMMIT overrides it on the command line, to try a commit before pinning.
 FM_TWIN_REPO=first-motive/fm-twin
-FM_TWIN_COMMIT_DEFAULT=91e06e7defdbbda67bafc3d59b18f0f9ea3e6618
+FM_TWIN_COMMIT_DEFAULT=413e1a7bad1f4fec50c0eecf222039030945f671
 FM_TWIN_USER=fm-twin
 FM_TWIN_ROOT=/opt/fm-twin
 FM_TWIN_UV_CACHE=/var/cache/fm-twin
