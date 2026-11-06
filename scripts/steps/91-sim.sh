@@ -29,7 +29,7 @@
 #     but plain files, then copied out with `git archive` into a tree that is
 #     root:root, directories 755 and files 644.
 #   - Root builds the venv with a uv downloaded at FM_UV_VERSION and checked
-#     against FM_SIM_UV_SHA256_MAP, the project installed non-editable, so the
+#     against FM_UV_SHA256_MAP, the project installed non-editable, so the
 #     service starts the venv's entrypoint and runs no uv and no build backend.
 #   - The unit comes from fm-sim's template only if it passes the allowlist in
 #     scripts/internal/sim-lib.sh, and its ExecStart is replaced by the
@@ -74,6 +74,8 @@ FM_ROOT="$(cd "$_here/../.." && pwd)"
 . "$FM_ROOT/scripts/internal/sim-lib.sh"
 # shellcheck source=../internal/ghcr-lib.sh disable=SC1091
 . "$FM_ROOT/scripts/internal/ghcr-lib.sh"
+# shellcheck source=../internal/service-lib.sh disable=SC1091
+. "$FM_ROOT/scripts/internal/service-lib.sh"
 
 fm_require_linux
 
@@ -83,16 +85,11 @@ fm_require_linux
 # shellcheck disable=SC2034
 FM_UNITS=(fm-sim-agent.service fm-zenoh-bridge-sim.service)
 
-# test_knob NAME — echo a test hook's value, or refuse it outside a test run.
-test_knob() {
-  local value="${!1:-}"
-  [ -n "$value" ] || return 0
-  [ "${FM_SIM_TEST:-0}" = 1 ] || { fm_err "$1 is a test hook and needs FM_SIM_TEST=1 — refusing"; return 1; }
-  printf '%s\n' "$value"
-}
+# A test hook's value, or a refusal outside a test run.
+test_knob() { svc_test_knob FM_SIM_TEST "$1"; }
 
 R="$(test_knob FM_SIM_TEST_ROOT)" || exit 1
-if [ -n "$R" ]; then sim_test_root_ok "$R" || exit 1; fi
+if [ -n "$R" ]; then svc_test_root_ok FM_SIM_TEST_ROOT "$R" || exit 1; fi
 SOURCE_URL="$(test_knob FM_SIM_TEST_SOURCE)" || exit 1
 TEST_UV_SHA="$(test_knob FM_SIM_TEST_UV_SHA256)" || exit 1
 # A source or checksum override only ever goes with a temp root, so neither can
@@ -112,7 +109,6 @@ VENV_DIR="$FM_SIM_AGENT_ROOT/venv"
 UV_BIN="$FM_SIM_AGENT_ROOT/bin/uv"
 ENTRYPOINT="$VENV_DIR/bin/fm-sim-agent"
 COMMIT_MARKER="$FM_SIM_AGENT_ROOT/.fm-commit"
-UV_MARKER="$FM_SIM_AGENT_ROOT/bin/.uv-sha256"
 
 # The pins, or values named on the command line to try something first. The
 # sim-cloud role always names both, from its stack's host.env.
@@ -140,16 +136,6 @@ GIT_ENV=(env -i PATH=/usr/bin:/bin HOME=/nonexistent GIT_NO_REPLACE_OBJECTS=1
 src_git()  { sudo "${GIT_ENV[@]}" git -c "safe.directory=$R$SRC_GIT" --git-dir="$R$SRC_GIT" "$@"; }
 # The repository is root-owned and world-readable, so a report reads it plainly.
 read_src_git() { "${GIT_ENV[@]}" git -c "safe.directory=$R$SRC_GIT" --git-dir="$R$SRC_GIT" "$@"; }
-
-# must WHAT CMD… — run CMD; on failure say WHAT failed and return 1. Every
-# privileged command goes through this or an explicit `|| {…}`, because errexit
-# does not hold inside a function its caller tests with `||`.
-must() {
-  local what="$1"; shift
-  "$@" && return 0
-  fm_err "$what failed"
-  return 1
-}
 
 # --- Pins ---------------------------------------------------------------------
 
@@ -198,7 +184,7 @@ exec_line() {
   local ref word line=""
   ref="$(image_ref)" || return 1
   for word in "$ENTRYPOINT" --image "$ref" --runs-dir "$FM_SIM_RUNS_DIR" --models-dir "$FM_SIM_MODELS_DIR" --assets-dir "$FM_SIM_ASSETS_DIR" "${FM_SIM_AGENT_FLAGS[@]}"; do
-    sim_safe_word "$word" || return 1
+    svc_safe_word "$word" || return 1
     line="${line:+$line }$word"
   done
   printf '%s\n' "$line"
@@ -210,18 +196,6 @@ render() {
   exec="$(exec_line)" || return 1
   sim_render_unit "$1" "$FM_SIM_USER" "$PROJECT_DIR" "$exec" "$COMMS_ENV" \
     "fm-sim ${SIM_COMMIT}:$TEMPLATE_PATH"
-}
-
-# The uv tarball's pinned sha256 for this machine's architecture.
-uv_sha() {
-  local arch entry
-  if [ -n "$TEST_UV_SHA" ]; then printf '%s\n' "$TEST_UV_SHA"; return 0; fi
-  arch="$(uname -m)"
-  for entry in "${FM_SIM_UV_SHA256_MAP[@]}"; do
-    [ "${entry%%|*}" = "$arch" ] && { printf '%s\n' "${entry#*|}"; return 0; }
-  done
-  fm_err "no uv checksum pinned for $arch — add it to FM_SIM_UV_SHA256_MAP"
-  return 1
 }
 
 # The directories every run may mount, judged where this run sees them.
@@ -324,7 +298,7 @@ do_check() {
   else
     fm_warn "$PROJECT_DIR is not the agent at the pinned commit"
   fi
-  if [ -x "$R$UV_BIN" ] && [ "$(cat "$R$UV_MARKER" 2>/dev/null)" = "$(uv_sha 2>/dev/null)" ]; then
+  if svc_uv_current "$R" "$FM_SIM_AGENT_ROOT" "$(svc_uv_sha "$TEST_UV_SHA" 2>/dev/null)"; then
     fm_ok "$UV_BIN is the pinned uv $FM_UV_VERSION"
   else
     fm_warn "$UV_BIN is not the pinned uv $FM_UV_VERSION"
@@ -391,7 +365,7 @@ dry_run_plan() {
   fi
   fm_info "would fetch  $SIM_COMMIT from $SOURCE_URL into $SRC_GIT (as root)"
   fm_info "would copy   agent/ at that commit to $PROJECT_DIR (root:root, 755/644)"
-  fm_info "would fetch  uv $FM_UV_VERSION to $UV_BIN, checked against sha256 $(uv_sha)"
+  fm_info "would fetch  uv $FM_UV_VERSION to $UV_BIN, checked against sha256 $(svc_uv_sha "$TEST_UV_SHA")"
   fm_info "would build  $VENV_DIR as root (uv sync --frozen --no-editable)"
   fm_info "would create system account $FM_SIM_USER (home $FM_SIM_HOME, no login)"
   fm_info "would create $FM_SIM_RUNS_DIR ($FM_SIM_USER:$FM_GROUP, 2770)"
@@ -433,13 +407,13 @@ pull_image() {
 # Root fetches the pinned commit into its own bare repository.
 fetch_source() {
   local got
-  must "creating $FM_SIM_AGENT_ROOT" sudo install -d -o root -g root -m 0755 "$R$FM_SIM_AGENT_ROOT" || return 1
+  svc_must "creating $FM_SIM_AGENT_ROOT" sudo install -d -o root -g root -m 0755 "$R$FM_SIM_AGENT_ROOT" || return 1
   if [ ! -f "$R$SRC_GIT/HEAD" ]; then
-    must "creating $SRC_GIT" sudo "${GIT_ENV[@]}" git init --quiet --bare "$R$SRC_GIT" || return 1
+    svc_must "creating $SRC_GIT" sudo "${GIT_ENV[@]}" git init --quiet --bare "$R$SRC_GIT" || return 1
   fi
   if ! src_git cat-file -e "$SIM_COMMIT^{commit}" 2>/dev/null; then
     fm_log "fetching fm-sim $SIM_COMMIT (as root)"
-    must "fetching $SIM_COMMIT from $SOURCE_URL" src_git fetch --quiet --depth 1 "$SOURCE_URL" "$SIM_COMMIT" || return 1
+    svc_must "fetching $SIM_COMMIT from $SOURCE_URL" src_git fetch --quiet --depth 1 "$SOURCE_URL" "$SIM_COMMIT" || return 1
   fi
   got="$(src_git rev-parse --verify --quiet "$SIM_COMMIT^{commit}")" || got=""
   if [ "$got" != "$SIM_COMMIT" ]; then
@@ -447,17 +421,6 @@ fetch_source() {
     return 1
   fi
   fm_ok "$SRC_GIT holds $SIM_COMMIT"
-}
-
-ensure_account() {
-  if getent passwd "$FM_SIM_USER" >/dev/null 2>&1; then
-    fm_ok "account $FM_SIM_USER present"
-    return 0
-  fi
-  fm_log "creating system account $FM_SIM_USER"
-  must "creating account $FM_SIM_USER" sudo useradd --system --user-group --create-home \
-    --home-dir "$FM_SIM_HOME" --shell /usr/sbin/nologin "$FM_SIM_USER" || return 1
-  fm_ok "account $FM_SIM_USER created"
 }
 
 # Copy agent/ out of the fetched commit into the root-owned tree. The marker is
@@ -469,7 +432,7 @@ install_agent_tree() {
     return 0
   fi
   listing="$(src_git ls-tree -r "$SIM_COMMIT" -- agent)" || { fm_err "could not list agent/ at $SIM_COMMIT"; return 1; }
-  printf '%s\n' "$listing" | sim_tree_ok || { fm_err "agent/ at $SIM_COMMIT is refused — nothing extracted"; return 1; }
+  printf '%s\n' "$listing" | svc_tree_ok || { fm_err "agent/ at $SIM_COMMIT is refused — nothing extracted"; return 1; }
 
   stage="$(sudo mktemp -d "$root/.project.XXXXXX")" || { fm_err "creating a staging directory failed"; return 1; }
   if ! src_git archive --format=tar "$SIM_COMMIT" agent \
@@ -478,11 +441,7 @@ install_agent_tree() {
     fm_err "extracting agent/ at $SIM_COMMIT failed"
     return 1
   fi
-  if ! { must "handing $PROJECT_DIR to root" sudo chown -R root:root "$stage" \
-      && must "setting directory modes" sudo find "$stage" -type d -exec chmod 0755 {} + \
-      && must "setting file modes" sudo find "$stage" -type f -exec chmod 0644 {} + \
-      && must "removing the old $PROJECT_DIR" sudo rm -rf "$R$PROJECT_DIR" \
-      && must "moving the new $PROJECT_DIR into place" sudo mv "$stage/agent" "$R$PROJECT_DIR"; }; then
+  if ! svc_seal_tree "$R" "$stage/agent" "$PROJECT_DIR"; then
     sudo rm -rf "$stage"
     return 1
   fi
@@ -492,58 +451,15 @@ install_agent_tree() {
   fm_ok "$PROJECT_DIR at $SIM_COMMIT (root:root, 755/644)"
 }
 
-# Astral's release tarball at the pinned version, checked before it is unpacked.
-install_uv() {
-  local sha arch stage actual
-  sha="$(uv_sha)" || return 1
-  if [ -x "$R$UV_BIN" ] && [ "$(cat "$R$UV_MARKER" 2>/dev/null)" = "$sha" ]; then
-    fm_ok "$UV_BIN is the pinned uv $FM_UV_VERSION"
-    return 0
-  fi
-  arch="$(uname -m)"
-  must "creating $(dirname "$UV_BIN")" sudo install -d -o root -g root -m 0755 "$(dirname "$R$UV_BIN")" || return 1
-  stage="$(sudo mktemp -d "$R$FM_SIM_AGENT_ROOT/.uv.XXXXXX")" || { fm_err "creating a staging directory failed"; return 1; }
-  fm_log "fetching uv $FM_UV_VERSION ($arch)"
-  if ! must "downloading uv $FM_UV_VERSION" sudo curl -fsSL --proto '=https' --proto-redir '=https' -o "$stage/uv.tar.gz" \
-       "https://github.com/astral-sh/uv/releases/download/$FM_UV_VERSION/uv-$arch-unknown-linux-gnu.tar.gz"; then
-    sudo rm -rf "$stage"
-    return 1
-  fi
-  actual="$(sudo sha256sum "$stage/uv.tar.gz" | cut -d' ' -f1)" || actual=""
-  if [ "$actual" != "$sha" ]; then
-    sudo rm -rf "$stage"
-    fm_err "uv $FM_UV_VERSION checksum mismatch — expected $sha, got ${actual:-nothing}; not installed"
-    return 1
-  fi
-  if ! { must "unpacking uv" sudo tar -xzf "$stage/uv.tar.gz" --no-same-owner -C "$stage" \
-      && must "installing $UV_BIN" sudo install -o root -g root -m 0755 \
-           "$stage/uv-$arch-unknown-linux-gnu/uv" "$R$UV_BIN"; }; then
-    sudo rm -rf "$stage"
-    return 1
-  fi
-  sudo rm -rf "$stage"
-  printf '%s\n' "$sha" | sudo tee "$R$UV_MARKER" >/dev/null \
-    || { fm_err "recording the uv checksum failed"; return 1; }
-  fm_ok "$UV_BIN is uv $FM_UV_VERSION (sha256 verified)"
-}
-
-# Build the agent's venv as root, from the root-owned project, with nothing
-# inherited: no uv config file, no index override, no PATH beyond the system's.
-# Non-editable, so the venv holds the agent and the service needs no uv.
+# The venv; the service starts its entrypoint.
 build_venv() {
-  must "creating $FM_SIM_UV_CACHE" sudo install -d -o root -g root -m 0700 "$R$FM_SIM_UV_CACHE" || return 1
-  fm_log "building $VENV_DIR (as root, from $PROJECT_DIR)"
-  must "building $VENV_DIR" sudo env -i PATH=/usr/bin:/bin HOME=/nonexistent UV_NO_CONFIG=1 \
-    "UV_PROJECT_ENVIRONMENT=$R$VENV_DIR" "UV_CACHE_DIR=$R$FM_SIM_UV_CACHE" \
-    "UV_PYTHON=$FM_CLI_PYTHON" UV_PYTHON_DOWNLOADS=never \
-    "$R$UV_BIN" sync --quiet --frozen --no-dev --no-editable --directory "$R$PROJECT_DIR" || return 1
+  svc_build_venv "$R" "$FM_SIM_AGENT_ROOT" "$FM_SIM_UV_CACHE" || return 1
   [ -x "$R$ENTRYPOINT" ] || { fm_err "$ENTRYPOINT missing after the build"; return 1; }
-  must "setting venv modes" sudo chmod -R u+rwX,go+rX,go-w "$R$VENV_DIR" || return 1
   fm_ok "$VENV_DIR built; the service starts $ENTRYPOINT"
 }
 
 ensure_runs_dir() {
-  must "creating $FM_SIM_RUNS_DIR" sudo install -d -o "$FM_SIM_USER" -g "$FM_GROUP" -m 2770 "$R$FM_SIM_RUNS_DIR" || return 1
+  svc_must "creating $FM_SIM_RUNS_DIR" sudo install -d -o "$FM_SIM_USER" -g "$FM_GROUP" -m 2770 "$R$FM_SIM_RUNS_DIR" || return 1
   fm_ok "$FM_SIM_RUNS_DIR ready ($FM_SIM_USER:$FM_GROUP, 2770)"
 }
 
@@ -564,7 +480,7 @@ ensure_runs_dir() {
 # make_mount_dir PATH OWNER MODE — the new directory, or a failure.
 make_mount_dir() {
   # shellcheck disable=SC2016  # expanded by the inner shell, from its own arguments
-  must "creating $1" sudo sh -c '
+  svc_must "creating $1" sudo sh -c '
     mkdir -m "$3" "$1" && cd "$1" &&
       [ "$(pwd -P)" = "$(cd "$(dirname "$1")" && pwd -P)/$(basename "$1")" ] &&
       [ "$(stat -c %u .)" = "$(id -u)" ] &&
@@ -622,24 +538,10 @@ agent_has_mount_flags() {
 # install_unit TEXT — 0 when the unit changed, 3 when it was already current,
 # 1 on a failure.
 install_unit() {
-  local text="$1" path="$R$UNIT_PATH" stage rc=0
-  if same_file "$path" "$text"; then
-    fm_ok "$FM_SIM_UNIT current"
-    return 3
-  fi
-  # Staged in a root-owned directory, never a file the invoking account owns.
-  stage="$(sudo mktemp -d "$R$FM_SIM_AGENT_ROOT/.unit.XXXXXX")" || { fm_err "creating a staging directory failed"; return 1; }
-  if ! printf '%s\n' "$text" | sudo tee "$stage/unit" >/dev/null; then
-    fm_err "staging $UNIT_PATH failed"
-    rc=1
-  elif ! { must "creating $(dirname "$UNIT_PATH")" sudo install -d -m 0755 "$(dirname "$path")" \
-      && must "writing $UNIT_PATH" sudo install -o root -g root -m 0644 "$stage/unit" "$path" \
-      && must "reloading systemd" sudo systemctl daemon-reload; }; then
-    rc=1
-  fi
-  sudo rm -rf "$stage"
-  [ "$rc" = 0 ] || return 1
-  fm_ok "wrote $UNIT_PATH"
+  local rc=0
+  svc_install_file "$R" "$FM_SIM_AGENT_ROOT" "$UNIT_PATH" "$1" || rc=$?
+  [ "$rc" = 0 ] || return "$rc"
+  svc_must "reloading systemd" sudo systemctl daemon-reload
 }
 
 # The docker grant, asked for. 0 when the account holds it, 2 when declined,
@@ -661,7 +563,7 @@ grant_docker() {
     fm_info "sim-cloud role, unattended: granting without a prompt"
   fi
   if [ "$unattended_cloud" = 1 ] || fm_confirm "Add $FM_SIM_USER to the docker group so the sim agent can start runs?"; then
-    must "adding $FM_SIM_USER to the docker group" sudo usermod -aG docker "$FM_SIM_USER" || return 1
+    svc_must "adding $FM_SIM_USER to the docker group" sudo usermod -aG docker "$FM_SIM_USER" || return 1
     fm_ok "$FM_SIM_USER added to the docker group"
     return 0
   fi
@@ -676,7 +578,7 @@ do_install() {
     return
   fi
 
-  local ref rc=0 template unit changed=1
+  local ref rc=0 template unit changed=1 uv_sha
   ref="$(image_ref)" || return 1
   exec_line >/dev/null || return 1
   mount_dirs_ok || return 1
@@ -703,9 +605,10 @@ do_install() {
     || { fm_err "fm-sim $SIM_COMMIT has no $TEMPLATE_PATH"; return 1; }
   unit="$(render "$template")" || return 1
 
-  ensure_account || return 1
+  svc_ensure_account "$FM_SIM_USER" "$FM_SIM_HOME" || return 1
   install_agent_tree || return 1
-  install_uv || return 1
+  uv_sha="$(svc_uv_sha "$TEST_UV_SHA")" || return 1
+  svc_install_uv "$R" "$FM_SIM_AGENT_ROOT" "$uv_sha" || return 1
   build_venv || return 1
   ensure_runs_dir || return 1
   ensure_models_dir || return 1
@@ -733,33 +636,24 @@ do_install() {
     fm_skip "$COMMS_ENV missing — install fm-comms through fm_ros2, then re-run: ./install.sh --${FM_ROLE:-workstation} --only sim"
     return 0
   fi
-  must "enabling $FM_SIM_UNIT" sudo systemctl enable "$FM_SIM_UNIT" || return 1
+  svc_must "enabling $FM_SIM_UNIT" sudo systemctl enable "$FM_SIM_UNIT" || return 1
   if [ "$changed" = 1 ]; then
-    must "restarting $FM_SIM_UNIT" sudo systemctl restart "$FM_SIM_UNIT" || return 1
+    svc_must "restarting $FM_SIM_UNIT" sudo systemctl restart "$FM_SIM_UNIT" || return 1
   else
-    must "starting $FM_SIM_UNIT" sudo systemctl start "$FM_SIM_UNIT" || return 1
+    svc_must "starting $FM_SIM_UNIT" sudo systemctl start "$FM_SIM_UNIT" || return 1
   fi
   fm_ok "$FM_SIM_UNIT enabled and running — serves fm/sim/$(fm_machine_namespace)/*"
 }
 
 # remove_tree PATH — rm -rf one of the step's own trees, named exactly.
-remove_tree() {
-  case "$1" in
-    /var/lib/fm-sim | /opt/fm-sim-agent | /var/cache/fm-sim-agent) ;;
-    *) fm_warn "not removing $1 — not one of the sim step's trees; remove it by hand"; return 0 ;;
-  esac
-  if [ -d "$R$1" ]; then
-    must "removing $1" sudo rm -rf "$R$1" || return 1
-    fm_ok "$1 removed"
-  fi
-}
+remove_tree() { svc_remove_tree "$R" sim "$1" /var/lib/fm-sim /opt/fm-sim-agent /var/cache/fm-sim-agent; }
 
 do_uninstall() {
   if [ -f "$R$UNIT_PATH" ]; then
     fm_log "removing $FM_SIM_UNIT"
-    must "disabling $FM_SIM_UNIT" sudo systemctl disable --now "$FM_SIM_UNIT" || return 1
-    must "removing $UNIT_PATH" sudo rm -f "$R$UNIT_PATH" || return 1
-    must "reloading systemd" sudo systemctl daemon-reload || return 1
+    svc_must "disabling $FM_SIM_UNIT" sudo systemctl disable --now "$FM_SIM_UNIT" || return 1
+    svc_must "removing $UNIT_PATH" sudo rm -f "$R$UNIT_PATH" || return 1
+    svc_must "reloading systemd" sudo systemctl daemon-reload || return 1
     fm_ok "$FM_SIM_UNIT removed"
   else
     fm_skip "$FM_SIM_UNIT not installed"
@@ -767,14 +661,14 @@ do_uninstall() {
 
   local ref
   if ref="$(image_ref 2>/dev/null)" && fm_has_docker && docker image inspect "$ref" >/dev/null 2>&1; then
-    must "removing $ref" docker image rm "$ref" >/dev/null || return 1
+    svc_must "removing $ref" docker image rm "$ref" >/dev/null || return 1
     fm_ok "$ref removed"
   else
     fm_skip "fm-sim image not present"
   fi
 
   if getent passwd "$FM_SIM_USER" >/dev/null 2>&1; then
-    must "removing account $FM_SIM_USER" sudo userdel "$FM_SIM_USER" || return 1
+    svc_must "removing account $FM_SIM_USER" sudo userdel "$FM_SIM_USER" || return 1
     fm_ok "account $FM_SIM_USER removed"
   fi
   remove_tree "$FM_SIM_AGENT_ROOT" || return 1

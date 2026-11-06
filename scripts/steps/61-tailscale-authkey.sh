@@ -44,8 +44,8 @@ FM_ROOT="$(cd "$_here/../.." && pwd)"
 
 fm_require_linux
 
-R="${FM_SIM_TEST_ROOT:-}"
-if [ -n "$R" ]; then sim_test_root_ok "$R" || exit 1; fi
+R="$(svc_test_knob FM_SIM_TEST FM_SIM_TEST_ROOT)" || exit 1
+if [ -n "$R" ]; then svc_test_root_ok FM_SIM_TEST_ROOT "$R" || exit 1; fi
 
 # How long `tailscale up` may take to authenticate before the step fails.
 UP_TIMEOUT=180s

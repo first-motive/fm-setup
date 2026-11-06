@@ -241,7 +241,7 @@ assert_rc "the pinned commit is a full SHA" 0 grep -Eq '^[0-9a-f]{40}$' <<<"$FM_
 assert_rc "the pinned digest is sha256:<64 hex>" 0 grep -Eq '^sha256:[0-9a-f]{64}$' <<<"$FM_SIM_IMAGE_DIGEST_DEFAULT"
 assert_rc "the pinned controllers digest is sha256:<64 hex>" 0 grep -Eq '^sha256:[0-9a-f]{64}$' <<<"$FM_SIM_CONTROLLERS_IMAGE_DIGEST_DEFAULT"
 assert_eq "uv is pinned for x86_64" "x86_64|1ce5212f8f42dc7427a1bd3db4168d6d1abcf81b38d8c82a5b9d0ddc54ceebfc" \
-  "$(printf '%s\n' "${FM_SIM_UV_SHA256_MAP[@]}" | grep '^x86_64|')"
+  "$(printf '%s\n' "${FM_UV_SHA256_MAP[@]}" | grep '^x86_64|')"
 
 # --- The shared helpers -------------------------------------------------------------
 
@@ -294,9 +294,9 @@ refused "another EnvironmentFile" "${GOOD_TEMPLATE/\/etc\/fm-comms.env/\/tmp\/x.
 refused "no ExecStart" "${GOOD_TEMPLATE/ExecStart=@UV@ run --project @WORKDIR@ fm-sim-agent/}" "it has no [Service]ExecStart"
 rc=0; sim_render_unit "$GOOD_TEMPLATE" fm-sim /opt/x '/opt/x --image a%b' /etc/fm-comms.env t >/dev/null 2>&1 || rc=$?
 assert_eq "an operator word carrying % is refused" 1 "$rc"
-assert_rc "sim_safe_word refuses a space" 1 sim_safe_word "a b"
-assert_rc "sim_safe_word refuses \$" 1 sim_safe_word 'a$b'
-assert_rc "sim_safe_word accepts a path" 0 sim_safe_word /data/sim-runs
+assert_rc "svc_safe_word refuses a space" 1 svc_safe_word "a b"
+assert_rc "svc_safe_word refuses \$" 1 svc_safe_word 'a$b'
+assert_rc "svc_safe_word accepts a path" 0 svc_safe_word /data/sim-runs
 
 assert_rc "the models dir may not exist yet" 0 sim_mount_dir_ok "$TMP/absent"
 mkdir "$TMP/real-dir"
@@ -313,29 +313,29 @@ assert_rc "sim_mount_dir_ok refuses a file" 1 sim_mount_dir_ok "$TMP/plain-file"
 assert_rc "  and looks on disk where it is told" 1 sim_mount_dir_ok /data/sim-models "$TMP/plain-file"
 
 tree_line() { printf '%s blob %s\t%s\n' "$1" "$(printf '%040d' 0)" "$2"; }
-assert_rc "sim_tree_ok accepts plain files" 0 bash -c \
-  ". '$FM_ROOT/lib.sh'; . '$FM_ROOT/scripts/internal/sim-lib.sh'; printf '%s\n%s\n' \"$(tree_line 100644 agent/a)\" \"$(tree_line 100755 agent/b)\" | sim_tree_ok"
-assert_rc "sim_tree_ok refuses a symlink" 1 bash -c \
-  ". '$FM_ROOT/lib.sh'; . '$FM_ROOT/scripts/internal/sim-lib.sh'; printf '%s\n' \"$(tree_line 120000 agent/l)\" | sim_tree_ok"
-assert_rc "sim_tree_ok refuses a submodule" 1 bash -c \
-  ". '$FM_ROOT/lib.sh'; . '$FM_ROOT/scripts/internal/sim-lib.sh'; printf '%s\n' \"$(tree_line 160000 agent/m)\" | sim_tree_ok"
-assert_rc "sim_tree_ok refuses an empty tree" 1 bash -c \
-  ". '$FM_ROOT/lib.sh'; . '$FM_ROOT/scripts/internal/sim-lib.sh'; printf '' | sim_tree_ok"
+assert_rc "svc_tree_ok accepts plain files" 0 bash -c \
+  ". '$FM_ROOT/lib.sh'; . '$FM_ROOT/scripts/internal/sim-lib.sh'; printf '%s\n%s\n' \"$(tree_line 100644 agent/a)\" \"$(tree_line 100755 agent/b)\" | svc_tree_ok"
+assert_rc "svc_tree_ok refuses a symlink" 1 bash -c \
+  ". '$FM_ROOT/lib.sh'; . '$FM_ROOT/scripts/internal/sim-lib.sh'; printf '%s\n' \"$(tree_line 120000 agent/l)\" | svc_tree_ok"
+assert_rc "svc_tree_ok refuses a submodule" 1 bash -c \
+  ". '$FM_ROOT/lib.sh'; . '$FM_ROOT/scripts/internal/sim-lib.sh'; printf '%s\n' \"$(tree_line 160000 agent/m)\" | svc_tree_ok"
+assert_rc "svc_tree_ok refuses an empty tree" 1 bash -c \
+  ". '$FM_ROOT/lib.sh'; . '$FM_ROOT/scripts/internal/sim-lib.sh'; printf '' | svc_tree_ok"
 
-assert_rc "the test root needs FM_SIM_TEST=1" 1 env FM_SIM_TEST=0 bash -c \
-  ". '$FM_ROOT/lib.sh'; . '$FM_ROOT/scripts/internal/sim-lib.sh'; sim_test_root_ok '$R'"
+assert_rc "the test root needs FM_SIM_TEST=1" 1 env FM_SIM_TEST=0 FM_SIM_TEST_ROOT="$R" bash -c \
+  ". '$FM_ROOT/lib.sh'; . '$FM_ROOT/scripts/internal/sim-lib.sh'; svc_test_knob FM_SIM_TEST FM_SIM_TEST_ROOT"
 assert_rc "the test root must sit under the temp dir" 1 bash -c \
-  ". '$FM_ROOT/lib.sh'; . '$FM_ROOT/scripts/internal/sim-lib.sh'; sim_test_root_ok /etc"
+  ". '$FM_ROOT/lib.sh'; . '$FM_ROOT/scripts/internal/sim-lib.sh'; svc_test_root_ok FM_SIM_TEST_ROOT /etc"
 assert_rc "the test root refuses a temp dir of /" 1 env TMPDIR=/ bash -c \
-  ". '$FM_ROOT/lib.sh'; . '$FM_ROOT/scripts/internal/sim-lib.sh'; sim_test_root_ok /etc"
+  ". '$FM_ROOT/lib.sh'; . '$FM_ROOT/scripts/internal/sim-lib.sh'; svc_test_root_ok FM_SIM_TEST_ROOT /etc"
 assert_rc "the test root refuses the temp dir itself" 1 env TMPDIR=/tmp bash -c \
-  ". '$FM_ROOT/lib.sh'; . '$FM_ROOT/scripts/internal/sim-lib.sh'; sim_test_root_ok /tmp/"
+  ". '$FM_ROOT/lib.sh'; . '$FM_ROOT/scripts/internal/sim-lib.sh'; svc_test_root_ok FM_SIM_TEST_ROOT /tmp/"
 assert_rc "the test root refuses a sibling that only shares the prefix" 1 env TMPDIR=/tmp bash -c \
-  ". '$FM_ROOT/lib.sh'; . '$FM_ROOT/scripts/internal/sim-lib.sh'; sim_test_root_ok /tmpfoo/x"
+  ". '$FM_ROOT/lib.sh'; . '$FM_ROOT/scripts/internal/sim-lib.sh'; svc_test_root_ok FM_SIM_TEST_ROOT /tmpfoo/x"
 assert_rc "the test root accepts a path under the temp dir" 0 env TMPDIR=/tmp bash -c \
-  ". '$FM_ROOT/lib.sh'; . '$FM_ROOT/scripts/internal/sim-lib.sh'; sim_test_root_ok /tmp/x"
+  ". '$FM_ROOT/lib.sh'; . '$FM_ROOT/scripts/internal/sim-lib.sh'; svc_test_root_ok FM_SIM_TEST_ROOT /tmp/x"
 assert_rc "the test root refuses .." 1 bash -c \
-  ". '$FM_ROOT/lib.sh'; . '$FM_ROOT/scripts/internal/sim-lib.sh'; sim_test_root_ok '$TMP/../../etc'"
+  ". '$FM_ROOT/lib.sh'; . '$FM_ROOT/scripts/internal/sim-lib.sh'; svc_test_root_ok FM_SIM_TEST_ROOT '$TMP/../../etc'"
 
 # --- The test hooks stay out of production --------------------------------------
 

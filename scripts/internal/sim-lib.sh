@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
 # sim-lib.sh — the sim step's pure checks, sourced by scripts/steps/91-sim.sh
-# and tested directly by scripts/dev/test-sim.sh.
+# and tested directly by scripts/dev/test-sim.sh. It sources service-lib.sh,
+# whose svc_safe_word and svc_tree_ok it judges with.
 #
 # Nothing here touches the host. Each function takes what it judges as
 # arguments or stdin and answers with output and a return code, so the rules
@@ -9,21 +10,11 @@
 #
 # Requires lib.sh (fm_err) to be sourced first.
 
+# shellcheck source=service-lib.sh disable=SC1091
+. "$(dirname "${BASH_SOURCE[0]}")/service-lib.sh"
+
 # The ExecStart fm-sim's template ships, exactly. Anything else is refused.
 SIM_TEMPLATE_EXEC='@UV@ run --project @WORKDIR@ fm-sim-agent'
-
-# sim_safe_word WORD — 0 when WORD is safe in a unit's command line or paths.
-#
-# A space splits an argument, `%` and `$` are expanded by systemd itself, and
-# quotes and backslashes change how systemd splits the line, so a value
-# carrying one would start the agent with words nobody wrote.
-sim_safe_word() {
-  case "$1" in
-    "" | *[[:space:]]* | *%* | *\$* | *\"* | *\'* | *\\* | *\;*)
-      fm_err "refusing '$1' in the agent's unit — no spaces, quotes, %, \$, \\ or ;"
-      return 1 ;;
-  esac
-}
 
 # sim_mount_dir_ok PATH [ON_DISK] — 0 when PATH may become the agent's
 # --models-dir or --assets-dir: what the agent itself would accept, or nothing
@@ -76,9 +67,9 @@ sim_render_unit() {
   local text="$1" user="$2" workdir="$3" exec="$4" env_file="$5" origin="$6"
   local line key value section="" seen=" " out word need
   local units_re='^[A-Za-z0-9@._-]+( [A-Za-z0-9@._-]+)*$'
-  sim_safe_word "$user" || return 1
-  sim_safe_word "$workdir" || return 1
-  for word in $exec; do sim_safe_word "$word" || return 1; done
+  svc_safe_word "$user" || return 1
+  svc_safe_word "$workdir" || return 1
+  for word in $exec; do svc_safe_word "$word" || return 1; done
 
   out="# Rendered by fm-setup's sim step from $origin."
   out+=$'\n'"# Re-run the step rather than editing this file."
@@ -135,40 +126,4 @@ sim_render_unit() {
     case "$seen" in *" $need "*) ;; *) fm_err "fm-sim's unit template is refused — it has no $need"; return 1 ;; esac
   done
   printf '%s\n' "$out"
-}
-
-# sim_tree_ok — read `git ls-tree -r` output on stdin; 0 when it lists at least
-# one entry and every entry is a plain file (mode 100644 or 100755).
-#
-# Checked before anything is extracted: a symlink in the tree would let the
-# copy point the service at a path outside it, and a submodule is code the pin
-# does not cover.
-sim_tree_ok() {
-  local mode rest count=0
-  while read -r mode rest; do
-    [ -n "$mode" ] || continue
-    case "$mode" in
-      100644 | 100755) count=$((count + 1)) ;;
-      *) fm_err "refusing a tree entry of mode $mode: ${rest#*$'\t'}"; return 1 ;;
-    esac
-  done
-  [ "$count" -gt 0 ] || { fm_err "the tree is empty"; return 1; }
-}
-
-# sim_test_root_ok PREFIX — 0 when PREFIX may stand in for / in a test run.
-#
-# Honoured only with FM_SIM_TEST=1 and only under the temp directory, so the
-# test hook cannot redirect a production install anywhere that matters.
-sim_test_root_ok() {
-  local prefix="$1" tmp="${TMPDIR:-/tmp}"
-  tmp="${tmp%/}"
-  [ "${FM_SIM_TEST:-0}" = 1 ] || { fm_err "FM_SIM_TEST_ROOT is set without FM_SIM_TEST=1 — refusing"; return 1; }
-  # A temp dir of / would make every path "under" it.
-  [ -n "$tmp" ] || { fm_err "no temp directory to hold FM_SIM_TEST_ROOT — refusing"; return 1; }
-  case "$prefix" in
-    *..*) fm_err "FM_SIM_TEST_ROOT must not hold '..': $prefix"; return 1 ;;
-  esac
-  [ "${prefix#"$tmp"/}" != "$prefix" ] && [ -n "${prefix#"$tmp"/}" ] && return 0
-  fm_err "FM_SIM_TEST_ROOT must sit under $tmp/: $prefix"
-  return 1
 }

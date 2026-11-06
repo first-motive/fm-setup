@@ -62,6 +62,10 @@ WORKSTATION_STEPS=(
   # host-agent/ built into a root-owned venv. Publishes the tower's load so
   # Devices can show who is using it.
   "host-agent|93-host-agent.sh|on"
+  # After sim and host-agent: fm-twin built into a root-owned venv with the same
+  # pinned uv, and the OpenArm description taken from the controllers image the
+  # sim step pulls. Serves the live camera twin of this host's sim runs.
+  "twin|94-twin.sh|on"
   # Derived archive writes are an explicit operator action after provider
   # scope and retention approval.
   "archive-derived|95-archive-derived.sh|off"
@@ -849,12 +853,13 @@ FM_SIM_HOME=/var/lib/fm-sim
 FM_SIM_AGENT_ROOT=/opt/fm-sim-agent
 FM_SIM_UV_CACHE=/var/cache/fm-sim-agent
 
-# The uv that builds the agent's venv as root. Not the operator's ~/.local/bin/uv
-# — a file its owner can rewrite is not one root runs — but Astral's release
-# tarball at FM_UV_VERSION, checked against these before it is unpacked into
-# FM_SIM_AGENT_ROOT/bin. Entries are "arch|sha256". Re-read after a bump with:
+# The uv that builds every service's venv as root (the sim agent's, the host
+# agent's, the twin's). Not the operator's ~/.local/bin/uv — a file its owner
+# can rewrite is not one root runs — but Astral's release tarball at
+# FM_UV_VERSION, checked against these before it is unpacked into the service's
+# own <root>/bin (scripts/internal/service-lib.sh). Entries are "arch|sha256". Re-read after a bump with:
 #   curl -fsSL https://github.com/astral-sh/uv/releases/download/<v>/uv-<arch>-unknown-linux-gnu.tar.gz.sha256
-FM_SIM_UV_SHA256_MAP=(
+FM_UV_SHA256_MAP=(
   "x86_64|1ce5212f8f42dc7427a1bd3db4168d6d1abcf81b38d8c82a5b9d0ddc54ceebfc"
   "aarch64|935b35542b7e25493a551dcb3487af23b72ad284ee8ac6a488a97d02ce2d84ec"
 )
@@ -902,7 +907,7 @@ FM_SIM_AGENT_FLAGS=(
 # fm-host-agent publishes this host's CPU, memory, GPU and disk load under
 # fm/host/<host>/. 93-host-agent.sh builds it from this checkout's host-agent/
 # into a root-owned tree and venv, with the same pinned uv the sim step checks
-# against FM_SIM_UV_SHA256_MAP, and runs it as its own account.
+# against FM_UV_SHA256_MAP, and runs it as its own account.
 #
 # The account holds no group and no sudo: not docker, not fm. Its one right is
 # a polkit rule letting it start FM_HOST_DISK_SCAN_UNIT, a root oneshot that
@@ -917,6 +922,35 @@ FM_HOST_AGENT_STATE=/var/lib/fm-host-agent
 FM_HOST_AGENT_UNIT=fm-host-agent.service
 FM_HOST_DISK_SCAN_UNIT=fm-host-disk-scan.service
 FM_HOST_AGENT_POLKIT_RULE=/etc/polkit-1/rules.d/50-fm-host-agent.rules
+
+# --- Twin --------------------------------------------------------------------
+
+# fm-twin's live camera twin for this host's sim runs: it reads a run's cameras
+# and /tf off the fabric and publishes <ns>/twin/points and fm/twin/<ns>/status.
+# 94-twin.sh fetches FM_TWIN_COMMIT_DEFAULT, builds it into a root-owned tree and
+# venv with the uv the sim step pins, and runs it as its own account, which
+# holds no group: the twin needs the router and nothing on the host.
+#
+# fm-twin is private, so the workspace's owner, who holds the GitHub
+# credential, fetches the commit and writes it out as a git bundle; root
+# verifies the bundle and fetches it, never running git in the owner's repo.
+# Re-read the pin after a merge to main with:
+#   git ls-remote https://github.com/first-motive/fm-twin.git refs/heads/main
+# FM_TWIN_COMMIT overrides it on the command line, to try a commit before pinning.
+FM_TWIN_REPO=first-motive/fm-twin
+FM_TWIN_COMMIT_DEFAULT=47e41939ef2c80178dae9804859a96b07844c307
+FM_TWIN_USER=fm-twin
+FM_TWIN_ROOT=/opt/fm-twin
+FM_TWIN_UV_CACHE=/var/cache/fm-twin
+FM_TWIN_UNIT=fm-twin.service
+
+# The robot mask needs the URDF the sim runs, with its meshes. It is fm-skills'
+# private openarm_v2_anvil_description, which reaches a sim host only inside the
+# controllers image (FM_SIM_CONTROLLERS_IMAGE at its pinned digest), so the twin
+# step copies the package's install share out of that image. The path is the
+# colcon install fm-skills' docker/sim-controllers.Dockerfile builds.
+FM_TWIN_DESCRIPTION_PACKAGE=openarm_v2_anvil_description
+FM_TWIN_DESCRIPTION_IN_IMAGE="/ws_ctl/install/$FM_TWIN_DESCRIPTION_PACKAGE/share/$FM_TWIN_DESCRIPTION_PACKAGE"
 
 # --- Cloud sim host --------------------------------------------------------
 
