@@ -20,7 +20,8 @@
       "adapter": "lerobot",
       "root": "/opt/fm/data",
       "producer_id": "fm-ws-01-robot-data",
-      "capabilities": ["browse", "copy_source", "copy_destination"]
+      "capabilities": ["browse", "copy_source", "copy_destination", "offload"],
+      "min_local_days": 7
     },
     {
       "id": "backblaze",

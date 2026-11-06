@@ -51,7 +51,8 @@
               "remote_location": {"type": "string", "pattern": "^[A-Za-z0-9_.-]{1,100}$", "description": "Location ID on the receiving host; that host must configure an imports adapter."},
               "producer_id": {"type": "string", "minLength": 1},
               "ssh_host": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._@-]{0,127}$"},
-              "capabilities": {"type": "array", "uniqueItems": true, "items": {"enum": ["browse", "copy_source", "copy_destination"]}},
+              "capabilities": {"type": "array", "uniqueItems": true, "items": {"enum": ["browse", "copy_source", "copy_destination", "offload"]}, "description": "`offload` lets the coordinator copy a local item to Backblaze, verify it, then remove the local copy. fm-tools accepts it only on a local recordings or lerobot location."},
+              "min_local_days": {"type": "integer", "minimum": 0, "maximum": 3650, "default": 7, "description": "Minimum age in days of a local item before offload may release it. The coordinator applies 7 when it is absent and reads it only with `offload`."},
               "archive_writer": {"enum": ["legacy", "coordinator"], "description": "Coordinator ownership is set only after the old uploader stops watching this recording scope."}
             }
           }
