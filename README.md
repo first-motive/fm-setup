@@ -702,7 +702,7 @@ pinned sources root fetches and keeps in root-owned places:
   or a submodule. It is then copied with `git archive` into
   `/opt/fm-sim-agent/project`, root:root, directories 755 and files 644.
 - Root builds the venv with a uv downloaded at `FM_UV_VERSION` and checked
-  against `FM_SIM_UV_SHA256_MAP` — never the operator's own uv — with no uv
+  against `FM_UV_SHA256_MAP` — never the operator's own uv — with no uv
   config file, no inherited index, and a fixed PATH (`uv sync --frozen
   --no-editable`). The service starts `/opt/fm-sim-agent/venv/bin/fm-sim-agent`
   and runs no uv and no build.
@@ -980,7 +980,7 @@ Counting every account's files needs root, so that one job is a root oneshot,
 - The scan runs the code in `/opt/fm-host-agent`, which root copies out of this
   checkout, refusing anything but plain files and directories, and keeps
   root:root, directories 755 and files 644. Root builds the venv with the uv the
-  sim step pins (`FM_UV_VERSION`, checked against `FM_SIM_UV_SHA256_MAP`), with
+  sim step pins (`FM_UV_VERSION`, checked against `FM_UV_SHA256_MAP`), with
   no uv config file and a fixed PATH (`uv sync --frozen --no-editable`). Every
   install hands the tree and `/var/lib/fm-host-agent` back to root and closes
   them to other writers; `check` flags any file in either that root does not
@@ -1008,6 +1008,74 @@ bash scripts/steps/93-host-agent.sh install --dry-run   # the plan; changes noth
 ./install.sh --workstation --check --only host-agent
 ./scripts/dev/test-host-agent.sh                        # stand-in sudo, systemctl, curl, uv; no root
 ```
+
+## Twin
+
+The `twin` step (`scripts/steps/94-twin.sh`, on in the workstation role) runs
+fm-twin's live camera twin for this host's sim runs. fm-twin reads a run's
+cameras, depth and `/tf` off the fabric, masks the robot out of every frame,
+and publishes the fused cloud and its status back, where fm-desktop's
+Simulation view draws them:
+
+```
+sim run on <host> ──fabric──► fm-twin (fm-twin) ──► <ns>/twin/points       the fused cloud
+fm/twin/<ns>/config ────────►                   ──► fm/twin/<ns>/status    once a second
+```
+
+The unit runs `fm-twin run --source sim:<host> --urdf <description>`, where
+`<host>` is the card's name and the router is `FM_ROUTER_ENDPOINT` from
+`/etc/fm-comms.env`, the unit's `EnvironmentFile`. It starts after the fm-comms
+bridges and restarts on failure. Its account, `fm-twin`, is in no group, and
+the unit holds no capability, sees no devices, kernel tunables, logs or clock,
+and is capped at 8 GB and 512 tasks.
+
+Two inputs are private, and the step takes each from where the host already
+has it:
+
+- **The code.** fm-twin at `FM_TWIN_COMMIT_DEFAULT`. The workspace's owner, who
+  holds the GitHub credential, fetches the commit and writes it out as a git
+  bundle. Root never runs git in the owner's repository, whose config could
+  name a command for root to run: it copies the bundle somewhere the owner
+  cannot change it, verifies it, fetches it into `/opt/fm-twin/src.git` with
+  every object checked, and refuses anything that is not the pin. Root builds the venv as the sim and host-agent steps do
+  (`scripts/internal/service-lib.sh`). `FM_TWIN_COMMIT` overrides the pin on
+  the command line.
+- **The description.** fm-skills' `openarm_v2_anvil_description`, the URDF and
+  meshes the robot mask needs, copied out of the
+  [controllers image](#controllers-image) at its pinned digest, so the twin
+  masks the robot the sim runs. `docker cp` streams it into a root-owned tar,
+  which is refused unless every entry is a plain file or directory under the
+  package, before root extracts any of it. The step never pulls the image;
+  pull it with `FM_SIM_CONTROLLERS=1 ./install.sh --workstation --only sim` first.
+
+Without either, install stops at a gate, exits 0, and names the command that
+clears it. fm-twin's build backend is not pinned yet, as with fm-sim's.
+
+```
+/etc/systemd/system/fm-twin.service                       the twin (User=fm-twin)
+/opt/fm-twin/{src.git,project,venv,bin/uv}                fm-twin at the pin, its venv, the pinned uv (root:root)
+/opt/fm-twin/description/openarm_v2_anvil_description/    the URDF and meshes, from the controllers image
+/var/cache/fm-twin/                                       root's uv cache for that build
+```
+
+```bash
+bash scripts/steps/94-twin.sh install --dry-run   # the plan and the rendered unit; changes nothing
+./install.sh --workstation --check --only twin
+./scripts/dev/test-twin.sh                        # stand-in sudo, systemctl, curl, uv, docker; no root
+```
+
+### On A Mac
+
+A Mac runs no service. Run the twin from an fm-twin checkout against a sim
+host, with the description from an fm-skills checkout:
+
+```bash
+uv run fm-twin run --source sim:<host> \
+  --urdf <fm-skills>/src/openarm_v2_anvil_description/urdf/robot.urdf
+```
+
+`--router` defaults to `$FM_ROUTER_ENDPOINT`. Run it only where no workstation
+twin serves the same host: two twins publish on the same keys.
 
 ## The Data Root
 

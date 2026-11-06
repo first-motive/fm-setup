@@ -54,10 +54,10 @@ TAGGED_FILES=(install.sh README.md)
 # without the guard --check called it drift and --set would have rewritten it to
 # `anvil-openarm-v0.1.13`. A real tag is always preceded by a delimiter — a
 # slash in a URL, an equals sign in the assignment, a space in prose — never by
-# a letter or a digit. A hyphen is both: `${FM_TAG:-v0.1.13}` is the assignment
+# a letter, a digit or an underscore (`openarm_v2_anvil_description` is a package). A hyphen is both: `${FM_TAG:-v0.1.13}` is the assignment
 # this whole script exists to read, and `anvil-openarm-v2` is not a tag, so a
 # hyphen counts as a delimiter only when what precedes it is not alphanumeric.
-TAG_LEAD='(^|[^A-Za-z0-9-]|[^A-Za-z0-9]-)'
+TAG_LEAD='(^|[^A-Za-z0-9_-]|[^A-Za-z0-9_]-)'
 TAG_PATTERN='v[0-9][0-9.]*'
 
 usage() {

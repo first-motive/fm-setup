@@ -50,8 +50,8 @@ fm_require_linux
 # shellcheck disable=SC2034
 FM_UNITS=(fm-zenoh-bridge.service)
 
-R="${FM_SIM_TEST_ROOT:-}"
-if [ -n "$R" ]; then sim_test_root_ok "$R" || exit 1; fi
+R="$(svc_test_knob FM_SIM_TEST FM_SIM_TEST_ROOT)" || exit 1
+if [ -n "$R" ]; then svc_test_root_ok FM_SIM_TEST_ROOT "$R" || exit 1; fi
 if { [ -n "${FM_SIM_TEST_COMMS_SOURCE:-}" ] || [ -n "${FM_SIM_TEST_COMMS_COMMIT:-}" ]; } && [ -z "$R" ]; then
   fm_err "FM_SIM_TEST_COMMS_SOURCE and FM_SIM_TEST_COMMS_COMMIT need FM_SIM_TEST_ROOT — refusing"
   exit 1
