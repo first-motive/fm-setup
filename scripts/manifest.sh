@@ -938,7 +938,7 @@ FM_HOST_AGENT_POLKIT_RULE=/etc/polkit-1/rules.d/50-fm-host-agent.rules
 #   git ls-remote https://github.com/first-motive/fm-twin.git refs/heads/main
 # FM_TWIN_COMMIT overrides it on the command line, to try a commit before pinning.
 FM_TWIN_REPO=first-motive/fm-twin
-FM_TWIN_COMMIT_DEFAULT=0c824213d84f207273cb8f6fd12c0091dbc40c68
+FM_TWIN_COMMIT_DEFAULT=6065b5bba5165e24192adbb813ff129e94808026
 FM_TWIN_USER=fm-twin
 FM_TWIN_ROOT=/opt/fm-twin
 FM_TWIN_UV_CACHE=/var/cache/fm-twin
