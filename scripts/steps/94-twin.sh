@@ -410,7 +410,8 @@ install_description() {
   if ! { svc_must "creating the description's staging directory" sudo install -d -m 0700 "$stage/x" \
       && svc_must "extracting the description" sudo tar -x --no-same-owner --no-same-permissions \
            --no-overwrite-dir -f "$stage/description.tar" -C "$stage/x"; } \
-     || [ ! -f "$stage/x/$FM_TWIN_DESCRIPTION_PACKAGE/urdf/robot.urdf" ]; then
+     || ! sudo test -f "$stage/x/$FM_TWIN_DESCRIPTION_PACKAGE/urdf/robot.urdf"; then
+    # The staging directory is root's alone (0700), so only root can see into it.
     sudo rm -rf "$stage"
     fm_err "$ref has no $FM_TWIN_DESCRIPTION_IN_IMAGE/urdf/robot.urdf"
     return 1
