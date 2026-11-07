@@ -780,7 +780,14 @@ rc=0; out="$(FM_SIM_CONTROLLERS=1 FM_SIM_COMMIT="$COMMIT" step check)" || rc=$?
 assert_eq "an opted-in check exits 0" 0 "$rc"
 assert_has "  and says the image is private" "$out" "is private — the pull needs docker login ghcr.io"
 assert_has "  and sees its unit current" "$out" "$FM_SIM_UNIT installed and current"
-assert_has "the public check sees that unit out of date" "$(FM_SIM_COMMIT="$COMMIT" step check)" "$FM_SIM_UNIT missing or out of date"
+assert_has "the public check sees that unit out of date" "$(FM_SIM_CONTROLLERS=0 FM_SIM_COMMIT="$COMMIT" step check)" "$FM_SIM_UNIT missing or out of date"
+out="$(FM_SIM_COMMIT="$COMMIT" step check)"
+assert_has "with no switch, a check keeps the controllers image the unit runs" "$out" "$FM_SIM_UNIT installed and current"
+assert_has "  and says so" "$out" "runs the controllers image: keeping it"
+assert_has "with no switch, an update plans the controllers image" "$(dry)" "would pull   $CTL_REF"
+assert_has "FM_SIM_CONTROLLERS=0 returns it to the public image" "$(dry FM_SIM_CONTROLLERS=0)" "would pull   ${FM_SIM_IMAGE%:*}@"
+assert_has "an empty switch is the public image, as before" "$(dry FM_SIM_CONTROLLERS=)" "would pull   ${FM_SIM_IMAGE%:*}@"
+assert_lacks "the sim-cloud role never infers the switch" "$(dry FM_ROLE=sim-cloud)" "keeping it"
 assert_rc "a check with a bad switch still exits 0" 0 env FM_SIM_CONTROLLERS=yes PATH="$BIN:$SYS_PATH" bash "$STEP" check
 
 # --- The bridge report ---------------------------------------------------------------
