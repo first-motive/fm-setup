@@ -10,7 +10,9 @@
 #                with FM_SIM_CONTROLLERS=1, the private fm-sim-controllers
 #                overlay by its own pin, which needs docker login ghcr.io: the
 #                operator's own on a workstation; on the sim-cloud role, one
-#                this step makes from a GHCR token in SSM and removes again
+#                this step makes from a GHCR token in SSM and removes again;
+#                with the switch unset, whichever of the two the installed
+#                unit already runs, so an update does not change it
 #   the agent    fm-sim's agent/ at the commit the manifest pins, in a
 #                root-owned tree with a root-built venv, run by systemd as its
 #                own account
@@ -118,6 +120,20 @@ SIM_COMMIT="${FM_SIM_COMMIT:-$FM_SIM_COMMIT_DEFAULT}"
 # FM_SIM_CONTROLLERS=1, its private controllers overlay at that image's own pin.
 # DIGEST_VAR names the override, so a message says which variable to fix. Any
 # other value of the switch is refused by image_ref, which every mode calls.
+#
+# Left unset, the switch keeps what the installed unit already runs: a
+# workstation update runs this step with no switch, and dropping an opted-in
+# host back to the public image loses the OpenArm (fm-ws-01, 2026-11-06).
+# FM_SIM_CONTROLLERS=0 is how a host opts out. The sim-cloud role always names
+# the switch in its host.env, so it is left out.
+installed_runs_controllers() {
+  [ -f "$R$UNIT_PATH" ] && grep '^ExecStart=' "$R$UNIT_PATH" | grep -qF -e " --image ${FM_SIM_CONTROLLERS_IMAGE%:*}@" -e " --image ${FM_SIM_CONTROLLERS_IMAGE%:*}:"
+}
+# Unset, not empty: FM_SIM_CONTROLLERS= still means the public image, as before.
+if [ -z "${FM_SIM_CONTROLLERS+set}" ] && [ "${FM_ROLE:-}" != sim-cloud ] && installed_runs_controllers; then
+  fm_info "the installed $FM_SIM_UNIT runs the controllers image: keeping it (FM_SIM_CONTROLLERS=0 returns it to the public image)"
+  FM_SIM_CONTROLLERS=1
+fi
 SIM_CONTROLLERS="${FM_SIM_CONTROLLERS:-0}"
 if [ "$SIM_CONTROLLERS" = 1 ]; then
   SIM_IMAGE="$FM_SIM_CONTROLLERS_IMAGE"

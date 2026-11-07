@@ -789,8 +789,9 @@ FM_SIM_CONTROLLERS=1 ./install.sh --workstation --check --only sim
 ```
 
 Without the login, the pull fails with a warning and the agent's runs cannot
-start. Re-running without `FM_SIM_CONTROLLERS=1` returns the unit to the
-public image. The `sim-cloud` role takes the switch from its stack's host.env
+start. Re-running without the switch keeps the image the installed unit
+runs, so a workstation update does not drop an opted-in host back to the public
+image; `FM_SIM_CONTROLLERS=0` returns it to the public image. The `sim-cloud` role takes the switch from its stack's host.env
 and logs itself in for one pull with a GHCR token the stack keeps in SSM (see
 below), since nobody is at a cloud host to run `docker login`.
 
