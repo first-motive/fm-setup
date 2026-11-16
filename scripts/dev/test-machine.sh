@@ -231,6 +231,55 @@ jq '.role = "robot" | .name = "fm-rob-01" | del(.robot)' "$FM_MACHINE_FILE" \
   >"$TMP/x" && mv "$TMP/x" "$FM_MACHINE_FILE"
 assert_rc "doctor catches a robot card with no robot" 3 card doctor
 
+# --- The robot role, which reads the card rather than the hardware ----------
+#
+# An Axol is a Jetson to fm_detect_role, and the jetson role would put ROS and
+# an apt upgrade on a vendor's machine. So a robot card picks the robot role
+# when no flag does, and the role installs only on the robots its list is for.
+
+fresh
+card init --role robot --name fm-rob-02 --robot axol --workspace /home/user/fm >/dev/null
+assert_rc "robot preflight accepts an axol card" 0 fm_robot_preflight
+assert_eq "a robot card selects the robot role" "robot" \
+  "$(bash "$FM_ROOT/install.sh" --list 2>&1 | sed -n 's/.*fm-setup steps — //p')"
+assert_eq "the robot role is docker and the nvidia runtime" "docker nvidia-container" \
+  "$(fm_steps_for robot | cut -d'|' -f1 | tr '\n' ' ' | sed 's/ $//')"
+
+# The vendor's image is recorded before any step can claim one of its packages,
+# and recorded once: a second run must not adopt what fm installed since.
+# A fake apt-mark stands in for the image's package list, so this runs on a
+# host with no apt at all.
+state="$TMP/robot-state"
+mkdir -p "$TMP/robot-bin"
+printf '#!/bin/sh\nprintf "vendor-a\\nvendor-b\\n"\n' > "$TMP/robot-bin/apt-mark"
+chmod +x "$TMP/robot-bin/apt-mark"
+PATH="$TMP/robot-bin:$PATH" FM_STATE_DIR="$state" fm_robot_prepare >/dev/null 2>&1
+assert_eq "robot prepare captures the package baseline" "vendor-a vendor-b" \
+  "$(tr '\n' ' ' < "$state/baseline" 2>/dev/null | sed 's/ $//')"
+printf 'vendor-pkg\n' > "$state/baseline"
+PATH="$TMP/robot-bin:$PATH" FM_STATE_DIR="$state" fm_robot_prepare >/dev/null 2>&1
+assert_eq "robot prepare never overwrites the baseline" "vendor-pkg" "$(cat "$state/baseline")"
+
+card init --robot anvil-openarm-v2 >/dev/null
+assert_rc "robot preflight refuses a robot the list is not for" 1 fm_robot_preflight
+rm -rf "$state"
+FM_STATE_DIR="$state" assert_rc "robot prepare refuses a robot the list is not for" 1 fm_robot_prepare
+assert_eq "a refused robot gets no baseline" "false" \
+  "$([ -e "$state/baseline" ] && echo true || echo false)"
+
+# A failed apt-mark leaves an empty baseline, which guards nothing.
+card init --robot axol >/dev/null
+printf '#!/bin/sh\nexit 1\n' > "$TMP/robot-bin/apt-mark"
+PATH="$TMP/robot-bin:$PATH" FM_STATE_DIR="$state" \
+  assert_rc "robot prepare refuses an empty package baseline" 1 fm_robot_prepare
+
+fresh
+card init --role jetson --name fm-rec-01 --workspace /home/fm/fm >/dev/null
+assert_rc "robot preflight refuses a card that is not a robot's" 1 fm_robot_preflight
+
+fresh
+assert_rc "robot preflight refuses a machine with no card" 1 fm_robot_preflight
+
 # --- Reading ----------------------------------------------------------------
 
 fresh

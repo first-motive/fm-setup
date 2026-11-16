@@ -208,6 +208,80 @@ assert_contains "the pinned key passes add_repo" "RC=0" "$out"
 assert_eq "the pinned key adds the apt source" "true" \
   "$([ -e "$SOURCES" ] && echo true || echo false)"
 
+# --- 35 on JetPack: the toolkit stays JetPack's ----------------------------
+#
+# On a JetPack host the toolkit comes from JetPack's own repo, and
+# nvidia-jetpack-runtime depends on it. The step must add no repo, fetch no key,
+# and pin or hold nothing there: it only points docker at the runtime. A fake
+# dpkg makes this a JetPack host, and its own bin directory keeps that from
+# reaching any other case in this file.
+
+rm -f "$SOURCES" "$KEYRING"
+JP_BIN="$TMP/jetpack-bin"
+JP_LOG="$TMP/jetpack-calls"
+mkdir -p "$JP_BIN"
+: > "$JP_LOG"
+export JP_LOG
+cat > "$JP_BIN/dpkg" <<'FAKE'
+#!/usr/bin/env bash
+# `dpkg -s PKG`: JetPack's core package and the toolkit are installed.
+case "${2:-}" in nvidia-l4t-core|nvidia-container-toolkit) exit 0 ;; *) exit 1 ;; esac
+FAKE
+for cmd in nvidia-ctk systemctl apt-get apt-mark curl; do
+  # shellcheck disable=SC2016  # $* and $JP_LOG belong to the fake, not here
+  printf '#!/usr/bin/env bash\nprintf "%%s %%s\\n" "%s" "$*" >> "$JP_LOG"\n' "$cmd" > "$JP_BIN/$cmd"
+done
+chmod +x "$JP_BIN"/*
+
+out="$(PATH="$JP_BIN:$PATH" FM_STATE_DIR="$TMP/state" \
+  run_step_fn 35-nvidia-container-toolkit.sh do_install && echo RC=0 || echo RC=1)"
+assert_contains "JetPack install succeeds" "RC=0" "$out"
+assert_contains "JetPack install registers the docker runtime" \
+  "nvidia-ctk runtime configure --runtime=docker" "$(cat "$JP_LOG")"
+assert_contains "JetPack install restarts docker" "systemctl restart docker" "$(cat "$JP_LOG")"
+assert_eq "JetPack install adds no apt source" "false" \
+  "$([ -e "$SOURCES" ] && echo true || echo false)"
+assert_eq "JetPack install fetches nothing and touches no package" "" \
+  "$(grep -E '^(curl|apt-get|apt-mark) ' "$JP_LOG" || true)"
+assert_eq "JetPack install claims nothing in the ledger" "false" \
+  "$([ -e "$TMP/state/pkgs/nvidia-container" ] && echo true || echo false)"
+
+: > "$JP_LOG"
+out="$(PATH="$JP_BIN:$PATH" FM_STATE_DIR="$TMP/state" \
+  run_step_fn 35-nvidia-container-toolkit.sh do_uninstall && echo RC=0 || echo RC=1)"
+assert_contains "JetPack uninstall succeeds" "RC=0" "$out"
+assert_eq "JetPack uninstall leaves JetPack's packages alone" "" \
+  "$(grep -E '^(apt-get|apt-mark) ' "$JP_LOG" || true)"
+
+# An image that left the toolkit out. The step installs JetPack's meta package
+# from JetPack's own repo, which is the only time it reaches apt here. The fake
+# apt-get puts nvidia-ctk on PATH when it installs, as the real package would.
+JP2_BIN="$TMP/jetpack-bare-bin"
+mkdir -p "$JP2_BIN"
+cp "$JP_BIN/dpkg" "$JP_BIN/systemctl" "$JP_BIN/apt-mark" "$JP_BIN/curl" "$JP2_BIN/"
+cat > "$JP2_BIN/dpkg" <<'FAKE'
+#!/usr/bin/env bash
+case "${2:-}" in nvidia-l4t-core) exit 0 ;; *) exit 1 ;; esac
+FAKE
+cat > "$JP2_BIN/apt-get" <<FAKE
+#!/usr/bin/env bash
+printf 'apt-get %s\n' "\$*" >> "\$JP_LOG"
+case " \$* " in *" install "*) cp "$JP_BIN/nvidia-ctk" "$JP2_BIN/nvidia-ctk" ;; esac
+FAKE
+chmod +x "$JP2_BIN"/*
+: > "$JP_LOG"
+out="$(PATH="$JP2_BIN:$PATH" FM_STATE_DIR="$TMP/state" \
+  run_step_fn 35-nvidia-container-toolkit.sh do_install && echo RC=0 || echo RC=1)"
+assert_contains "JetPack without a toolkit installs" "RC=0" "$out"
+assert_contains "JetPack without a toolkit installs JetPack's meta package" \
+  "install -y $FM_JETPACK_CONTAINER_APT" "$(cat "$JP_LOG")"
+assert_contains "JetPack without a toolkit still registers the runtime" \
+  "nvidia-ctk runtime configure --runtime=docker" "$(cat "$JP_LOG")"
+assert_eq "JetPack without a toolkit adds no apt source" "false" \
+  "$([ -e "$SOURCES" ] && echo true || echo false)"
+assert_eq "JetPack without a toolkit fetches nothing" "" \
+  "$(grep -E '^curl ' "$JP_LOG" || true)"
+
 # --- 60: the Tailscale installer -------------------------------------------
 #
 # The installer under test writes the version it was handed and nothing else, so

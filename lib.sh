@@ -1078,7 +1078,8 @@ fm_steps_for() {
     jetson)      for entry in "${JETSON_STEPS[@]:-}";      do [ -n "$entry" ] && printf '%s\n' "$entry"; done ;;
     trainer)     for entry in "${TRAINER_STEPS[@]:-}";     do [ -n "$entry" ] && printf '%s\n' "$entry"; done ;;
     sim-cloud)   for entry in "${SIM_CLOUD_STEPS[@]:-}";   do [ -n "$entry" ] && printf '%s\n' "$entry"; done ;;
-    *) fm_err "unknown role: $role (use workstation|jetson|trainer|sim-cloud)"; return 1 ;;
+    robot)       for entry in "${ROBOT_STEPS[@]:-}";       do [ -n "$entry" ] && printf '%s\n' "$entry"; done ;;
+    *) fm_err "unknown role: $role (use workstation|jetson|trainer|sim-cloud|robot)"; return 1 ;;
   esac
 }
 
@@ -1092,9 +1093,56 @@ fm_role_codename() {
     jetson)      printf '%s\n' "${FM_OS_CODENAME_JETSON:-}" ;;
     trainer)     printf '%s\n' "${FM_OS_CODENAME_TRAINER:-}" ;;
     sim-cloud)   printf '%s\n' "${FM_OS_CODENAME_SIM_CLOUD:-}" ;;
-    *) fm_err "unknown role: $role (use workstation|jetson|trainer|sim-cloud)"; return 1 ;;
+    robot)       printf '%s\n' "${FM_OS_CODENAME_ROBOT:-}" ;;
+    *) fm_err "unknown role: $role (use workstation|jetson|trainer|sim-cloud|robot)"; return 1 ;;
   esac
 }
+
+# fm_robot_preflight — refuse the robot role on a robot ROBOT_STEPS is not for.
+#
+# A robot belongs to its vendor, and the robot role is the one list fm-setup
+# applies to somebody else's machine. The card names the robot, and only the
+# robots in FM_ROBOT_PROVISIONED take the list: an Anvil workcell is a robot
+# too, and nothing in this list was written for it.
+fm_robot_preflight() {
+  local role robot
+  role="$(fm_machine_get role)" || return 1
+  if [ "$role" != robot ]; then
+    fm_err "this machine's card says role '$role', not 'robot'"
+    return 1
+  fi
+  robot="$(fm_machine_get robot)" || return 1
+  if ! _fm_in_list "$robot" "${FM_ROBOT_PROVISIONED[@]}"; then
+    fm_err "the robot role provisions ${FM_ROBOT_PROVISIONED[*]}, and this card says '$robot'"
+    return 1
+  fi
+  fm_ok "card names robot '$robot'"
+}
+
+# fm_robot_prepare — the preflight, then the image's baselines, before any step.
+#
+# The robot role has no system-update step, which is where every other role
+# records the packages and enabled units its image shipped. Without that
+# baseline a step would claim a vendor package it found present, and uninstall
+# would then remove it. Runs on install and uninstall alike, and captures once:
+# fm_baseline_capture never overwrites, so a later run cannot adopt fm's own.
+#
+# The package baseline is checked rather than trusted. The capture's status is
+# the units half's, and apt-mark's failure is lost in its pipe to sort, so an
+# empty file is what a failed capture looks like. An image has dozens of manual
+# packages; an empty list means the guard is missing, and the role stops.
+fm_robot_prepare() {
+  local baseline
+  fm_robot_preflight || return 1
+  fm_baseline_capture || return 1
+  baseline="$(fm_baseline_file)"
+  if [ ! -s "$baseline" ]; then
+    fm_err "the package baseline at $baseline is missing or empty — a step could claim a vendor package"
+    fm_err "  check that apt-mark showmanual lists packages, remove $baseline, and re-run"
+    return 1
+  fi
+}
+
 # fm_require_role_os ROLE [STRICT] — refuse a role the running OS cannot satisfy.
 #
 # Role detection sees a Tegra marker and nothing else, so any non-Jetson Linux

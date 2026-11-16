@@ -92,8 +92,9 @@ neither the baseline nor any ledger, units enabled since the baseline that no
 step declares, and uncommitted changes under `/etc`. It reports and never fixes
 — the repair is a step, or a removal, and both are decisions a person makes.
 
-Both baselines are captured once, by the system-update step, before anything
-else has run. They are what a machine arrived with: about sixty packages and a
+Both baselines are captured once, before anything else has run: by the
+system-update step, or on the robot role, which has none, by `install.sh`
+itself. They are what a machine arrived with: about sixty packages and a
 hundred enabled units nobody chose. Without them every one of those reads as
 drift, and a report that long is one nobody reads.
 

@@ -4,13 +4,14 @@ Machine provisioning for First Motive. One repo defines what a First Motive host
 is, so any machine can be rebuilt from a clean install without anyone
 remembering what was done to the last one.
 
-Four roles:
+Four roles, and a short list for one robot:
 
 ```
 workstation   Ubuntu 26.04, RTX GPU          training, annotation, sim
 jetson        Ubuntu 22.04, Orin Nano        capture rig
 trainer       Ubuntu 26.04, cloud GPU        training only
 sim-cloud     Ubuntu 24.04/26.04, cloud GPU  sim runs, unattended
+robot         vendor OS (Axol: JetPack 6)    Docker and the NVIDIA runtime only
 ```
 
 `trainer` and `sim-cloud` are the roles hardware detection cannot find — a cloud
@@ -616,10 +617,49 @@ fm-tools.
 
 ## Robots
 
-A robot is the one machine this repo does not provision. It arrives on the
-vendor's OS with the vendor's accounts, and `fm device adopt` layers five things
-onto it — so there is no step chain for a robot, and what it needs from here is
-one verb.
+A robot is the one machine this repo does not provision as a whole. It arrives
+on the vendor's OS with the vendor's accounts, and `fm device adopt` layers five
+things onto it. What it needs from here is one verb and, on an Axol, one short
+step list.
+
+### Docker On An Axol
+
+fm-axol runs its Jazzy ros2_control stack in a container beside Almond's own
+server, so an Axol needs a container runtime and nothing else from this repo.
+The `robot` role is that list, and it is two steps the other roles already run:
+
+| step | on an Axol |
+| --- | --- |
+| `docker` | Docker Engine from Docker's apt repo, and the login account in the docker group |
+| `nvidia-container` | JetPack's own toolkit, already on the image, registered as docker's `nvidia` runtime |
+
+Run it on the robot, as the login account and not under `sudo`, because the
+docker step adds the account running it to the docker group. It asks for the
+sudo password, and asks before that group change; accept it, because fm-axol's
+status checks run `docker` as that account while systemd starts the container
+as root.
+
+```bash
+cd ~/fm/fm-setup && git fetch origin && git checkout --detach origin/main
+./install.sh --robot --check   # what is there now, changes nothing
+./install.sh --robot           # install; log out and back in afterwards
+```
+
+A robot card selects the role on its own, so a bare `./install.sh` on an Axol
+does the same thing rather than provisioning it as a capture rig, which is what
+its hardware looks like. The role refuses to install on a card whose `robot` is
+not in `FM_ROBOT_PROVISIONED`, so an Anvil workcell is left alone, and
+`scripts/update.sh` never converges a robot: it has no passwordless sudo, and
+the machine is the vendor's.
+
+On a JetPack host the `nvidia-container` step adds no repo and pins nothing.
+JetPack's `nvidia-jetpack-runtime` depends on the toolkit it ships, and moving
+those packages to the version the workstation pins would move them out from
+under JetPack. The step only installs JetPack's `nvidia-container` when the
+image left it out, and records only what it installed. Nothing here touches
+`axol.service`.
+
+### Restarting Fleet Services
 
 ```bash
 ./run.sh robot-sudo                 # grant it to the account running this
