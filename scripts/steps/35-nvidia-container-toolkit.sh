@@ -10,6 +10,11 @@
 # see the GPU. There is no binary called `nvidia-container-toolkit` — checking
 # for one reports "command not found" on a working install, so check `nvidia-ctk`.
 #
+# A JetPack host is the exception. JetPack's own apt repo carries the toolkit
+# and nvidia-jetpack-runtime depends on it, so there the step takes JetPack's
+# packages, adds no repo, pins and holds nothing, and only points docker at the
+# runtime. GitHub's pin would move JetPack's packages out from under it.
+#
 # Source: https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html
 
 set -euo pipefail
@@ -29,8 +34,25 @@ fm_require_linux
 KEYRING="${FM_NVIDIA_KEYRING:-/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg}"
 SOURCES="${FM_NVIDIA_SOURCES:-/etc/apt/sources.list.d/nvidia-container-toolkit.list}"
 
+# is_jetpack — 0 on a JetPack rootfs, whose own repo serves the toolkit.
+is_jetpack() { fm_has_pkg "$FM_JETPACK_MARKER_PKG"; }
+
+# configure_docker_runtime — register the nvidia runtime in daemon.json and
+# restart docker so it reads it. Shared by both sources of the toolkit.
+configure_docker_runtime() {
+  fm_log "configuring the docker runtime"
+  sudo nvidia-ctk runtime configure --runtime=docker
+  sudo systemctl restart docker
+}
+
 do_check() {
-  if [ -f "$SOURCES" ]; then fm_ok "toolkit apt repo present"; else fm_warn "toolkit apt repo missing"; fi
+  if is_jetpack; then
+    fm_ok "JetPack host — toolkit from JetPack's apt repo"
+  elif [ -f "$SOURCES" ]; then
+    fm_ok "toolkit apt repo present"
+  else
+    fm_warn "toolkit apt repo missing"
+  fi
   if fm_has_cmd nvidia-ctk; then
     fm_ok "nvidia-ctk $(nvidia-ctk --version 2>/dev/null | head -1)"
   else
@@ -81,7 +103,29 @@ add_repo() {
   sudo apt-get update
 }
 
+# install_jetpack — use JetPack's toolkit, installing its meta package only when
+# the image left it out.
+#
+# A toolkit the vendor's image shipped belongs to the image, so neither its
+# binary nor its meta package is handed to fm_apt_install, whose claim of a
+# present package would let uninstall reach it. The robot role's baseline is
+# the second guard. Only a toolkit this step installed lands in the ledger.
+install_jetpack() {
+  if fm_has_cmd nvidia-ctk || fm_has_pkg "$FM_JETPACK_CONTAINER_APT"; then
+    fm_ok "JetPack's toolkit present ($(nvidia-ctk --version 2>/dev/null | head -1))"
+  else
+    fm_apt_install nvidia-container "$FM_JETPACK_CONTAINER_APT"
+  fi
+  configure_docker_runtime
+  fm_ok "runtime configured — verify with: docker info --format '{{json .Runtimes}}' | grep nvidia"
+}
+
 do_install() {
+  if is_jetpack; then
+    install_jetpack
+    return
+  fi
+
   [ -f "$SOURCES" ] || add_repo
 
   local p pinned=()
@@ -103,14 +147,20 @@ do_install() {
   # ledger must hold is known without diffing for it.
   fm_ledger_record nvidia-container "${FM_NVIDIA_CONTAINER_APT[@]}"
 
-  fm_log "configuring the docker runtime"
-  sudo nvidia-ctk runtime configure --runtime=docker
-  sudo systemctl restart docker
+  configure_docker_runtime
 
   fm_ok "toolkit installed — verify with: docker run --rm --gpus all $FM_CUDA_SMOKE_IMAGE nvidia-smi"
 }
 
 do_uninstall() {
+  # Nothing was pinned or held on JetPack, and no repo was added, so the ledger
+  # is all there is to reverse.
+  if is_jetpack; then
+    fm_apt_uninstall nvidia-container || return 1
+    fm_warn "/etc/docker/daemon.json still names the nvidia runtime — edit it before restarting docker"
+    return 0
+  fi
+
   local p installed=()
   for p in "${FM_NVIDIA_CONTAINER_APT[@]}"; do
     fm_has_pkg "$p" && installed+=("$p")

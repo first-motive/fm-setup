@@ -178,6 +178,29 @@ SIM_CLOUD_STEPS=(
   "sim-cloud-ready|92-sim-cloud-ready.sh|on"
 )
 
+# A robot on its vendor's OS: fm-rob-02, an Axol on a JetPack 6 Orin NX.
+#
+# The vendor owns this machine — its accounts, its apt sources, its own
+# service — so the list is the least fm needs and nothing else: a container
+# runtime for the Jazzy stack fm-axol runs beside the vendor's server. No
+# system-update, base-deps, ROS, or tailscale; the vendor's image already
+# decides all of those, and a step that changed them would be fm changing
+# somebody else's machine.
+#
+# Only the robots named in FM_ROBOT_PROVISIONED take this list. An Anvil
+# workcell shares the role and not the needs, so install.sh refuses the role on
+# any robot this list was not written for.
+#
+# No `nvidia` step: JetPack ships the driver, and nvidia-container takes
+# JetPack's own toolkit rather than adding NVIDIA's GitHub repo beside it.
+ROBOT_STEPS=(
+  "docker|30-docker.sh|on"
+  "nvidia-container|35-nvidia-container-toolkit.sh|on"
+)
+
+# The robots ROBOT_STEPS is written for, matched against the card's `robot`.
+FM_ROBOT_PROVISIONED=(axol)
+
 # --- Machine identity ------------------------------------------------------
 #
 # One file per machine says what that machine is, and everything host-shaped is
@@ -340,6 +363,10 @@ FM_OS_CODENAME_WORKSTATION=resolute
 FM_OS_CODENAME_JETSON=jammy
 FM_OS_CODENAME_TRAINER=resolute
 
+# The robot role runs on the vendor's release, which for an Axol is JetPack 6
+# on Ubuntu 22.04. A vendor that moves its image moves this pin.
+FM_OS_CODENAME_ROBOT=jammy
+
 # The sim-cloud role accepts two releases, space-separated. Its stack's default
 # image is AWS's Deep Learning Base GPU AMI, which is Ubuntu 24.04 and ships the
 # driver, Docker, and the AWS CLI; an operator may point the stack at a 26.04
@@ -413,6 +440,15 @@ FM_NVIDIA_CONTAINER_APT=(
 #   curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
 #     | gpg --show-keys --with-colons | awk -F: '/^fpr:/ { print $10; exit }'
 FM_NVIDIA_KEY_FPR=C95B321B61E88C1809C4F759DDCAE044F796ECB0
+
+# A JetPack rootfs. JetPack's own apt repo carries the container toolkit, and
+# `nvidia-container` is its meta package for it; nvidia-jetpack-runtime depends
+# on that, so a JetPack host is served from there rather than from NVIDIA's
+# GitHub repo, whose pin would move the four packages out from under JetPack.
+# The marker is JetPack's core L4T package: it is installed from the same repo
+# that carries the toolkit, so its presence answers where the toolkit comes from.
+FM_JETPACK_MARKER_PKG=nvidia-l4t-core
+FM_JETPACK_CONTAINER_APT=nvidia-container
 
 # Image used by the documented GPU smoke test.
 FM_CUDA_SMOKE_IMAGE=nvidia/cuda:12.8.0-base-ubuntu22.04
