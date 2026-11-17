@@ -680,8 +680,18 @@ nothing else:
   <user> ALL=(root) NOPASSWD: \
       /usr/bin/systemctl start|stop|restart|status|is-active fm-robot-agent
       /usr/bin/systemctl start|stop|restart|status|is-active fm-zenoh-bridge
+      /usr/bin/systemctl restart zed_x_daemon.service
+      /usr/bin/systemctl restart nvargus-daemon.service
       /usr/local/sbin/fm-comms-set
 ```
+
+The two camera daemons are the vendor's, and the rule allows restart only. A
+camera process that dies without closing its GMSL cameras leaves both unable to
+open them again until they restart; on an Axol, the process that owns the
+cameras runs under the agent's `ros` mode. A restart runs the vendor's daemon
+as root, so the grant is only as safe as its unit file and binary are root-only,
+which they are on an Axol. On a host without one of them, its line matches no
+installed unit and restarts nothing.
 
 `fm-comms-set` is installed by the same verb. The Anvil's domain and interface
 live in two files — the loader's `.env.config`, owned by the account the agent
