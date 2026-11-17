@@ -51,6 +51,17 @@ FM_UNITS=(fm-robot-agent fm-zenoh-bridge)
 # which asks for a password like any other install.
 FM_VERBS=(start stop restart status is-active)
 
+# The vendor camera daemons, restart only. A camera process that dies without
+# closing its GMSL cameras leaves zed_x_daemon (Stereolabs) and nvargus-daemon
+# (NVIDIA) unable to open them again until both restart; on an Axol, the
+# process that owns those cameras runs under fm-robot-agent's `ros` mode.
+# Restart is the whole recovery, and the only verb granted: the account cannot
+# stop, disable or edit either daemon. A restart does run the vendor's daemon as
+# root, so it is only as safe as the unit file and binary are root-only; on an
+# Axol both are, from the JetPack and ZED SDK installs. On a host without one,
+# the line matches no installed unit and restarts nothing.
+CAMERA_DAEMONS=(zed_x_daemon.service nvargus-daemon.service)
+
 #: The writer that lets the agent keep the fleet file in step with the loader's.
 #: The Anvil's domain and interface live in two files — the loader's
 #: `.env.config`, owned by the account the agent runs as, and /etc/fm-comms.env,
@@ -76,8 +87,9 @@ Usage: ./run.sh robot-sudo [--user <name>] [--dry-run] [--remove]
   --remove        delete the rule
 
 Grants NOPASSWD for start/stop/restart/status/is-active on fm-robot-agent and
-fm-zenoh-bridge, plus the fleet-env writer at /usr/local/sbin/fm-comms-set, and
-nothing else. Verify what an account may do with:
+fm-zenoh-bridge, restart (only) on zed_x_daemon and nvargus-daemon, plus the
+fleet-env writer at /usr/local/sbin/fm-comms-set, and nothing else. Verify
+what an account may do with:
 
   sudo -l -U <name>
 EOF
@@ -126,6 +138,9 @@ rule_text() {
       allowed+=("$systemctl $verb $unit")
     done
   done
+  for unit in "${CAMERA_DAEMONS[@]}"; do
+    allowed+=("$systemctl restart $unit")
+  done
   allowed+=("$WRITER")
 
   cat <<EOF
@@ -133,8 +148,8 @@ rule_text() {
 #   ./run.sh robot-sudo --user $user
 # to regenerate it, or --remove to take it away.
 #
-# $user may restart the fleet's own services on this robot and do nothing else
-# as root. The vendor's OS, packages and units are untouched by this rule.
+# $user may restart the fleet's own services on this robot, restart the vendor
+# camera daemons, and do nothing else as root.
 $user ALL=(root) NOPASSWD: \\
 EOF
 
@@ -245,7 +260,8 @@ main() {
   fi
 
   fm_banner
-  fm_log "granting $user passwordless control of ${FM_UNITS[*]}"
+  fm_log "granting $user passwordless control of ${FM_UNITS[*]}," \
+    "and restart of ${CAMERA_DAEMONS[*]}"
   rule_text "$user" "$systemctl"
   # Passwordless access is shown in full and then confirmed, per this repo's
   # rule for anything security-sensitive. NONINTERACTIVE declines it, so an

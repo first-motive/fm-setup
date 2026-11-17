@@ -70,6 +70,18 @@ for verb in start stop restart status is-active; do
   check $? "$verb is allowed on the agent"
 done
 
+# Each camera daemon appears on exactly one line, and that line is the whole
+# restart command: no other verb, and no look-alike unit that merely starts
+# with the same name.
+for unit in zed_x_daemon.service nvargus-daemon.service; do
+  lines="$(printf '%s\n' "$RULE" | grep -F "$unit" | sed -E 's/^ +//; s/, \\$//')"
+  if [ "$lines" = "/usr/bin/systemctl restart $unit" ]; then
+    ok "$unit may be restarted and nothing else"
+  else
+    bad "$unit may be restarted and nothing else (got: $lines)"
+  fi
+done
+
 # The grant must not widen on its own. A glob would pick up whatever unit
 # somebody names fm-something next, which is a grant nobody reviewed.
 if contains "$RULE" "fm-*" || contains "$RULE" "NOPASSWD:ALL" || contains "$RULE" "(ALL)"; then
