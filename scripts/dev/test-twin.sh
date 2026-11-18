@@ -5,12 +5,13 @@
 #   ./scripts/dev/test-twin.sh
 #
 # The step builds a root-owned venv from a private repo the workspace's owner
-# fetches, copies the OpenArm description out of the controllers image, and
-# runs both as an account in no group. The cases are about what reaches root
-# and what the unit says: only the pinned commit, every object checked; only
-# plain files and directories from the image, listed before root extracts
-# them; a unit naming the card's host and reading the
-# router from fm-comms' env; a second run that changes nothing; a gate, not a
+# fetches, copies the OpenArm's and the Axol's descriptions out of the
+# controllers image, and runs both as an account in no group. The cases are
+# about what reaches root and what the unit says: only the pinned commit, every
+# object checked; only plain files and directories from the image, each under
+# its robot's own directory, listed before root extracts them; a unit naming
+# the card's host and a URDF per robot, and reading the router from fm-comms'
+# env; a second run that changes nothing; a gate, not a
 # failure, where a person has something to do; and no "running" after a
 # privileged command fails.
 #
@@ -88,13 +89,35 @@ echo changed > "$UPSTREAM/README.md"
 git -C "$UPSTREAM" -c user.name=t -c user.email=t@t commit --quiet -am other
 OTHER="$(git -C "$UPSTREAM" rev-parse HEAD)"
 
-# The description package as `docker cp` streams it: one top directory.
+# The manifest's two robots: DIR, PATH in the image, TOP (the last component
+# of PATH) and FILE (the URDF relative to DIR) of each. The OpenArm's TOP is its
+# DIR; the Axol's is not. This parsing is the test's own fixture of the
+# manifest's "robot|dir|path|urdf" format, not the step's parser, which the
+# malformed-entry cases below exercise.
+for entry in "${FM_TWIN_ROBOTS[@]}"; do
+  case "$entry" in
+    openarm\|*) IFS='|' read -r _ OA_DIR OA_PATH OA_FILE <<<"$entry" ;;
+    axol\|*) IFS='|' read -r _ AX_DIR AX_PATH AX_FILE <<<"$entry" ;;
+  esac
+done
+[ -n "${OA_DIR:-}" ] && [ -n "${AX_DIR:-}" ] || { fm_err "FM_TWIN_ROBOTS lacks openarm or axol"; exit 1; }
+OA_URDF="$FM_TWIN_ROOT/description/$OA_DIR/$OA_FILE"
+AX_URDF="$FM_TWIN_ROOT/description/$AX_DIR/$AX_FILE"
+AX_TOP="${AX_PATH##*/}"
+
+# Each description as `docker cp` streams it: one top directory, named after
+# the last component of its path in the image.
 DESC_PKG="$TMP/desc"
-mkdir -p "$DESC_PKG/$FM_TWIN_DESCRIPTION_PACKAGE/urdf" "$DESC_PKG/$FM_TWIN_DESCRIPTION_PACKAGE/cad"
-printf '<robot name="openarm"/>\n' > "$DESC_PKG/$FM_TWIN_DESCRIPTION_PACKAGE/urdf/robot.urdf"
-: > "$DESC_PKG/$FM_TWIN_DESCRIPTION_PACKAGE/cad/link0.stl"
+mkdir -p "$DESC_PKG/$OA_DIR/$(dirname "$OA_FILE")" "$DESC_PKG/$OA_DIR/cad" \
+  "$DESC_PKG/$AX_TOP/$(dirname "$AX_FILE")" "$DESC_PKG/$AX_TOP/meshes"
+printf '<robot name="openarm"/>\n' > "$DESC_PKG/$OA_DIR/$OA_FILE"
+: > "$DESC_PKG/$OA_DIR/cad/link0.stl"
+printf '<robot name="axol"/>\n' > "$DESC_PKG/$AX_TOP/$AX_FILE"
+: > "$DESC_PKG/$AX_TOP/meshes/base.stl"
 DESC_TAR="$TMP/desc.tar"
-tar -C "$DESC_PKG" -cf "$DESC_TAR" "$FM_TWIN_DESCRIPTION_PACKAGE"
+tar -C "$DESC_PKG" -cf "$DESC_TAR" "$OA_DIR"
+AXOL_TAR="$TMP/axol.tar"
+tar -C "$DESC_PKG" -cf "$AXOL_TAR" "$AX_TOP"
 
 IMAGE="${FM_SIM_CONTROLLERS_IMAGE%:*}@$FM_SIM_CONTROLLERS_IMAGE_DIGEST_DEFAULT"
 
@@ -107,12 +130,16 @@ LOG="$TMP/calls.log"
 : > "$LOG"
 UV_TARBALL="$TMP/uv.tar.gz"
 
-# stub NAME BODY — @LOG@, @TARBALL@ and @DESC@ are baked in, because the step
-# runs uv under `env -i` and a stand-in there sees no inherited variable.
+# stub NAME BODY — @LOG@, @TARBALL@, @DESC@, @AXOL@, @OAPATH@ and @AXPATH@ are
+# baked in, because the step runs uv under `env -i` and a stand-in there sees no
+# inherited variable.
 stub() {
   local body="${2//@LOG@/$LOG}"
   body="${body//@TARBALL@/$UV_TARBALL}"
   body="${body//@DESC@/$DESC_TAR}"
+  body="${body//@AXOL@/$AXOL_TAR}"
+  body="${body//@OAPATH@/$OA_PATH}"
+  body="${body//@AXPATH@/$AX_PATH}"
   printf '#!/usr/bin/env bash\n%s\n' "$body" > "$BIN/$1"
   chmod 0755 "$BIN/$1"
 }
@@ -135,8 +162,9 @@ while [ $# -gt 0 ]; do [ "$1" = -o ] && { cp @TARBALL@ "$2"; exit 0; }; shift; d
 exit 1'
 stub getent 'grep -q "^useradd .*fm-twin$" @LOG@ && { echo "fm-twin:x:997:997::/nonexistent:/usr/sbin/nologin"; exit 0; }
 exit 2'
-# docker knows the images in FAKE_DOCKER_IMAGES and streams the description
-# tarball for any `cp`.
+# docker knows the images in FAKE_DOCKER_IMAGES and streams, for a `cp`, the
+# OpenArm tarball (FAKE_DESC_TAR replaces it) or, for the Axol's path, the Axol
+# tarball (FAKE_AXOL_TAR replaces it).
 stub docker 'printf "docker %s\n" "$*" >> @LOG@
 case "$1" in
   info) exit 0 ;;
@@ -144,7 +172,12 @@ case "$1" in
     for ref in ${FAKE_DOCKER_IMAGES:-}; do [ "$ref" = "$3" ] && exit 0; done
     exit 1 ;;
   create) echo cid-1 ;;
-  cp) cat "${FAKE_DESC_TAR:-@DESC@}" ;;
+  cp)
+    case "$2" in
+      cid-1:@AXPATH@) cat "${FAKE_AXOL_TAR:-@AXOL@}" ;;
+      cid-1:@OAPATH@) cat "${FAKE_DESC_TAR:-@DESC@}" ;;
+      *) exit 1 ;;
+    esac ;;
   rm) exit 0 ;;
   *) exit 1 ;;
 esac'
@@ -194,7 +227,25 @@ count() { grep -c "$1" "$LOG" || true; }
 
 TWIN="$R$FM_TWIN_ROOT"
 UNIT="$R/etc/systemd/system/$FM_TWIN_UNIT"
-URDF="$FM_TWIN_ROOT/description/$FM_TWIN_DESCRIPTION_PACKAGE/urdf/robot.urdf"
+ROBOT_ARGS="--robot openarm=$OA_URDF --robot axol=$AX_URDF"
+EXEC="ExecStart=$FM_TWIN_ROOT/venv/bin/fm-twin run --source sim:fm-ws-01 $ROBOT_ARGS"
+
+# step_tree NAME [ENTRY...] — a copy of the step and the files it sources under
+# $TMP/tree-NAME, with FM_TWIN_ROBOTS replaced by the ENTRYs when any are
+# given. Prints the copied step's path.
+step_tree() {
+  local t="$TMP/tree-$1"
+  shift
+  mkdir -p "$t/scripts/steps" "$t/scripts/internal"
+  cp "$FM_ROOT/lib.sh" "$t/"
+  cp "$FM_ROOT/scripts/manifest.sh" "$t/scripts/"
+  cp "$FM_ROOT/scripts/internal/service-lib.sh" "$t/scripts/internal/"
+  cp "$STEP" "$t/scripts/steps/"
+  if [ $# -gt 0 ]; then
+    { echo 'FM_TWIN_ROBOTS=('; printf '  %q\n' "$@"; echo ')'; } >> "$t/scripts/manifest.sh"
+  fi
+  printf '%s\n' "$t/scripts/steps/${STEP##*/}"
+}
 
 # --- Cases ---------------------------------------------------------------------
 
@@ -209,8 +260,8 @@ assert_has "a test source without a test root is refused" "$out" "need FM_TWIN_T
 fm_log "dry run"
 reset_host
 out="$(step install --dry-run)"
-assert_has "the dry run prints the unit's command line" "$out" \
-  "ExecStart=$FM_TWIN_ROOT/venv/bin/fm-twin run --source sim:fm-ws-01 --urdf $URDF"
+assert_has "the dry run prints the unit's command line" "$out" "$EXEC"
+assert_has "  and copies each robot's description" "$out" "would copy   axol's $AX_PATH out of $IMAGE"
 assert_eq "the dry run writes nothing" "false" "$(exists "$TWIN")"
 assert_eq "the dry run calls no privileged tool" "0" "$(count '^sudo ')"
 
@@ -228,14 +279,20 @@ assert_eq "the project is copied, tests left behind" "true:false" \
 assert_eq "the entrypoint is built" "true" "$(exists "$TWIN/venv/bin/fm-twin")"
 assert_has "the venv is built with nothing inherited" "$(cat "$LOG")" "uvenv UV_NO_CONFIG=1"
 assert_has "the venv is frozen and non-editable" "$(cat "$LOG")" "sync --quiet --frozen --no-dev --no-editable"
-assert_has "the description comes from the pinned controllers image" "$(cat "$LOG")" "docker create $IMAGE"
-assert_has "  at its install share" "$(cat "$LOG")" "docker cp cid-1:$FM_TWIN_DESCRIPTION_IN_IMAGE -"
-assert_eq "  and lands where the unit points" "true:true" \
-  "$(exists "$R$URDF"):$(exists "$TWIN/description/$FM_TWIN_DESCRIPTION_PACKAGE/cad/link0.stl")"
+assert_eq "the descriptions come from one container of the pinned controllers image" "1" \
+  "$(count "^docker create $IMAGE$")"
+assert_has "  the OpenArm's at its install share" "$(cat "$LOG")" "docker cp cid-1:$OA_PATH -"
+assert_has "  the Axol's at its own" "$(cat "$LOG")" "docker cp cid-1:$AX_PATH -"
+assert_eq "  and both land where the unit points" "true:true:true:true" \
+  "$(exists "$R$OA_URDF"):$(exists "$TWIN/description/$OA_DIR/cad/link0.stl"):$(exists "$R$AX_URDF"):$(exists "$TWIN/description/$AX_DIR/meshes/base.stl")"
+assert_eq "  the Axol's under $AX_DIR, not its archive's $AX_TOP/" "false" \
+  "$(exists "$TWIN/description/$AX_TOP")"
 unit="$(cat "$UNIT" 2>/dev/null || true)"
 assert_has "the unit runs as the twin's account" "$unit" "User=fm-twin"
 assert_has "the unit reads the router from fm-comms' env" "$unit" "EnvironmentFile=/etc/fm-comms.env"
-assert_has "the unit serves the card's host" "$unit" "--source sim:fm-ws-01 --urdf $URDF"
+assert_eq "the unit serves the card's host, with a URDF per robot" "$EXEC" "$(grep '^ExecStart=' "$UNIT" 2>/dev/null || true)"
+assert_eq "the unit starts the twin again when it exits for another robot" "RestartForceExitStatus=75" \
+  "$(grep '^RestartForceExitStatus=' "$UNIT" 2>/dev/null || true)"
 assert_lacks "the unit names no router" "$unit" "--router"
 assert_has "the unit restarts on failure" "$unit" "Restart=on-failure"
 assert_has "the unit is bounded" "$unit" "MemoryMax=8G"
@@ -276,28 +333,79 @@ assert_eq "it changes nothing" "false:0" "$(exists "$TWIN"):$(count '^sudo ')"
 fm_log "a link in the image's description"
 # A symlink entry, then a file through it: extracted, root would write outside.
 OUTSIDE="$TMP/outside"
-mkdir -p "$OUTSIDE" "$TMP/evil1/$FM_TWIN_DESCRIPTION_PACKAGE/urdf" "$TMP/evil2/$FM_TWIN_DESCRIPTION_PACKAGE/urdf/out"
-: > "$TMP/evil1/$FM_TWIN_DESCRIPTION_PACKAGE/urdf/robot.urdf"
-ln -s "$OUTSIDE" "$TMP/evil1/$FM_TWIN_DESCRIPTION_PACKAGE/urdf/out"
-: > "$TMP/evil2/$FM_TWIN_DESCRIPTION_PACKAGE/urdf/out/planted"
-tar -C "$TMP/evil1" -cf "$TMP/desc-link.tar" "$FM_TWIN_DESCRIPTION_PACKAGE"
-tar -C "$TMP/evil2" -rf "$TMP/desc-link.tar" "$FM_TWIN_DESCRIPTION_PACKAGE/urdf/out/planted"
+mkdir -p "$OUTSIDE" "$TMP/evil1/$OA_DIR/urdf" "$TMP/evil2/$OA_DIR/urdf/out"
+: > "$TMP/evil1/$OA_DIR/urdf/robot.urdf"
+ln -s "$OUTSIDE" "$TMP/evil1/$OA_DIR/urdf/out"
+: > "$TMP/evil2/$OA_DIR/urdf/out/planted"
+tar -C "$TMP/evil1" -cf "$TMP/desc-link.tar" "$OA_DIR"
+tar -C "$TMP/evil2" -rf "$TMP/desc-link.tar" "$OA_DIR/urdf/out/planted"
 reset_host
 rc=0; out="$(env FAKE_DESC_TAR="$TMP/desc-link.tar" PATH="$BIN:$SYS_PATH" bash "$STEP" install 2>&1)" || rc=$?
 assert_eq "install refuses it" "1" "$rc"
 assert_has "it names the entry" "$out" "not a plain file or directory: l"
 assert_eq "nothing is written through the link" "false" "$(exists "$OUTSIDE/planted")"
-assert_eq "no description and no unit" "false:false" "$(exists "$R$URDF"):$(exists "$UNIT")"
+assert_eq "no description and no unit" "false:false" "$(exists "$R$OA_URDF"):$(exists "$UNIT")"
 
 fm_log "an entry outside the package"
 mkdir -p "$TMP/evil3/other"
 : > "$TMP/evil3/other/x"
-tar -C "$DESC_PKG" -cf "$TMP/desc-outside.tar" "$FM_TWIN_DESCRIPTION_PACKAGE"
+tar -C "$DESC_PKG" -cf "$TMP/desc-outside.tar" "$OA_DIR"
 tar -C "$TMP/evil3" -rf "$TMP/desc-outside.tar" other/x
 reset_host
 rc=0; out="$(env FAKE_DESC_TAR="$TMP/desc-outside.tar" PATH="$BIN:$SYS_PATH" bash "$STEP" install 2>&1)" || rc=$?
 assert_eq "install refuses it" "1" "$rc"
-assert_has "it names the entry" "$out" "outside $FM_TWIN_DESCRIPTION_PACKAGE/: other/x"
+assert_has "it names the entry" "$out" "outside $OA_DIR/: other/x"
+
+fm_log "an Axol entry outside its archive's $AX_TOP/"
+tar -C "$DESC_PKG" -cf "$TMP/axol-outside.tar" "$AX_TOP"
+tar -C "$DESC_PKG" -rf "$TMP/axol-outside.tar" "$OA_DIR/$OA_FILE"
+reset_host
+rc=0; out="$(env FAKE_AXOL_TAR="$TMP/axol-outside.tar" PATH="$BIN:$SYS_PATH" bash "$STEP" install 2>&1)" || rc=$?
+assert_eq "install refuses it" "1" "$rc"
+assert_has "it names the entry" "$out" "outside $AX_TOP/: $OA_DIR"
+assert_has "  and the robot" "$out" "the axol description in $IMAGE is refused"
+assert_eq "no description moves into place and no unit is written" "false:false:false" \
+  "$(exists "$R$OA_URDF"):$(exists "$R$AX_URDF"):$(exists "$UNIT")"
+assert_eq "  and no staging directory is left behind" "" \
+  "$(find "$TWIN" -maxdepth 1 -name '.description.*' 2>/dev/null)"
+
+fm_log "a seal that fails part-way"
+reset_host
+step install >/dev/null
+rm -f "$R$AX_URDF"
+rc=0; out="$(env FAKE_FAIL="$TWIN/description/$AX_DIR" PATH="$BIN:$SYS_PATH" bash "$STEP" install 2>&1)" || rc=$?
+assert_eq "install fails" "1" "$rc"
+assert_eq "it leaves no marker and no staging directory" "false:" \
+  "$(exists "$TWIN/description/.fm-image"):$(find "$TWIN" -maxdepth 1 -name '.description.*')"
+rc=0; out="$(step install)" || rc=$?
+assert_eq "the next run copies both again" "0:true:true" "$rc:$(exists "$R$OA_URDF"):$(exists "$R$AX_URDF")"
+
+fm_log "a malformed robot entry"
+OA_ENTRY="openarm|$OA_DIR|$OA_PATH|$OA_FILE"
+n=0
+for bad in "axol|axol_description|/ws/x/urdf|../x.urdf" \
+           "axol|axol_description|/ws/x/urdf|/etc/x.urdf" \
+           "axol|..|/ws/x/urdf|x.urdf" \
+           "axol|a/b|/ws/x/urdf|x.urdf" \
+           "axol|axol_description|ws/x/urdf|x.urdf" \
+           "Axol|axol_description|/ws/x/urdf|x.urdf"; do
+  n=$((n + 1))
+  bad_step="$(step_tree "bad$n" "$OA_ENTRY" "$bad")"
+  reset_host
+  rc=0; out="$(env PATH="$BIN:$SYS_PATH" bash "$bad_step" install 2>&1)" || rc=$?
+  assert_eq "$bad: install fails" "1" "$rc"
+  assert_has "  it names the entry" "$out" "FM_TWIN_ROBOTS entry is malformed: '$bad'"
+  assert_eq "  no description and no unit" "false:false" "$(exists "$TWIN/description"):$(exists "$UNIT")"
+done
+rc=0; out="$(env PATH="$BIN:$SYS_PATH" bash "$bad_step" check 2>&1)" || rc=$?
+assert_eq "check still exits 0 on one" "0" "$rc"
+
+fm_log "robot_args"
+args_step="$(step_tree args)"
+sed '$d' "$args_step" > "${args_step%/*}/args.sh"
+echo robot_args >> "${args_step%/*}/args.sh"
+assert_eq "it renders one --robot word per robot" "$ROBOT_ARGS" \
+  "$(env PATH="$BIN:$SYS_PATH" bash "${args_step%/*}/args.sh" 2>&1)"
 
 fm_log "an owner who hands root another commit"
 reset_host
@@ -321,7 +429,7 @@ reset_host
 rc=0; out="$(env FAKE_DESC_TAR="$TMP/desc-garbage.tar" PATH="$BIN:$SYS_PATH" bash "$STEP" install 2>&1)" || rc=$?
 assert_eq "install fails" "1" "$rc"
 assert_has "it says why" "$out" "is not a readable tar"
-assert_eq "no description and no unit" "false:false" "$(exists "$R$URDF"):$(exists "$UNIT")"
+assert_eq "no description and no unit" "false:false" "$(exists "$R$OA_URDF"):$(exists "$UNIT")"
 
 fm_log "no uv pin"
 assert_eq "an empty pin is never a current uv" "1" \
@@ -366,7 +474,12 @@ assert_has "it reports the missing unit" "$out" "$FM_TWIN_UNIT missing or out of
 step install >/dev/null
 out="$(step check)"
 assert_has "it finds the installed unit current" "$out" "$FM_TWIN_UNIT installed and current — serves sim:fm-ws-01"
-assert_has "it finds the description current" "$out" "$URDF is the description in $IMAGE"
+assert_has "it finds the OpenArm's description current" "$out" "openarm: $OA_URDF is the description in $IMAGE"
+assert_has "it finds the Axol's description current" "$out" "axol: $AX_URDF is the description in $IMAGE"
+rm -f "$R$AX_URDF"
+out="$(step check)"
+assert_has "it finds a missing Axol URDF" "$out" "axol: $AX_URDF is not the description in $IMAGE"
+assert_has "  and keeps the OpenArm's current" "$out" "openarm: $OA_URDF is the description in $IMAGE"
 
 fm_log "uninstall"
 rc=0; out="$(step uninstall)" || rc=$?

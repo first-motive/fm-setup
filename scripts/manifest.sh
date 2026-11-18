@@ -980,13 +980,28 @@ FM_TWIN_ROOT=/opt/fm-twin
 FM_TWIN_UV_CACHE=/var/cache/fm-twin
 FM_TWIN_UNIT=fm-twin.service
 
-# The robot mask needs the URDF the sim runs, with its meshes. It is fm-skills'
-# private openarm_v2_anvil_description, which reaches a sim host only inside the
-# controllers image (FM_SIM_CONTROLLERS_IMAGE at its pinned digest), so the twin
-# step copies the package's install share out of that image. The path is the
-# colcon install fm-skills' docker/sim-controllers.Dockerfile builds.
-FM_TWIN_DESCRIPTION_PACKAGE=openarm_v2_anvil_description
-FM_TWIN_DESCRIPTION_IN_IMAGE="/ws_ctl/install/$FM_TWIN_DESCRIPTION_PACKAGE/share/$FM_TWIN_DESCRIPTION_PACKAGE"
+# The robots the twin can mask. It serves the robot of the sim host's active
+# run, so it needs the URDF and meshes of every robot a run may load. Each is
+# private and reaches a sim host only inside the controllers image
+# (FM_SIM_CONTROLLERS_IMAGE at its pinned digest), so the twin step copies each
+# description out of that image. Entries are
+# "robot|dir|path in the image|urdf": robot is the name fm-twin's --robot takes,
+# dir is the directory the description lands in under
+# $FM_TWIN_ROOT/description/, path is the directory copied out of the image,
+# and urdf is relative to it.
+#   openarm  fm-skills' openarm_v2_anvil_description, which the pick-and-place
+#            runs load; the path is the colcon install fm-skills'
+#            docker/sim-controllers.Dockerfile builds.
+#   axol     The Axol on its Ox cart, which the Axol runs load: Almond's
+#            description, vendored in fm-sim's image, with the URDF beside the
+#            meshes/ it names relative to itself. fm_description installs it
+#            as axol_description, but as symlinks, which the step refuses, so
+#            the entry copies the directory those links name and the
+#            description stays defined once.
+FM_TWIN_ROBOTS=(
+  "openarm|openarm_v2_anvil_description|/ws_ctl/install/openarm_v2_anvil_description/share/openarm_v2_anvil_description|urdf/robot.urdf"
+  "axol|axol_description|/ws/external/axol/almond_axol/kinematics/urdf|axol_ox_cart.urdf"
+)
 
 # --- Cloud sim host --------------------------------------------------------
 
