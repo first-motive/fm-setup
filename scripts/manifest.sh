@@ -846,7 +846,7 @@ FM_ISAAC_DRIVER_MIN=535.129.03
 # install no agent.
 # FM_SIM_COMMIT overrides it on the command line, to try a commit before pinning.
 FM_SIM_REPO=first-motive/fm-sim
-FM_SIM_COMMIT_DEFAULT=0cb2bb30f72d7e9eed91e4ee708d10267062a963
+FM_SIM_COMMIT_DEFAULT=451784edc202e1ce168f3f7686cb2a4d2edf6fcb
 
 # The image every run starts from, by digest. Without one the step still pulls
 # the tag and writes the unit, but grants no docker rights and enables nothing:
@@ -858,7 +858,7 @@ FM_SIM_COMMIT_DEFAULT=0cb2bb30f72d7e9eed91e4ee708d10267062a963
 #   docker buildx imagetools inspect ghcr.io/first-motive/fm-sim:jazzy
 # FM_SIM_IMAGE_DIGEST overrides it on the command line.
 FM_SIM_IMAGE=ghcr.io/first-motive/fm-sim:jazzy
-FM_SIM_IMAGE_DIGEST_DEFAULT=sha256:5d54a76be7f9b0fe2b7c813ab6ac4ef3d5f79ac8a55d288eca59edba364f09b4
+FM_SIM_IMAGE_DIGEST_DEFAULT=sha256:3338049cb9019a17568a2f6d77e37479486aa99b3a6c9c96e23ddbecf2b32490
 
 # The private overlay of that image, which adds the fm_skills, classical,
 # policy_serve, and fastwam controllers. A host runs it only when it opts in
@@ -873,7 +873,7 @@ FM_SIM_IMAGE_DIGEST_DEFAULT=sha256:5d54a76be7f9b0fe2b7c813ab6ac4ef3d5f79ac8a55d2
 #   docker buildx imagetools inspect ghcr.io/first-motive/fm-sim-controllers:jazzy
 # FM_SIM_CONTROLLERS_IMAGE_DIGEST overrides it on the command line.
 FM_SIM_CONTROLLERS_IMAGE=ghcr.io/first-motive/fm-sim-controllers:jazzy
-FM_SIM_CONTROLLERS_IMAGE_DIGEST_DEFAULT=sha256:53611784068b9559739c5e823d5365fa450212494253c7f24ed25df6da6163c1
+FM_SIM_CONTROLLERS_IMAGE_DIGEST_DEFAULT=sha256:de2e131a067eb8428aad11c902d2b679f5806566aebba8a3001c74c996889f3d
 
 # The account the agent runs as. Its own system user rather than a person's,
 # and outside the fm group so the roster steps never treat it as somebody. It is
