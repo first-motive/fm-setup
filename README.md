@@ -1073,10 +1073,13 @@ sim run on <host> ──fabric──► fm-twin (fm-twin) ──► <ns>/twin/po
 fm/twin/<ns>/config ────────►                   ──► fm/twin/<ns>/status    once a second
 ```
 
-The unit runs `fm-twin run --source sim:<host> --urdf <description>`, where
-`<host>` is the card's name and the router is `FM_ROUTER_ENDPOINT` from
-`/etc/fm-comms.env`, the unit's `EnvironmentFile`. It starts after the fm-comms
-bridges and restarts on failure. Its account, `fm-twin`, is in no group, and
+The unit runs `fm-twin run --source sim:<host> --robot openarm=<urdf> --robot
+axol=<urdf>`, where `<host>` is the card's name and the router is
+`FM_ROUTER_ENDPOINT` from `/etc/fm-comms.env`, the unit's `EnvironmentFile`.
+The twin serves the robot of the host's active run; when a run of the other
+robot holds, it exits 75 and systemd (`RestartForceExitStatus=75`) starts it
+again on that robot. It starts after the fm-comms bridges and restarts on
+failure. Its account, `fm-twin`, is in no group, and
 the unit holds no capability, sees no devices, kernel tunables, logs or clock,
 and is capped at 8 GB and 512 tasks.
 
@@ -1091,13 +1094,15 @@ has it:
   every object checked, and refuses anything that is not the pin. Root builds the venv as the sim and host-agent steps do
   (`scripts/internal/service-lib.sh`). `FM_TWIN_COMMIT` overrides the pin on
   the command line.
-- **The description.** fm-skills' `openarm_v2_anvil_description`, the URDF and
-  meshes the robot mask needs, copied out of the
-  [controllers image](#controllers-image) at its pinned digest, so the twin
-  masks the robot the sim runs. `docker cp` streams it into a root-owned tar,
-  which is refused unless every entry is a plain file or directory under the
-  package, before root extracts any of it. The step never pulls the image;
-  pull it with `FM_SIM_CONTROLLERS=1 ./install.sh --workstation --only sim` first.
+- **The descriptions.** The URDF and meshes the robot mask needs, for each
+  robot in `FM_TWIN_ROBOTS`: fm-skills' `openarm_v2_anvil_description` and
+  Almond's Axol description as fm-sim's image vendors it. Both are copied out
+  of the [controllers image](#controllers-image) at its pinned digest, so the
+  twin masks the robots the sim runs. `docker cp` streams each into a
+  root-owned tar, which is refused unless every entry is a plain file or
+  directory under the archive's top directory, before root extracts any of it.
+  The step never pulls the image; pull it with
+  `FM_SIM_CONTROLLERS=1 ./install.sh --workstation --only sim` first.
 
 Without either, install stops at a gate, exits 0, and names the command that
 clears it. fm-twin's build backend is not pinned yet, as with fm-sim's.
@@ -1105,7 +1110,8 @@ clears it. fm-twin's build backend is not pinned yet, as with fm-sim's.
 ```
 /etc/systemd/system/fm-twin.service                       the twin (User=fm-twin)
 /opt/fm-twin/{src.git,project,venv,bin/uv}                fm-twin at the pin, its venv, the pinned uv (root:root)
-/opt/fm-twin/description/openarm_v2_anvil_description/    the URDF and meshes, from the controllers image
+/opt/fm-twin/description/openarm_v2_anvil_description/    the OpenArm's URDF and meshes, from the controllers image
+/opt/fm-twin/description/axol_description/                the Axol's URDF and meshes, from the same image
 /var/cache/fm-twin/                                       root's uv cache for that build
 ```
 
@@ -1122,8 +1128,11 @@ host, with the description from an fm-skills checkout:
 
 ```bash
 uv run fm-twin run --source sim:<host> \
-  --urdf <fm-skills>/src/openarm_v2_anvil_description/urdf/robot.urdf
+  --robot openarm=<fm-skills>/src/openarm_v2_anvil_description/urdf/robot.urdf
 ```
+
+Add `--robot axol=<almond_axol>/kinematics/urdf/axol_ox_cart.urdf` to serve
+Axol runs too.
 
 `--router` defaults to `$FM_ROUTER_ENDPOINT`. Run it only where no workstation
 twin serves the same host: two twins publish on the same keys.

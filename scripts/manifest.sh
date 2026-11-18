@@ -846,7 +846,7 @@ FM_ISAAC_DRIVER_MIN=535.129.03
 # install no agent.
 # FM_SIM_COMMIT overrides it on the command line, to try a commit before pinning.
 FM_SIM_REPO=first-motive/fm-sim
-FM_SIM_COMMIT_DEFAULT=9a28c53f7e5db049f204dc8be22fdab0d1cfb2ba
+FM_SIM_COMMIT_DEFAULT=886b96d1a9b1ae5238359f062d1a6dd5332beeb9
 
 # The image every run starts from, by digest. Without one the step still pulls
 # the tag and writes the unit, but grants no docker rights and enables nothing:
@@ -858,7 +858,7 @@ FM_SIM_COMMIT_DEFAULT=9a28c53f7e5db049f204dc8be22fdab0d1cfb2ba
 #   docker buildx imagetools inspect ghcr.io/first-motive/fm-sim:jazzy
 # FM_SIM_IMAGE_DIGEST overrides it on the command line.
 FM_SIM_IMAGE=ghcr.io/first-motive/fm-sim:jazzy
-FM_SIM_IMAGE_DIGEST_DEFAULT=sha256:ae7346878076499194bfad9fd05ce0d4c46fbd4b4cc6c45bd1d0d74927ae8e9c
+FM_SIM_IMAGE_DIGEST_DEFAULT=sha256:5f19c3f2da6759fd5e2f9d33a9146e04ce303e0d73bf722fdbc74c13a6dee9a7
 
 # The private overlay of that image, which adds the fm_skills, classical,
 # policy_serve, and fastwam controllers. A host runs it only when it opts in
@@ -873,7 +873,7 @@ FM_SIM_IMAGE_DIGEST_DEFAULT=sha256:ae7346878076499194bfad9fd05ce0d4c46fbd4b4cc6c
 #   docker buildx imagetools inspect ghcr.io/first-motive/fm-sim-controllers:jazzy
 # FM_SIM_CONTROLLERS_IMAGE_DIGEST overrides it on the command line.
 FM_SIM_CONTROLLERS_IMAGE=ghcr.io/first-motive/fm-sim-controllers:jazzy
-FM_SIM_CONTROLLERS_IMAGE_DIGEST_DEFAULT=sha256:3be2a0ea974b3fb022559e3e11b6c438efded1a759bb310091155d5c88034d9b
+FM_SIM_CONTROLLERS_IMAGE_DIGEST_DEFAULT=sha256:379d39f7c4d7ed8aca070b8f1092b615482667cd117fb97afdd6d3a33f5261c2
 
 # The account the agent runs as. Its own system user rather than a person's,
 # and outside the fm group so the roster steps never treat it as somebody. It is
@@ -974,19 +974,34 @@ FM_HOST_AGENT_POLKIT_RULE=/etc/polkit-1/rules.d/50-fm-host-agent.rules
 #   git ls-remote https://github.com/first-motive/fm-twin.git refs/heads/main
 # FM_TWIN_COMMIT overrides it on the command line, to try a commit before pinning.
 FM_TWIN_REPO=first-motive/fm-twin
-FM_TWIN_COMMIT_DEFAULT=f07780ba28ef32a7613a0d1cc5d53c71e8a64893
+FM_TWIN_COMMIT_DEFAULT=86ce6700d1663fe15af19681f250e58951a62055
 FM_TWIN_USER=fm-twin
 FM_TWIN_ROOT=/opt/fm-twin
 FM_TWIN_UV_CACHE=/var/cache/fm-twin
 FM_TWIN_UNIT=fm-twin.service
 
-# The robot mask needs the URDF the sim runs, with its meshes. It is fm-skills'
-# private openarm_v2_anvil_description, which reaches a sim host only inside the
-# controllers image (FM_SIM_CONTROLLERS_IMAGE at its pinned digest), so the twin
-# step copies the package's install share out of that image. The path is the
-# colcon install fm-skills' docker/sim-controllers.Dockerfile builds.
-FM_TWIN_DESCRIPTION_PACKAGE=openarm_v2_anvil_description
-FM_TWIN_DESCRIPTION_IN_IMAGE="/ws_ctl/install/$FM_TWIN_DESCRIPTION_PACKAGE/share/$FM_TWIN_DESCRIPTION_PACKAGE"
+# The robots the twin can mask. It serves the robot of the sim host's active
+# run, so it needs the URDF and meshes of every robot a run may load. Each is
+# private and reaches a sim host only inside the controllers image
+# (FM_SIM_CONTROLLERS_IMAGE at its pinned digest), so the twin step copies each
+# description out of that image. Entries are
+# "robot|dir|path in the image|urdf": robot is the name fm-twin's --robot takes,
+# dir is the directory the description lands in under
+# $FM_TWIN_ROOT/description/, path is the directory copied out of the image,
+# and urdf is relative to it.
+#   openarm  fm-skills' openarm_v2_anvil_description, which the pick-and-place
+#            runs load; the path is the colcon install fm-skills'
+#            docker/sim-controllers.Dockerfile builds.
+#   axol     The Axol on its Ox cart, which the Axol runs load: Almond's
+#            description, vendored in fm-sim's image, with the URDF beside the
+#            meshes/ it names relative to itself. fm_description installs it
+#            as axol_description, but as symlinks, which the step refuses, so
+#            the entry copies the directory those links name and the
+#            description stays defined once.
+FM_TWIN_ROBOTS=(
+  "openarm|openarm_v2_anvil_description|/ws_ctl/install/openarm_v2_anvil_description/share/openarm_v2_anvil_description|urdf/robot.urdf"
+  "axol|axol_description|/ws/external/axol/almond_axol/kinematics/urdf|axol_ox_cart.urdf"
+)
 
 # --- Cloud sim host --------------------------------------------------------
 

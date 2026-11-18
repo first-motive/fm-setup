@@ -10,10 +10,14 @@
 #
 #   the code         fm-twin at the commit the manifest pins, in a root-owned
 #                    tree with a root-built venv (scripts/internal/service-lib.sh)
-#   the description  openarm_v2_anvil_description, the URDF and meshes the sim
-#                    runs, copied out of the pinned controllers image
+#   the descriptions the URDF and meshes of every robot in FM_TWIN_ROBOTS (the
+#                    OpenArm and the Axol), copied out of the pinned controllers
+#                    image
 #   the service      fm-twin.service, run by systemd as its own account:
-#                    fm-twin run --source sim:<this host> --urdf <description>
+#                    fm-twin run --source sim:<this host> --robot <name>=<urdf> ...
+#
+# The twin serves the robot of the host's active sim run. When a run of another
+# robot holds, it exits 75 and systemd starts it again on that robot.
 #
 # The account is in no group — not docker, not fm — and the unit holds no
 # capability. What it may do is what any peer on the router may.
@@ -27,21 +31,22 @@
 # every object checked, and refuses anything that is not the pinned SHA. The
 # workspace's fm-twin checkout, if there is one, is never read.
 #
-# The description is fm-skills' and private too. A sim host only has it inside
+# The descriptions are private too. A sim host only has them inside
 # FM_SIM_CONTROLLERS_IMAGE, which the sim step pulls with FM_SIM_CONTROLLERS=1,
-# so the twin masks exactly the robot the sim runs. This step never pulls it.
-# `docker cp` streams the package as a tar into a root-owned file, every entry
-# is listed and refused unless it is a plain file or directory, and only then
-# does root extract it.
+# so the twin masks exactly the robots the sim runs. This step never pulls it.
+# `docker cp` streams each description as a tar into a root-owned file, every
+# entry is listed and refused unless it is a plain file or directory under that
+# description's own directory, and only then does root extract it.
 #
 # The router endpoint is FM_ROUTER_ENDPOINT from /etc/fm-comms.env, the unit's
 # EnvironmentFile, which fm-twin reads when no --router is given. The host is the
 # card's name. Neither is typed here.
 #
-# install exits 1 on a failure: a malformed pin or digest, a fetch that does not
-# match, a refused tree or archive, any privileged command that fails. It exits 0 when it stops at a
-# gate a person clears later — no commit pinned, no GitHub credential, the
-# controllers image not pulled, /etc/fm-comms.env not there yet — and says which.
+# install exits 1 on a failure: a malformed pin, digest or robot entry, a fetch
+# that does not match, a refused tree or archive, any privileged command that
+# fails. It exits 0 when it stops at a gate a person clears later — no commit
+# pinned, no GitHub credential, the controllers image not pulled,
+# /etc/fm-comms.env not there yet — and says which.
 #
 #   bash scripts/steps/94-twin.sh install --dry-run    print the plan, change nothing
 #
@@ -91,11 +96,10 @@ SRC_GIT="$FM_TWIN_ROOT/src.git"
 PROJECT_DIR="$FM_TWIN_ROOT/project"
 VENV_DIR="$FM_TWIN_ROOT/venv"
 ENTRYPOINT="$VENV_DIR/bin/fm-twin"
-DESCRIPTION_DIR="$FM_TWIN_ROOT/description/$FM_TWIN_DESCRIPTION_PACKAGE"
-URDF="$DESCRIPTION_DIR/urdf/robot.urdf"
+DESCRIPTION_ROOT="$FM_TWIN_ROOT/description"
 # Written last, after the venv is built and after the description is copied.
 COMMIT_MARKER="$FM_TWIN_ROOT/.fm-commit"
-DESCRIPTION_MARKER="$FM_TWIN_ROOT/description/.fm-image"
+DESCRIPTION_MARKER="$DESCRIPTION_ROOT/.fm-image"
 # The largest bundle root takes from the owner. fm-twin's whole history is a
 # few megabytes; a bundle far past that is not the repository.
 BUNDLE_MAX_BYTES=$((256 * 1024 * 1024))
@@ -123,7 +127,7 @@ commit_pinned() {
 }
 
 # The controllers image by digest. No digest is a refusal, not a moving tag: the
-# description must be the one the sim runs.
+# descriptions must be the ones the sim runs.
 image_ref() {
   if [[ "$IMAGE_DIGEST" == *$'\n'* ]] || ! printf '%s' "$IMAGE_DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
     fm_err "FM_SIM_CONTROLLERS_IMAGE_DIGEST is malformed or unset: '$IMAGE_DIGEST' (want sha256:<64 hex>)"
@@ -142,8 +146,45 @@ host_name() {
   printf '%s\n' "$name"
 }
 
+# robot_list — every FM_TWIN_ROBOTS entry, validated, one per line as
+# "robot|dir|path|top|urdf", where top is the last component of path: the top
+# directory `docker cp` streams. Callers read a line with `IFS='|' read -r`.
+# Refuses the whole list if any entry could name a path outside its own
+# directory: dir and top must each be one safe path component, path absolute,
+# and urdf relative with no '..'.
+robot_list() {
+  local entry robot dir path urdf top
+  local component='^[A-Za-z0-9_][A-Za-z0-9_.-]*$'
+  for entry in "${FM_TWIN_ROBOTS[@]}"; do
+    IFS='|' read -r robot dir path urdf <<<"$entry"
+    top="${path##*/}"
+    if [[ "$entry" == *$'\n'* ]] || ! [[ "$robot" =~ ^[a-z][a-z0-9_-]*$ ]] \
+       || ! [[ "$dir" =~ $component ]] || ! [[ "$top" =~ $component ]] \
+       || [[ "$path" != /* ]] || [ -z "$urdf" ] || [[ "$urdf" == /* ]] \
+       || [[ "$urdf" == *'|'* ]] || [[ "/$urdf/" == */../* ]]; then
+      fm_err "FM_TWIN_ROBOTS entry is malformed: '$entry' (want robot|dir|/path/to/dir|relative urdf)"
+      return 1
+    fi
+    printf '%s|%s|%s|%s|%s\n' "$robot" "$dir" "$path" "$top" "$urdf"
+  done
+}
+
+# robot_args — the unit's --robot words, one pair per robot, each checked as
+# every word of a unit's command line is.
+robot_args() {
+  local list robot dir path top urdf words=()
+  list="$(robot_list)" || return 1
+  while IFS='|' read -r robot dir path top urdf; do
+    svc_safe_word "$robot=$DESCRIPTION_ROOT/$dir/$urdf" || return 1
+    words+=(--robot "$robot=$DESCRIPTION_ROOT/$dir/$urdf")
+  done <<<"$list"
+  printf '%s\n' "${words[*]}"
+}
+
 # render HOST — the unit for this host.
 render() {
+  local args
+  args="$(robot_args)" || return 1
   cat <<UNIT
 # fm-twin — the live camera twin for this host's sim runs, over Zenoh.
 #
@@ -162,9 +203,13 @@ User=$FM_TWIN_USER
 Group=$FM_TWIN_USER
 # The router endpoint (FM_ROUTER_ENDPOINT), as every other First Motive unit reads it.
 EnvironmentFile=$COMMS_ENV
-ExecStart=$ENTRYPOINT run --source sim:$1 --urdf $URDF
+ExecStart=$ENTRYPOINT run --source sim:$1 $args
 Restart=on-failure
 RestartSec=5
+# The twin exits 75 to be started again on the robot of another run. fm-twin
+# exits so only once a new run of another robot has held (SWITCH_AFTER_S in
+# fm_twin.sim_robot), so the unit restarts once per such run.
+RestartForceExitStatus=75
 # The fused cloud's layers are bounded (about 44 MB static, 250,000 points out);
 # the rest is four cameras' frames in flight and OpenCV's and zenoh's threads.
 MemoryMax=8G
@@ -196,12 +241,25 @@ venv_current() { [ "$(cat "$R$COMMIT_MARKER" 2>/dev/null)" = "$TWIN_COMMIT" ] &&
 have_commit() { read_src_git rev-parse --verify --quiet "refs/fm/$TWIN_COMMIT^{commit}" >/dev/null 2>&1; }
 in_any_group() { [ "$(id -nG "$FM_TWIN_USER" 2>/dev/null)" != "$FM_TWIN_USER" ]; }
 image_pulled() { fm_has_docker && docker image inspect "$1" >/dev/null 2>&1; }
-description_current() { [ "$(cat "$R$DESCRIPTION_MARKER" 2>/dev/null)" = "$1" ] && [ -f "$R$URDF" ]; }
+# robot_current REF DIR URDF — 0 when the descriptions came from REF and this
+# robot's URDF, DIR/URDF under the description root, is in place.
+robot_current() {
+  [ "$(cat "$R$DESCRIPTION_MARKER" 2>/dev/null)" = "$1" ] && [ -f "$R$DESCRIPTION_ROOT/$2/$3" ]
+}
+
+# description_current REF — 0 when every robot's description is current.
+description_current() {
+  local list robot dir path top urdf
+  list="$(robot_list 2>/dev/null)" || return 1
+  while IFS='|' read -r robot dir path top urdf; do
+    robot_current "$1" "$dir" "$urdf" || return 1
+  done <<<"$list"
+}
 
 # --- Check --------------------------------------------------------------------
 
 do_check() {
-  local rc=0 ref name unit
+  local rc=0 ref name unit list robot dir path top urdf
   commit_pinned || rc=$?
   case "$rc" in
     0) fm_ok "fm-twin pinned at $TWIN_COMMIT" ;;
@@ -229,12 +287,17 @@ do_check() {
   fi
 
   # image_ref names what it refuses, so its message is left on stderr.
-  if ref="$(image_ref)"; then
-    if description_current "$ref"; then
-      fm_ok "$URDF is the description in $ref"
-    else
-      fm_warn "$URDF is not the description in $ref"
-      image_pulled "$ref" || fm_info "$ref is not pulled — pull it with: FM_SIM_CONTROLLERS=1 ./install.sh --${FM_ROLE:-workstation} --only sim"
+  # robot_list names what it refuses too.
+  if ref="$(image_ref)" && list="$(robot_list)"; then
+    while IFS='|' read -r robot dir path top urdf; do
+      if robot_current "$ref" "$dir" "$urdf"; then
+        fm_ok "$robot: $DESCRIPTION_ROOT/$dir/$urdf is the description in $ref"
+      else
+        fm_warn "$robot: $DESCRIPTION_ROOT/$dir/$urdf is not the description in $ref"
+      fi
+    done <<<"$list"
+    if ! description_current "$ref" && ! image_pulled "$ref"; then
+      fm_info "$ref is not pulled — pull it with: FM_SIM_CONTROLLERS=1 ./install.sh --${FM_ROLE:-workstation} --only sim"
     fi
   fi
 
@@ -256,9 +319,11 @@ do_check() {
 # --- Install ------------------------------------------------------------------
 
 dry_run_plan() {
-  local ref name rc=0
+  local ref name unit rc=0 list robot dir path top urdf
   ref="$(image_ref)" || return 1
   name="$(host_name)" || return 1
+  list="$(robot_list)" || return 1
+  unit="$(render "$name")" || return 1
   commit_pinned || rc=$?
   [ "$rc" = 2 ] && return 1
   fm_log "dry run — nothing on this host changes"
@@ -271,10 +336,13 @@ dry_run_plan() {
   fm_info "would copy   ${SOURCE_FILES[*]} at that commit to $PROJECT_DIR (root:root, 755/644)"
   fm_info "would fetch  uv $FM_UV_VERSION to $FM_TWIN_ROOT/bin/uv, checked against sha256 $(svc_uv_sha "$TEST_UV_SHA")"
   fm_info "would build  $VENV_DIR as root (uv sync --frozen --no-editable)"
-  fm_info "would copy   $FM_TWIN_DESCRIPTION_IN_IMAGE out of $ref to $DESCRIPTION_DIR (root:root, 755/644)"
+  while IFS='|' read -r robot dir path top urdf; do
+    fm_info "would copy   $robot's $path out of $ref"
+    fm_info "             to $DESCRIPTION_ROOT/$dir (root:root, 755/644)"
+  done <<<"$list"
   fm_info "would create system account $FM_TWIN_USER (no home, no login, no groups)"
   fm_info "would write  $UNIT_PATH:"
-  render "$name" | sed 's/^/        /'
+  printf '%s\n' "$unit" | sed 's/^/        /'
   fm_info "would enable and start $FM_TWIN_UNIT once $COMMS_ENV exists"
 }
 
@@ -381,51 +449,82 @@ build_venv() {
   fm_ok "$VENV_DIR built from fm-twin $TWIN_COMMIT"
 }
 
-# The description package out of the controllers image. `docker cp` streams it
-# to a root-owned tar, which is listed before anything is extracted: a symlink
-# entry, followed by an entry through it, would have root write wherever the
-# link points. Prints "changed" when it copied.
-install_description() {
-  local ref="$1" cid stage rc=0 listing names
+# Every robot's description out of the controllers image: one container, and
+# one `docker cp` per robot, each streamed to a root-owned tar that is listed
+# before anything is extracted. A symlink entry, followed by an entry through
+# it, would have root write wherever the link points. Every archive is checked
+# and extracted before the first moves into place. The marker is removed before
+# the first seal and written after the last, so a seal that fails part-way
+# leaves no marker and the next run copies them all again. Prints "changed"
+# when it copied.
+#
+# The body is a subshell, so its trap removes the container and the staging
+# directory however it ends, and touches none of the caller's state.
+install_description() (
+  local ref="$1" cid="" stage="" list robot dir path top urdf
+  # shellcheck disable=SC2317,SC2329  # run by the trap
+  cleanup() {
+    if [ -n "$cid" ]; then docker rm "$cid" >/dev/null 2>&1 || true; fi
+    if [ -n "$stage" ]; then sudo rm -rf "$stage"; fi
+  }
+  trap cleanup EXIT
+  trap 'exit 1' INT TERM HUP
   if description_current "$ref"; then
-    fm_ok "$DESCRIPTION_DIR already from $ref" >&2
+    fm_ok "$DESCRIPTION_ROOT already from $ref" >&2
     return 0
   fi
-  cid="$(docker create "$ref" 2>/dev/null)" || { fm_err "creating a container of $ref failed"; return 1; }
+  list="$(robot_list)" || return 1
+  cid="$(docker create "$ref" 2>/dev/null)" \
+    || { cid=""; fm_err "creating a container of $ref failed"; return 1; }
+  # mktemp makes the staging directory root's alone (0700), so only root can
+  # see into it.
   stage="$(sudo mktemp -d "$R$FM_TWIN_ROOT/.description.XXXXXX")" \
-    || { docker rm "$cid" >/dev/null 2>&1; fm_err "creating a staging directory failed"; return 1; }
-  docker cp "$cid:$FM_TWIN_DESCRIPTION_IN_IMAGE" - | sudo tee "$stage/description.tar" >/dev/null || rc=1
-  docker rm "$cid" >/dev/null 2>&1 || true
-  [ "$rc" = 0 ] || { sudo rm -rf "$stage"; fm_err "copying $FM_TWIN_DESCRIPTION_IN_IMAGE out of $ref failed"; return 1; }
-  if ! listing="$(sudo tar -tvf "$stage/description.tar")" || ! names="$(sudo tar -tf "$stage/description.tar")"; then
-    sudo rm -rf "$stage"
-    fm_err "the description in $ref is not a readable tar — nothing extracted"
-    return 1
-  fi
-  if ! printf '%s\n' "$listing" | svc_tar_ok || ! tar_names_ok "$names"; then
-    sudo rm -rf "$stage"
-    fm_err "the description in $ref is refused — nothing extracted"
-    return 1
-  fi
-  if ! { svc_must "creating the description's staging directory" sudo install -d -m 0700 "$stage/x" \
-      && svc_must "extracting the description" sudo tar -x --no-same-owner --no-same-permissions \
-           --no-overwrite-dir -f "$stage/description.tar" -C "$stage/x"; } \
-     || ! sudo test -f "$stage/x/$FM_TWIN_DESCRIPTION_PACKAGE/urdf/robot.urdf"; then
-    # The staging directory is root's alone (0700), so only root can see into it.
-    sudo rm -rf "$stage"
-    fm_err "$ref has no $FM_TWIN_DESCRIPTION_IN_IMAGE/urdf/robot.urdf"
-    return 1
-  fi
-  svc_seal_tree "$R" "$stage/x/$FM_TWIN_DESCRIPTION_PACKAGE" "$DESCRIPTION_DIR" >&2 || { sudo rm -rf "$stage"; return 1; }
-  sudo rm -rf "$stage"
+    || { stage=""; fm_err "creating a staging directory failed"; return 1; }
+  while IFS='|' read -r -u 3 robot dir path top urdf; do
+    docker cp "$cid:$path" - | sudo tee "$stage/$dir.tar" >/dev/null \
+      || { fm_err "copying $path out of $ref failed"; return 1; }
+  done 3<<<"$list"
+  while IFS='|' read -r -u 3 robot dir path top urdf; do
+    stage_description "$ref" "$stage" "$robot" "$dir" "$path" "$top" "$urdf" || return 1
+  done 3<<<"$list"
+  svc_must "removing $DESCRIPTION_MARKER" sudo rm -f "$R$DESCRIPTION_MARKER" >&2 || return 1
+  while IFS='|' read -r -u 3 robot dir path top urdf; do
+    svc_seal_tree "$R" "$stage/$dir.x/$top" "$DESCRIPTION_ROOT/$dir" >&2 || return 1
+  done 3<<<"$list"
   printf '%s\n' "$ref" | sudo tee "$R$DESCRIPTION_MARKER" >/dev/null \
-    || { fm_err "recording the description's image failed"; return 1; }
-  fm_ok "$DESCRIPTION_DIR copied from $ref" >&2
+    || { fm_err "recording the descriptions' image failed"; return 1; }
+  fm_ok "$DESCRIPTION_ROOT copied from $ref" >&2
   echo changed
+)
+
+# stage_description REF STAGE ROBOT DIR PATH TOP URDF — check STAGE/DIR.tar,
+# ROBOT's archive of PATH, with every entry under its top directory TOP, and
+# extract it to STAGE/DIR.x, where TOP/URDF must then be. The caller removes
+# STAGE.
+stage_description() {
+  local ref="$1" stage="$2" robot="$3" dir="$4" path="$5" top="$6" urdf="$7"
+  local tarball="$2/$4.tar" listing names
+  if ! listing="$(sudo tar -tvf "$tarball")" || ! names="$(sudo tar -tf "$tarball")"; then
+    fm_err "the $robot description in $ref is not a readable tar — nothing extracted"
+    return 1
+  fi
+  if ! printf '%s\n' "$listing" | svc_tar_ok || ! tar_names_ok "$names" "$top"; then
+    fm_err "the $robot description in $ref is refused — nothing extracted"
+    return 1
+  fi
+  if ! { svc_must "creating the $robot description's staging directory" \
+           sudo install -d -m 0700 "$stage/$dir.x" \
+      && svc_must "extracting the $robot description" \
+           sudo tar -x --no-same-owner --no-same-permissions --no-overwrite-dir \
+             -f "$tarball" -C "$stage/$dir.x"; } \
+     || ! sudo test -f "$stage/$dir.x/$top/$urdf"; then
+    fm_err "$ref has no $path/$urdf"
+    return 1
+  fi
 }
 
-# tar_names_ok NAMES — 0 when every member name sits under the package's own
-# directory: relative, and with no '..' component.
+# tar_names_ok NAMES TOP — 0 when every member name sits under TOP, the
+# archive's top directory: relative, and with no '..' component.
 tar_names_ok() {
   local name
   while IFS= read -r name; do
@@ -434,8 +533,8 @@ tar_names_ok() {
       */../*) fm_err "refusing an archive entry with '..': $name"; return 1 ;;
     esac
     case "$name" in
-      "$FM_TWIN_DESCRIPTION_PACKAGE" | "$FM_TWIN_DESCRIPTION_PACKAGE"/*) ;;
-      *) fm_err "refusing an archive entry outside $FM_TWIN_DESCRIPTION_PACKAGE/: $name"; return 1 ;;
+      "$2" | "$2"/*) ;;
+      *) fm_err "refusing an archive entry outside $2/: $name"; return 1 ;;
     esac
   done <<<"$1"
 }
@@ -457,9 +556,10 @@ do_install() {
     return
   fi
 
-  local ref name rc=0 project description unit uv_sha
+  local ref name rc=0 project description text unit uv_sha
   ref="$(image_ref)" || return 1
   name="$(host_name)" || return 1
+  text="$(render "$name")" || return 1
   commit_pinned || rc=$?
   [ "$rc" = 2 ] && return 1
   if [ "$rc" = 1 ]; then
@@ -469,7 +569,7 @@ do_install() {
   fm_has_cmd systemctl || { fm_err "no systemctl — the twin is a systemd service"; return 1; }
   fm_has_docker || { fm_err "docker is not reachable — run the docker step first"; return 1; }
   if ! image_pulled "$ref"; then
-    fm_skip "$ref not pulled — the twin masks the robot the sim runs, from that image; pull it with: FM_SIM_CONTROLLERS=1 ./install.sh --${FM_ROLE:-workstation} --only sim, then re-run --only twin"
+    fm_skip "$ref not pulled — the twin masks the robots the sim runs, from that image; pull it with: FM_SIM_CONTROLLERS=1 ./install.sh --${FM_ROLE:-workstation} --only sim, then re-run --only twin"
     return 0
   fi
 
@@ -484,7 +584,7 @@ do_install() {
     build_venv || return 1
   fi
   description="$(install_description "$ref")" || return 1
-  unit="$(install_unit "$(render "$name")")" || return 1
+  unit="$(install_unit "$text")" || return 1
 
   if [ ! -f "$R$COMMS_ENV" ]; then
     fm_skip "$COMMS_ENV missing — install fm-comms through fm_ros2, then re-run: ./install.sh --${FM_ROLE:-workstation} --only twin"
