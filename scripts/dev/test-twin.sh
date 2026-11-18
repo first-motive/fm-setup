@@ -398,7 +398,7 @@ for bad in "axol|axol_description|/ws/x/urdf|../x.urdf" \
   assert_eq "  no description and no unit" "false:false" "$(exists "$TWIN/description"):$(exists "$UNIT")"
 done
 rc=0; out="$(env PATH="$BIN:$SYS_PATH" bash "$bad_step" check 2>&1)" || rc=$?
-assert_eq "check still exits 0 on one" "0" "$rc"
+assert_eq "check still exits 0 on the last malformed entry" "0" "$rc"
 
 fm_log "robot_args"
 args_step="$(step_tree args)"

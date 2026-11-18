@@ -206,9 +206,9 @@ EnvironmentFile=$COMMS_ENV
 ExecStart=$ENTRYPOINT run --source sim:$1 $args
 Restart=on-failure
 RestartSec=5
-# The twin exits 75 to be started again on the robot of another run. It does so
-# only once a new run of another robot has held for 3 s, so it restarts once per
-# such run, well inside systemd's default start limit.
+# The twin exits 75 to be started again on the robot of another run. fm-twin
+# exits so only once a new run of another robot has held (SWITCH_AFTER_S in
+# fm_twin.sim_robot), so the unit restarts once per such run.
 RestartForceExitStatus=75
 # The fused cloud's layers are bounded (about 44 MB static, 250,000 points out);
 # the rest is four cameras' frames in flight and OpenCV's and zenoh's threads.
