@@ -802,6 +802,21 @@ agent refuses a run while the tree holds a symlink or a directory it cannot read
 so copy real files. Uninstall leaves the directory and its packs in place, and
 `./run.sh backup` does not cover them.
 
+`/data/sim-runs` is not in the `fm archive` library, so old runs are offloaded
+by hand. Runs up to 2026-11-18 were copied to
+`b2:fm-recordings/sim-runs/fm-ws-01/`, checked with `rclone check`, and deleted
+locally; Backblaze holds the only copy. To offload again, run as root, since
+the files belong to `fm-sim` with mode 600:
+
+```bash
+C="sudo rclone --config /home/fm/.config/rclone/rclone.conf"
+$C copy  /data/sim-runs b2:fm-recordings/sim-runs/fm-ws-01 --checksum
+$C check /data/sim-runs b2:fm-recordings/sim-runs/fm-ws-01   # 0 differences
+```
+
+Delete only the files `rclone check --match` lists, and keep the directory
+itself: the agent writes new runs there.
+
 Once the step has created `/data/sim-assets`, fetch SimReady assets as the agent's
 account, which owns that directory. Read the tool from root's copy of the pinned commit, and run it with `-I` from `/`, so that
 account imports nothing from a directory people can write. These are the packages
