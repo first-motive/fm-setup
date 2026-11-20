@@ -41,11 +41,6 @@ contains() {
 # The account every case grants to: this one, which certainly exists.
 USER_NAME="$(id -un)"
 
-# The path the rule is written against. Pinned rather than resolved, so the
-# assertions below read the same on a CI container with no systemd as on a
-# robot that has one.
-export FM_SYSTEMCTL="/usr/bin/systemctl"
-
 printf '\n── robot-sudo ──\n'
 
 # --- the generated rule ------------------------------------------------------
@@ -54,47 +49,13 @@ printf '\n── robot-sudo ──\n'
 # which is what lets the visudo case below feed it straight to sudo.
 RULE="$(bash "$VERB" --dry-run --user "$USER_NAME" 2>/dev/null || true)"
 
-contains "$RULE" "/usr/bin/systemctl"
-check $? "commands are matched by absolute path, which is the only form sudo matches"
-
-contains "$RULE" "$USER_NAME ALL=(root) NOPASSWD:"
-check $? "the rule grants root to the named account only"
-
-for unit in fm-robot-agent fm-zenoh-bridge; do
-  contains "$RULE" "restart $unit"
-  check $? "restart $unit is allowed"
-done
-
-for verb in start stop restart status is-active; do
-  contains "$RULE" "systemctl $verb fm-robot-agent"
-  check $? "$verb is allowed on the agent"
-done
-
-# Each camera daemon appears on exactly one line, and that line is the whole
-# restart command: no other verb, and no look-alike unit that merely starts
-# with the same name.
-for unit in zed_x_daemon.service nvargus-daemon.service; do
-  lines="$(printf '%s\n' "$RULE" | grep -F "$unit" | sed -E 's/^ +//; s/, \\$//')"
-  if [ "$lines" = "/usr/bin/systemctl restart $unit" ]; then
-    ok "$unit may be restarted and nothing else"
-  else
-    bad "$unit may be restarted and nothing else (got: $lines)"
-  fi
-done
-
-# The grant must not widen on its own. A glob would pick up whatever unit
-# somebody names fm-something next, which is a grant nobody reviewed.
-if contains "$RULE" "fm-*" || contains "$RULE" "NOPASSWD:ALL" || contains "$RULE" "(ALL)"; then
-  bad "the rule stays narrow: no globs, no ALL"
+# The one line that grants, and nothing else outside comments: a second rule
+# here would be a grant this verb never showed the operator.
+grants="$(printf '%s\n' "$RULE" | grep -v '^#' | grep -v '^$')"
+if [ "$grants" = "$USER_NAME ALL=(ALL) NOPASSWD: ALL" ]; then
+  ok "the rule grants the named account passwordless sudo for every command"
 else
-  ok "the rule stays narrow: no globs, no ALL"
-fi
-
-# daemon-reload re-reads the vendor's unit files too, and no deploy needs it.
-if contains "$RULE" "daemon-reload"; then
-  bad "daemon-reload is not granted"
-else
-  ok "daemon-reload is not granted"
+  bad "the rule grants the named account passwordless sudo for every command (got: $grants)"
 fi
 
 # --- sudo itself agrees it parses -------------------------------------------
@@ -112,8 +73,27 @@ else
   printf '  ↷ visudo not installed (skip)\n'
 fi
 
-contains "$RULE" "/usr/local/sbin/fm-comms-set"
-check $? "the fleet-env writer is granted"
+# --- an accepted grant, against a stand-in sudo ---------------------------
+
+# The stand-in records each privileged command and runs none, so an accepted
+# grant shows what it would install, and in what order, without root.
+mkdir -p "$TMP/bin"
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "%s"\n' "$TMP/sudo.log" > "$TMP/bin/sudo"
+chmod 0755 "$TMP/bin/sudo"
+printf 'y\n' | PATH="$TMP/bin:$PATH" bash "$VERB" --user "$USER_NAME" >/dev/null 2>&1 || true
+SUDO_LOG="$(cat "$TMP/sudo.log" 2>/dev/null || true)"
+
+# The agent calls the writer by path, so the verb still ships it.
+contains "$SUDO_LOG" "install -m 0755 -o root -g root $FM_ROOT/templates/fm-comms-set /usr/local/sbin/fm-comms-set"
+check $? "an accepted grant installs the fleet-env writer"
+
+order="$(printf '%s\n' "$SUDO_LOG" | grep -n -e 'fm-comms-set$' -e 'fm-robot-services$' | cut -d: -f1 | tr '\n' ' ')"
+if [ "$order" = "1 3 " ] && printf '%s\n' "$SUDO_LOG" | sed -n 2p | grep -q '^visudo -c -f '; then
+  ok "the writer lands before the rule, and the rule after visudo passes it"
+else
+  bad "the writer lands before the rule, and the rule after visudo passes it (got lines: $order)"
+  printf '%s\n' "$SUDO_LOG" >&2
+fi
 
 
 # --- the writer itself -------------------------------------------------------
@@ -189,6 +169,19 @@ if bash "$VERB" --dry-run --user "root; rm -rf /" >/dev/null 2>&1; then
   bad "a username carrying a shell command is refused"
 else
   ok "a username carrying a shell command is refused"
+fi
+
+# Uppercase is refused under any locale: a UTF-8 collation must not widen [a-z].
+if LC_ALL=en_US.UTF-8 bash "$VERB" --dry-run --user Root >/dev/null 2>&1; then
+  bad "a username with uppercase is refused"
+else
+  ok "a username with uppercase is refused"
+fi
+
+if bash "$VERB" --dry-run --user "$(printf 'a%.0s' $(seq 33))" >/dev/null 2>&1; then
+  bad "a username over 32 characters is refused"
+else
+  ok "a username over 32 characters is refused"
 fi
 
 if bash "$VERB" --dry-run --user fm-nobody-here >/dev/null 2>&1; then

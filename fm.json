@@ -19,7 +19,7 @@
     },
     "setup-robot-sudo": {
       "script": "scripts/run/robot-sudo.sh",
-      "help": "let the fleet restart its own services on a robot, without a password"
+      "help": "give the fleet account on a robot passwordless sudo"
     },
     "setup-onboard": {
       "script": "scripts/run/onboard.sh",

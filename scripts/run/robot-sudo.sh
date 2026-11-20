@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# robot-sudo — let the fleet restart its own services on a robot, without a password.
+# robot-sudo — give the fleet account on a robot passwordless sudo.
 #
 #   ./run.sh robot-sudo                 grant it to the account running this
 #   ./run.sh robot-sudo --user anvil    grant it to another account
@@ -12,16 +12,12 @@
 # so there is no step chain to hang this on, and this is a verb an operator runs
 # once on the robot itself.
 #
-# What it grants is deliberately small. Deploying a new agent is `git pull` in a
-# checkout the account already owns, then one `systemctl restart` it does not.
-# That restart is the whole reason a password gets typed, and typing it is what
-# stops `fm device update` from working unattended. So the rule names those
-# units, those verbs, and nothing else: this account can restart the fleet's own
-# services and cannot become root.
-#
-# On a workcell the vendor still supports, that distinction is the point. An
-# `ALL=(ALL) NOPASSWD:ALL` here would hand a fleet account the run of a machine
-# Anvil and Almond are responsible for.
+# The grant is every command as any user. The fleet drives a robot's units, its
+# camera daemons and its config over Zenoh, unattended, and a narrow list of
+# commands kept failing at the next thing a deploy or a recovery needed. The
+# operator accepted that this account can become root on the robot without a
+# password; the confirm prompt below is where that is accepted again on each
+# host.
 
 set -euo pipefail
 
@@ -36,32 +32,6 @@ FM_ROOT="$(cd "$_here/../.." && pwd)"
 # deleting one path and never editing a file something else also writes.
 SUDOERS_FILE="/etc/sudoers.d/fm-robot-services"
 
-# The services the fleet owns on a robot host, and therefore the only ones this
-# rule reaches. fm-robot-agent answers the verb set; fm-zenoh-bridge carries the
-# robot's telemetry onto the fabric. A config write that touches the transport
-# restarts both, which is why both are here.
-FM_UNITS=(fm-robot-agent fm-zenoh-bridge)
-
-# What may be done to them. `restart`, `start` and `stop` are the deploy path;
-# `status` and `is-active` are how a caller finds out whether it worked.
-#
-# `daemon-reload` is absent on purpose: it re-reads every unit file on the host,
-# including the vendor's, and nothing in a deploy needs it — an unchanged unit
-# file is the normal case, and installing a changed one is install.sh's job,
-# which asks for a password like any other install.
-FM_VERBS=(start stop restart status is-active)
-
-# The vendor camera daemons, restart only. A camera process that dies without
-# closing its GMSL cameras leaves zed_x_daemon (Stereolabs) and nvargus-daemon
-# (NVIDIA) unable to open them again until both restart; on an Axol, the
-# process that owns those cameras runs under fm-robot-agent's `ros` mode.
-# Restart is the whole recovery, and the only verb granted: the account cannot
-# stop, disable or edit either daemon. A restart does run the vendor's daemon as
-# root, so it is only as safe as the unit file and binary are root-only; on an
-# Axol both are, from the JetPack and ZED SDK installs. On a host without one,
-# the line matches no installed unit and restarts nothing.
-CAMERA_DAEMONS=(zed_x_daemon.service nvargus-daemon.service)
-
 #: The writer that lets the agent keep the fleet file in step with the loader's.
 #: The Anvil's domain and interface live in two files — the loader's
 #: `.env.config`, owned by the account the agent runs as, and /etc/fm-comms.env,
@@ -69,15 +39,13 @@ CAMERA_DAEMONS=(zed_x_daemon.service nvargus-daemon.service)
 #: neither, so without this a paired write fails at staging with EACCES and the
 #: two are stuck disagreeing, which is the defect the pairing exists to prevent.
 #:
-#: Granting this one path rather than the file itself: the writer takes a key and
-#: a value, accepts three keys, checks each value, and reads no path from its
-#: caller. An account that reaches it can change three values and nothing else.
+#: The agent calls it by this path, so it stays installed beside the rule.
 WRITER_SOURCE="$FM_ROOT/templates/fm-comms-set"
 WRITER="/usr/local/sbin/fm-comms-set"
 
 usage() {
   cat <<'EOF'
-robot-sudo — let the fleet restart its own services here, without a password
+robot-sudo — give an account passwordless sudo for every command here
 
 Usage: ./run.sh robot-sudo [--user <name>] [--dry-run] [--remove]
        ./run.sh robot-sudo --help
@@ -86,10 +54,9 @@ Usage: ./run.sh robot-sudo [--user <name>] [--dry-run] [--remove]
   --dry-run       print the rule that would be written, change nothing
   --remove        delete the rule
 
-Grants NOPASSWD for start/stop/restart/status/is-active on fm-robot-agent and
-fm-zenoh-bridge, restart (only) on zed_x_daemon and nvargus-daemon, plus the
-fleet-env writer at /usr/local/sbin/fm-comms-set, and nothing else. Verify
-what an account may do with:
+Grants NOPASSWD: ALL to the account, and installs the fleet-env writer at
+/usr/local/sbin/fm-comms-set that the robot agent calls. Verify what an
+account may do with:
 
   sudo -l -U <name>
 EOF
@@ -98,71 +65,20 @@ EOF
 # A username the system will accept, and that cannot smuggle anything into the
 # sudoers file. Same shape add-user enforces when it creates one.
 valid_name() {
-  case "$1" in
-    [a-z_][a-z0-9_-]*) [ "${#1}" -le 32 ] ;;
-    *) return 1 ;;
-  esac
+  # LC_ALL=C: under a UTF-8 collation the ranges below can match uppercase and
+  # other letters, as fm_machine_valid_name notes in lib.sh.
+  local LC_ALL=C
+  [[ "$1" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]
 }
 
-# Where systemctl actually is on this host.
-#
-# A sudoers rule matches the command by absolute path, so a guessed path grants
-# nothing and fails at the moment someone needs it. Resolved here rather than
-# hardcoded: /usr/bin/systemctl on the Anvil's Ubuntu, /bin/systemctl on hosts
-# that never merged /bin.
-systemctl_path() {
-  local path
-  # FM_SYSTEMCTL names it outright, for a host that keeps systemctl somewhere
-  # unusual and for the test suite, which runs where systemd does not.
-  if [ -n "${FM_SYSTEMCTL:-}" ]; then
-    printf '%s\n' "$FM_SYSTEMCTL"
-    return 0
-  fi
-  path="$(command -v systemctl 2>/dev/null || true)"
-  [ -n "$path" ] || { fm_err "systemctl is not on PATH — is this a systemd host?"; return 1; }
-  # A symlinked /bin/systemctl and the /usr/bin it points at are different
-  # strings to sudo, and only the one the caller types is matched.
-  readlink -f "$path" 2>/dev/null || printf '%s\n' "$path"
-}
-
-# The rule itself: one line per unit-and-verb pair.
-#
-# Spelled out rather than globbed. `systemctl restart fm-*` would also match a
-# unit somebody adds later under that prefix, and a grant that widens on its own
-# is not a grant anybody reviewed.
 rule_text() {
-  local user="$1" systemctl="$2" unit verb
-  local -a allowed=()
-  for unit in "${FM_UNITS[@]}"; do
-    for verb in "${FM_VERBS[@]}"; do
-      allowed+=("$systemctl $verb $unit")
-    done
-  done
-  for unit in "${CAMERA_DAEMONS[@]}"; do
-    allowed+=("$systemctl restart $unit")
-  done
-  allowed+=("$WRITER")
-
+  local user="$1"
   cat <<EOF
 # Written by fm-setup's robot-sudo verb. Do not edit by hand: re-run
 #   ./run.sh robot-sudo --user $user
 # to regenerate it, or --remove to take it away.
-#
-# $user may restart the fleet's own services on this robot, restart the vendor
-# camera daemons, and do nothing else as root.
-$user ALL=(root) NOPASSWD: \\
+$user ALL=(ALL) NOPASSWD: ALL
 EOF
-
-  # One command per line: sudoers continues a rule across lines on a trailing
-  # backslash and ends it on the line without one.
-  local index last=$(( ${#allowed[@]} - 1 ))
-  for index in "${!allowed[@]}"; do
-    if [ "$index" -eq "$last" ]; then
-      printf '    %s\n' "${allowed[index]}"
-    else
-      printf '    %s, \\\n' "${allowed[index]}"
-    fi
-  done
 }
 
 # Install the rule, but only once sudo itself agrees it parses.
@@ -171,23 +87,13 @@ EOF
 # including the one that would have to fix it. So it is written to a temp file,
 # checked with `visudo -c`, and only then moved into place — the check is the
 # whole reason this is not two lines of `tee`.
-# Put the writer on the host before the rule that names it.
-#
-# A sudoers rule pointing at a path that does not exist grants nothing and fails
-# at the moment somebody needs it, so the file lands first and the rule second.
-install_writer() {
-  [ -f "$WRITER_SOURCE" ] || { fm_err "writer not found at $WRITER_SOURCE"; return 1; }
-  sudo install -m 0755 -o root -g root "$WRITER_SOURCE" "$WRITER"
-  fm_ok "installed $WRITER"
-}
-
 install_rule() {
-  local user="$1" systemctl="$2" tmp
+  local user="$1" tmp
   tmp="$(mktemp)"
   # The temp file holds no secret, but it does hold a grant: keep it unreadable
   # by anyone but its owner for the seconds it exists.
   chmod 0600 "$tmp"
-  rule_text "$user" "$systemctl" >"$tmp"
+  rule_text "$user" >"$tmp"
 
   if ! sudo visudo -c -f "$tmp" >/dev/null; then
     rm -f "$tmp"
@@ -201,6 +107,14 @@ install_rule() {
   fm_info "check it with: sudo -l -U $user"
 }
 
+# Put the writer on the host before the rule. The agent runs it through sudo
+# the moment the grant exists, so the file lands first and the rule second.
+install_writer() {
+  [ -f "$WRITER_SOURCE" ] || { fm_err "writer not found at $WRITER_SOURCE"; return 1; }
+  sudo install -m 0755 -o root -g root "$WRITER_SOURCE" "$WRITER"
+  fm_ok "installed $WRITER"
+}
+
 remove_rule() {
   if [ -e "$SUDOERS_FILE" ]; then
     sudo rm -f "$SUDOERS_FILE"
@@ -208,8 +122,8 @@ remove_rule() {
   else
     fm_ok "$SUDOERS_FILE is already absent"
   fi
-  # The writer goes with the grant. Left behind it is a root-owned script no
-  # account may run, which reads as something still in force.
+  # The writer goes with the grant. Left behind, it reads as something still
+  # in force.
   if [ -e "$WRITER" ]; then
     sudo rm -f "$WRITER"
     fm_ok "removed $WRITER"
@@ -248,21 +162,17 @@ main() {
     return 1
   fi
 
-  local systemctl
-  systemctl="$(systemctl_path)" || return 1
-
   if [ "$dry" = "1" ]; then
     # The rule alone on stdout, so a dry run can be piped straight into
     # `visudo -c -f -` or a file. Everything else goes to stderr.
     fm_log "$SUDOERS_FILE would hold:" >&2
-    rule_text "$user" "$systemctl"
+    rule_text "$user"
     return 0
   fi
 
   fm_banner
-  fm_log "granting $user passwordless control of ${FM_UNITS[*]}," \
-    "and restart of ${CAMERA_DAEMONS[*]}"
-  rule_text "$user" "$systemctl"
+  fm_log "granting $user passwordless sudo for every command"
+  rule_text "$user"
   # Passwordless access is shown in full and then confirmed, per this repo's
   # rule for anything security-sensitive. NONINTERACTIVE declines it, so an
   # unattended run reports what it did not do rather than widening sudo quietly.
@@ -271,7 +181,7 @@ main() {
     return 1
   fi
   install_writer || return 1
-  install_rule "$user" "$systemctl"
+  install_rule "$user"
 }
 
 main "$@"

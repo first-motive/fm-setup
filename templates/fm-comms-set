@@ -5,8 +5,8 @@
 #   fm-comms-set FM_ROS_DOMAIN_ID 3
 #   fm-comms-set FM_DDS_IFACE wlp8s0
 #
-# Installed to /usr/local/sbin by fm-setup's robot-sudo verb, which also grants
-# the robot's account permission to run this one path without a password.
+# Installed to /usr/local/sbin by fm-setup's robot-sudo verb, which also gives
+# the robot's account passwordless sudo to run it.
 #
 # It exists because of a split the agent cannot cross on its own. The Anvil's
 # domain and interface live in two files — the loader's `.env.config`, owned by

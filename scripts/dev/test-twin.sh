@@ -154,8 +154,10 @@ exec /usr/bin/install "${args[@]}"'
 for tool in chown useradd usermod userdel; do
   stub "$tool" "printf '$tool %s\n' \"\$*\" >> @LOG@"
 done
+# list-units answers with the robot twin instances in FAKE_ROBOT_TWINS.
 stub systemctl 'printf "systemctl %s\n" "$*" >> @LOG@
 [ "$1" = is-active ] && exit 3
+[ "$1" = list-units ] && { for u in ${FAKE_ROBOT_TWINS:-}; do echo "$u loaded active running fm-twin"; done; }
 exit 0'
 stub curl 'printf "curl %s\n" "$*" >> @LOG@
 while [ $# -gt 0 ]; do [ "$1" = -o ] && { cp @TARBALL@ "$2"; exit 0; }; shift; done
@@ -220,7 +222,8 @@ UV_SHA="$(sha256sum "$UV_TARBALL" | cut -d' ' -f1)"
 
 SYS_PATH="/usr/bin:/bin:/usr/sbin:/sbin"
 export FM_TWIN_TEST=1 FM_TWIN_TEST_ROOT="$R" FM_TWIN_TEST_SOURCE="file://$UPSTREAM" \
-  FM_TWIN_TEST_UV_SHA256="$UV_SHA" FM_TWIN_COMMIT="$PIN" FAKE_DOCKER_IMAGES="$IMAGE"
+  FM_TWIN_TEST_UV_SHA256="$UV_SHA" FM_TWIN_COMMIT="$PIN" FAKE_DOCKER_IMAGES="$IMAGE" \
+  FAKE_ROBOT_TWINS="fm-twin-robot@fm-rob-02.service"
 step() { env PATH="$BIN:$SYS_PATH" bash "$STEP" "$@" 2>&1; }
 reset_host() { rm -rf "$R"; mkdir -p "$R/etc"; : > "$R/etc/fm-comms.env"; : > "$LOG"; }
 count() { grep -c "$1" "$LOG" || true; }
@@ -229,6 +232,8 @@ TWIN="$R$FM_TWIN_ROOT"
 UNIT="$R/etc/systemd/system/$FM_TWIN_UNIT"
 ROBOT_ARGS="--robot openarm=$OA_URDF --robot axol=$AX_URDF"
 EXEC="ExecStart=$FM_TWIN_ROOT/venv/bin/fm-twin run --source sim:fm-ws-01 $ROBOT_ARGS"
+ROBOT_UNIT="$R/etc/systemd/system/$FM_TWIN_ROBOT_UNIT"
+ROBOT_EXEC="ExecStart=$FM_TWIN_ROOT/venv/bin/fm-twin run --source \"robot:%i\" --profile axol --urdf $AX_URDF"
 
 # step_tree NAME [ENTRY...] — a copy of the step and the files it sources under
 # $TMP/tree-NAME, with FM_TWIN_ROBOTS replaced by the ENTRYs when any are
@@ -261,6 +266,7 @@ fm_log "dry run"
 reset_host
 out="$(step install --dry-run)"
 assert_has "the dry run prints the unit's command line" "$out" "$EXEC"
+assert_has "  and the robot twin's" "$out" "$ROBOT_EXEC"
 assert_has "  and copies each robot's description" "$out" "would copy   axol's $AX_PATH out of $IMAGE"
 assert_eq "the dry run writes nothing" "false" "$(exists "$TWIN")"
 assert_eq "the dry run calls no privileged tool" "0" "$(count '^sudo ')"
@@ -300,6 +306,20 @@ assert_has "the unit starts after the bridges" "$unit" "After=network-online.tar
 assert_lacks "the unit carries no test root" "$unit" "$TMP"
 assert_has "the twin is enabled" "$(cat "$LOG")" "systemctl enable $FM_TWIN_UNIT"
 assert_has "a changed install restarts it" "$(cat "$LOG")" "systemctl restart $FM_TWIN_UNIT"
+robot_unit="$(cat "$ROBOT_UNIT" 2>/dev/null || true)"
+assert_eq "the robot twin serves its instance as the Axol, with the Axol's URDF" "$ROBOT_EXEC" \
+  "$(grep '^ExecStart=' "$ROBOT_UNIT" 2>/dev/null || true)"
+assert_has "  as the twin's account" "$robot_unit" "User=fm-twin"
+assert_has "  reading the router from fm-comms' env" "$robot_unit" "EnvironmentFile=/etc/fm-comms.env"
+assert_has "  restarting on failure" "$robot_unit" "Restart=on-failure"
+assert_has "  hardened as the sim twin is" "$robot_unit" "CapabilityBoundingSet="
+assert_eq "  with the sim twin's sandbox, line for line" \
+  "$(grep -E '^(Protect|Private|Restrict|NoNew|Lock|Memory|Tasks)' "$UNIT")" \
+  "$(grep -E '^(Protect|Private|Restrict|NoNew|Lock|Memory|Tasks)' "$ROBOT_UNIT")"
+assert_lacks "  and no [Install] section, so it cannot be enabled" "$robot_unit" "[Install]"
+assert_lacks "the robot twin is never enabled" "$(cat "$LOG")" "systemctl enable fm-twin-robot"
+assert_has "a changed install restarts the robot twins systemd has loaded, by name" "$(cat "$LOG")" \
+  "systemctl try-restart fm-twin-robot@fm-rob-02.service"
 
 fm_log "a second install"
 : > "$LOG"
@@ -309,6 +329,7 @@ assert_eq "it fetches nothing" "0:0" "$(count '^curl '):$(count 'fetch ')"
 assert_eq "it builds nothing" "0" "$(count '^uv sync')"
 assert_eq "it copies nothing from the image" "0" "$(count '^docker create')"
 assert_eq "it starts rather than restarts" "1:0" "$(count "^systemctl start $FM_TWIN_UNIT"):$(count '^systemctl restart')"
+assert_eq "it restarts no robot twin" "0" "$(count '^systemctl try-restart')"
 
 fm_log "a pin the source does not hold"
 reset_host
@@ -380,8 +401,25 @@ assert_eq "it leaves no marker and no staging directory" "false:" \
 rc=0; out="$(step install)" || rc=$?
 assert_eq "the next run copies both again" "0:true:true" "$rc:$(exists "$R$OA_URDF"):$(exists "$R$AX_URDF")"
 
-fm_log "a malformed robot entry"
+fm_log "no entry for the robot twin's profile"
 OA_ENTRY="openarm|$OA_DIR|$OA_PATH|$OA_FILE"
+sim_only_step="$(step_tree sim-only "$OA_ENTRY")"
+reset_host
+rc=0; out="$(env PATH="$BIN:$SYS_PATH" bash "$sim_only_step" install --dry-run 2>&1)" || rc=$?
+assert_eq "the dry run succeeds" "0" "$rc"
+assert_has "  and says there is no robot twin" "$out" "FM_TWIN_ROBOTS has no axol entry"
+rc=0; out="$(env PATH="$BIN:$SYS_PATH" bash "$sim_only_step" install 2>&1)" || rc=$?
+assert_eq "install succeeds" "0" "$rc"
+assert_has "  and says why the robot twin is skipped" "$out" "installing the sim twin alone"
+assert_eq "the sim twin is installed and the robot twin is not" "true:false" \
+  "$(exists "$UNIT"):$(exists "$ROBOT_UNIT")"
+assert_has "the sim twin is enabled" "$(cat "$LOG")" "systemctl enable $FM_TWIN_UNIT"
+assert_eq "no robot twin is restarted" "0" "$(count '^systemctl try-restart')"
+rc=0; out="$(env PATH="$BIN:$SYS_PATH" bash "$sim_only_step" check 2>&1)" || rc=$?
+assert_eq "check exits 0" "0" "$rc"
+assert_has "  and warns there is no robot twin" "$out" "FM_TWIN_ROBOTS has no axol entry"
+
+fm_log "a malformed robot entry"
 n=0
 for bad in "axol|axol_description|/ws/x/urdf|../x.urdf" \
            "axol|axol_description|/ws/x/urdf|/etc/x.urdf" \
@@ -474,6 +512,7 @@ assert_has "it reports the missing unit" "$out" "$FM_TWIN_UNIT missing or out of
 step install >/dev/null
 out="$(step check)"
 assert_has "it finds the installed unit current" "$out" "$FM_TWIN_UNIT installed and current — serves sim:fm-ws-01"
+assert_has "it finds the robot twin current" "$out" "$FM_TWIN_ROBOT_UNIT installed and current"
 assert_has "it finds the OpenArm's description current" "$out" "openarm: $OA_URDF is the description in $IMAGE"
 assert_has "it finds the Axol's description current" "$out" "axol: $AX_URDF is the description in $IMAGE"
 rm -f "$R$AX_URDF"
@@ -484,8 +523,19 @@ assert_has "  and keeps the OpenArm's current" "$out" "openarm: $OA_URDF is the 
 fm_log "uninstall"
 rc=0; out="$(step uninstall)" || rc=$?
 assert_eq "uninstall succeeds" "0" "$rc"
-assert_eq "it removes the unit and the tree" "false:false" "$(exists "$UNIT"):$(exists "$TWIN")"
+assert_eq "it removes the units and the tree" "false:false:false" \
+  "$(exists "$UNIT"):$(exists "$ROBOT_UNIT"):$(exists "$TWIN")"
+assert_has "it stops every robot twin first" "$(cat "$LOG")" "systemctl stop fm-twin-robot@fm-rob-02.service"
 assert_has "it removes the account" "$(cat "$LOG")" "userdel fm-twin"
+
+fm_log "uninstall with no robot twin loaded"
+reset_host
+step install >/dev/null
+: > "$LOG"
+rc=0; out="$(env FAKE_ROBOT_TWINS= PATH="$BIN:$SYS_PATH" bash "$STEP" uninstall 2>&1)" || rc=$?
+assert_eq "uninstall succeeds" "0" "$rc"
+assert_eq "it asks systemd to stop nothing" "0" "$(count '^systemctl stop')"
+assert_eq "  and still removes the robot twin's unit" "false" "$(exists "$ROBOT_UNIT")"
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
