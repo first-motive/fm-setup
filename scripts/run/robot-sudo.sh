@@ -65,10 +65,10 @@ EOF
 # A username the system will accept, and that cannot smuggle anything into the
 # sudoers file. Same shape add-user enforces when it creates one.
 valid_name() {
-  case "$1" in
-    [a-z_][a-z0-9_-]*) [ "${#1}" -le 32 ] ;;
-    *) return 1 ;;
-  esac
+  # LC_ALL=C: under a UTF-8 collation the ranges below can match uppercase and
+  # other letters, as fm_machine_valid_name notes in lib.sh.
+  local LC_ALL=C
+  [[ "$1" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]
 }
 
 rule_text() {

@@ -63,6 +63,24 @@ def test_a_host_without_the_unit_says_so_and_refuses_changes(systemd):
     assert systemd.changes == []
 
 
+def test_the_sim_messages_name_the_sim_agent(unit, systemd):
+    ask(unit, action="start")
+    assert ask(unit, action="stop")["error"]["message"] == "the sim agent changed under 5 s ago"
+    systemd.unreadable = True
+    assert ask(unit)["error"]["message"] == "this host could not read its sim agent unit"
+    missing = sim_control(read=UnitSystemd(installed=False).read, change=systemd.change)
+    assert ask(missing, action="start")["error"]["message"] == "this host has no sim agent unit"
+
+
+def test_a_twin_change_does_not_hold_back_a_sim_change(systemd, clock):
+    twin_systemd = UnitSystemd()
+    sim = sim_control(read=systemd.read, change=systemd.change, clock=lambda: clock["t"])
+    twin = twin_control(read=twin_systemd.read, change=twin_systemd.change, clock=lambda: clock["t"])
+    assert ask(twin, action="start", robot="fm-rob-02")["ok"] is True
+    assert ask(sim, action="start")["ok"] is True
+    assert (systemd.changes, twin_systemd.changes) == (["start"], ["start"])
+
+
 def test_changes_are_spaced_and_status_is_not(unit, systemd, clock):
     ask(unit, action="start")
     assert ask(unit, action="restart")["error"]["code"] == "too_soon"
@@ -147,7 +165,7 @@ def test_twin_on_a_host_without_the_template_refuses_changes(systemd):
     body = ask(twin, action="start", robot="fm-rob-02")
     assert body == {
         "ok": False,
-        "error": {"code": "twin_unavailable", "message": "this host has no unit for the twin for fm-rob-02"},
+        "error": {"code": "twin_unavailable", "message": "this host has no twin unit for fm-rob-02"},
     }
     assert systemd.changes == []
 

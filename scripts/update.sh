@@ -66,7 +66,7 @@ role_flag() {
   case "$role" in
     workstation|jetson|trainer|sim-cloud) printf -- '--%s\n' "$role" ;;
     mac) fm_err "this machine's card says role 'mac' — fm-setup provisions no macOS host"; return 1 ;;
-    # A robot belongs to its vendor, so nothing converges it unattended. Its short list is applied by a person.
+    # A robot belongs to its vendor, so nothing converges it unattended.
     robot) fm_err "this machine's card says role 'robot' — robots are not converged; run install.sh --robot on it"; return 1 ;;
     *) fm_err "unknown role '$role' — fix the card with 'fm machine init'"; return 1 ;;
   esac

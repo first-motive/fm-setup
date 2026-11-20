@@ -1026,8 +1026,9 @@ Counting every account's files needs root, so that one job is a root oneshot,
 
 - A polkit rule (`50-fm-host-agent.rules`) lets `fm-host` start that unit,
   start, stop or restart `fm-sim-agent.service` and any
-  `fm-twin-robot@fm-rob-<n>.service`, and nothing else. Every other systemd action it asks for falls through to
-  polkit's defaults, which refuse an account with no session.
+  `fm-twin-robot@fm-rob-<n>.service`, and nothing else. Every other systemd
+  action it asks for falls through to polkit's defaults, which refuse an
+  account with no session.
 - The scan runs the code in `/opt/fm-host-agent`, which root copies out of this
   checkout, refusing anything but plain files and directories, and keeps
   root:root, directories 755 and files 644. Root builds the venv with the uv the
@@ -1091,7 +1092,9 @@ account, sandbox and limits, restarting on failure. The profile is
 `FM_TWIN_ROBOT_PROFILE`, and the URDF is that robot's `FM_TWIN_ROBOTS` entry.
 It is installed and never enabled: the [host agent](#host-agent) starts and
 stops `fm-twin-robot@fm-rob-02.service` when fm-desktop asks. A changed install
-restarts any instance that is running, and uninstall stops them all.
+restarts any instance that is running, and uninstall stops them all. With no
+`FM_TWIN_ROBOTS` entry for the profile, the step warns and installs the sim
+twin alone.
 
 Two inputs are private, and the step takes each from where the host already
 has it:

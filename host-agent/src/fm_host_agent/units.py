@@ -8,8 +8,8 @@ is up, asks systemd. Its robot view does the same for a robot's twin,
 enables. The polkit rule lets this account start, stop or restart exactly those
 units, besides starting the disk scan.
 
-``sim`` takes ``{"action"?}`` and ``twin`` takes ``{"action"?, "robot"}``, the
-robot a fleet name the rule's pattern also matches. A query with no action, or
+``sim`` takes ``{"action"?}`` and ``twin`` takes ``{"action"?, "robot"}``, where
+``robot`` is a fleet name that the rule's pattern also matches. A query with no action, or
 ``"status"``, only reads the unit. The other actions queue the change with
 ``--no-block`` and answer with the state systemd reports at once, often
 ``activating`` or ``deactivating``; the caller asks again to see where it
@@ -44,11 +44,17 @@ CHANGE_SPACING_S = 5.0
 
 @dataclass(frozen=True)
 class Request:
-    """One parsed query: what to do, to which unit, and how a message names it."""
+    """One parsed query: what to do, to which unit, and how messages name it.
+
+    ``subject`` is what changed too soon, ``target`` what could not be changed,
+    and ``unit_label`` the unit that could not be read or is missing.
+    """
 
     action: str
     unit: str
     subject: str
+    target: str
+    unit_label: str
 
 
 def read_unit(unit: str) -> tuple[bool, str]:
@@ -91,7 +97,9 @@ def _request_body(payload: bytes | None, keys: set[str], shape: str) -> dict:
 def parse_sim_request(payload: bytes | None) -> Request:
     """A ``sim`` query, or raise ValueError saying what is wrong with it."""
     request = _request_body(payload, {"action"}, '{"action"?: "status" | "start" | "stop" | "restart"}')
-    return Request(request.get("action", "status"), SIM_UNIT, "its sim agent")
+    return Request(
+        request.get("action", "status"), SIM_UNIT, "the sim agent", "its sim agent", "sim agent unit"
+    )
 
 
 def parse_twin_request(payload: bytes | None) -> Request:
@@ -103,9 +111,9 @@ def parse_twin_request(payload: bytes | None) -> Request:
     # polkit see, so nothing but a fleet robot's may reach them.
     if not isinstance(robot, str) or not ROBOT_NAME.fullmatch(robot):
         raise ValueError('robot is a robot\'s fleet name, such as "fm-rob-02"')
-    return Request(
-        request.get("action", "status"), TWIN_UNIT_TEMPLATE.format(robot=robot), f"the twin for {robot}"
-    )
+    twin = f"the twin for {robot}"
+    unit = TWIN_UNIT_TEMPLATE.format(robot=robot)
+    return Request(request.get("action", "status"), unit, twin, twin, f"twin unit for {robot}")
 
 
 class UnitControl:
@@ -134,21 +142,23 @@ class UnitControl:
             installed, state = self.read(unit)
         except (OSError, subprocess.SubprocessError) as exc:
             log(f"reading {unit} failed: {exc}")
-            return error_body(unavailable, f"this host could not read the unit for {request.subject}")
+            return error_body(unavailable, f"this host could not read its {request.unit_label}")
         if action != "status":
             if not installed:
-                return error_body(unavailable, f"this host has no unit for {request.subject}")
+                return error_body(unavailable, f"this host has no {request.unit_label}")
             with self.lock:
                 now = self.clock()
                 last = self.changed_at.get(unit)
                 if last is not None and now - last < CHANGE_SPACING_S:
-                    return error_body("too_soon", f"{unit} changed under {CHANGE_SPACING_S:g} s ago")
+                    return error_body(
+                        "too_soon", f"{request.subject} changed under {CHANGE_SPACING_S:g} s ago"
+                    )
                 self.changed_at[unit] = now
             try:
                 self.change(action, unit)
             except (OSError, subprocess.SubprocessError) as exc:
                 log(f"{action} {unit} failed: {exc}")
-                return error_body(refused, f"this host could not {action} {request.subject}")
+                return error_body(refused, f"this host could not {action} {request.target}")
             try:
                 installed, state = self.read(unit)
             except (OSError, subprocess.SubprocessError) as exc:
