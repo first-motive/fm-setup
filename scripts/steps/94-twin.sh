@@ -266,7 +266,7 @@ no_robot_entry() {
 # robot_twins — the robot twin instances systemd has loaded, one per line. A
 # stop or restart names them, never a glob, so none loaded means nothing to ask.
 robot_twins() {
-  systemctl list-units --plain --no-legend --all "$ROBOT_INSTANCES" 2>/dev/null | awk '{print $1}'
+  systemctl list-units --plain --no-legend --all "$ROBOT_INSTANCES" 2>/dev/null | awk '$1 ~ /\.service$/ {print $1}'
 }
 
 # render_robot — the robot twin's template unit. Its instance is the robot's
