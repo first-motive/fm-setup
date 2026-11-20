@@ -649,8 +649,7 @@ A robot card selects the role on its own, so a bare `./install.sh` on an Axol
 does the same thing rather than provisioning it as a capture rig, which is what
 its hardware looks like. The role refuses to install on a card whose `robot` is
 not in `FM_ROBOT_PROVISIONED`, so an Anvil workcell is left alone, and
-`scripts/update.sh` never converges a robot: it has no passwordless sudo, and
-the machine is the vendor's.
+`scripts/update.sh` never converges a robot: the machine is the vendor's.
 
 On a JetPack host the `nvidia-container` step adds no repo and pins nothing.
 JetPack's `nvidia-jetpack-runtime` depends on the toolkit it ships, and moving
@@ -659,7 +658,7 @@ under JetPack. The step only installs JetPack's `nvidia-container` when the
 image left it out, and records only what it installed. Nothing here touches
 `axol.service`.
 
-### Restarting Fleet Services
+### Passwordless Sudo On A Robot
 
 ```bash
 ./run.sh robot-sudo                 # grant it to the account running this
@@ -668,56 +667,29 @@ image left it out, and records only what it installed. Nothing here touches
 ./run.sh robot-sudo --remove        # take it away
 ```
 
-Deploying a new agent is `git pull` in a checkout the account already owns, then
-one `systemctl restart` it does not. That restart is the only reason a password
-gets typed on a robot, and typing it is what stops `fm device update` from
-working unattended. So the rule this writes names those units, those verbs, and
-nothing else:
+The fleet drives a robot's units, its vendor camera daemons and its transport
+config over Zenoh, unattended. Each of those needs root, and a password typed
+at the robot is what stops `fm device update` and the agent's verbs working on
+their own. So the verb grants the account every command:
 
 ```
 /etc/sudoers.d/fm-robot-services
 
-  <user> ALL=(root) NOPASSWD: \
-      /usr/bin/systemctl start|stop|restart|status|is-active fm-robot-agent
-      /usr/bin/systemctl start|stop|restart|status|is-active fm-zenoh-bridge
-      /usr/bin/systemctl restart zed_x_daemon.service
-      /usr/bin/systemctl restart nvargus-daemon.service
-      /usr/local/sbin/fm-comms-set
+  <user> ALL=(ALL) NOPASSWD: ALL
 ```
 
-The two camera daemons are the vendor's, and the rule allows restart only. A
-camera process that dies without closing its GMSL cameras leaves both unable to
-open them again until they restart; on an Axol, the process that owns the
-cameras runs under the agent's `ros` mode. A restart runs the vendor's daemon
-as root, so the grant is only as safe as its unit file and binary are root-only,
-which they are on an Axol. On a host without one of them, its line matches no
-installed unit and restarts nothing.
+This account can become root on the robot without a password. The operator
+accepted that; the verb shows the rule and asks before it writes, and
+`NONINTERACTIVE=1` declines.
 
-`fm-comms-set` is installed by the same verb. The Anvil's domain and interface
-live in two files — the loader's `.env.config`, owned by the account the agent
-runs as, and `/etc/fm-comms.env`, owned by root because two systemd units read
-it. The agent writes both or neither, so without a way across that line a paired
-write fails at staging and the two are left disagreeing, which is exactly what
-the pairing exists to prevent.
-
-The writer takes a key and a value, accepts three keys
-(`FM_ROS_DOMAIN_ID`, `ROS_DOMAIN_ID`, `FM_DDS_IFACE`), checks each value, and
-reads no path from its caller. Setting the domain sets both spellings, because
-the installer keeps them equal. An account that reaches it can change three
-values and nothing else on the host — which is why the grant names that path
-rather than the file, or root.
-
-The account can restart the fleet's own services and cannot become root. On a
-workcell Anvil and Almond are still responsible for, that distinction is the
-point — `ALL=(ALL) NOPASSWD:ALL` here would hand a fleet account the run of
-somebody else's machine.
-
-Commands are matched by absolute path, because that is the only form sudo
-matches, and the units are spelled out rather than globbed: `fm-*` would also
-cover whatever unit somebody adds under that prefix next, and a grant that
-widens on its own is not a grant anybody reviewed. `daemon-reload` is absent for
-the same reason — it re-reads the vendor's unit files too, and no deploy needs
-it.
+`fm-comms-set` is installed by the same verb, at `/usr/local/sbin/fm-comms-set`,
+because the agent calls it by that path. The Anvil's domain and interface live
+in two files — the loader's `.env.config`, owned by the account the agent runs
+as, and `/etc/fm-comms.env`, owned by root because two systemd units read it.
+The agent writes both or neither, through the writer, which takes a key and a
+value, accepts three keys (`FM_ROS_DOMAIN_ID`, `ROS_DOMAIN_ID`,
+`FM_DDS_IFACE`), and checks each value. Setting the domain sets both spellings,
+because the installer keeps them equal.
 
 The generated rule is checked with `visudo -c` before it is installed, and again
 in CI, because a malformed file in `/etc/sudoers.d` breaks sudo for every account
