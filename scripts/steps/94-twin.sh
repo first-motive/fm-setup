@@ -15,6 +15,9 @@
 #                    image
 #   the service      fm-twin.service, run by systemd as its own account:
 #                    fm-twin run --source sim:<this host> --robot <name>=<urdf> ...
+#   the robot twin   fm-twin-robot@.service, the same account and hardening:
+#                    fm-twin run --source robot:<instance> --profile axol --urdf <axol urdf>
+#                    installed, never enabled; the host agent starts an instance
 #
 # The twin serves the robot of the host's active sim run. When a run of another
 # robot holds, it exits 75 and systemd starts it again on that robot.
@@ -92,6 +95,9 @@ IMAGE_DIGEST="${FM_SIM_CONTROLLERS_IMAGE_DIGEST:-$FM_SIM_CONTROLLERS_IMAGE_DIGES
 
 COMMS_ENV=/etc/fm-comms.env
 UNIT_PATH="/etc/systemd/system/$FM_TWIN_UNIT"
+ROBOT_UNIT_PATH="/etc/systemd/system/$FM_TWIN_ROBOT_UNIT"
+# Every running instance of the robot template, for a restart or a stop.
+ROBOT_INSTANCES="${FM_TWIN_ROBOT_UNIT%@.service}@*.service"
 SRC_GIT="$FM_TWIN_ROOT/src.git"
 PROJECT_DIR="$FM_TWIN_ROOT/project"
 VENV_DIR="$FM_TWIN_ROOT/venv"
@@ -236,6 +242,72 @@ WantedBy=multi-user.target
 UNIT
 }
 
+# robot_urdf — the installed URDF of FM_TWIN_ROBOT_PROFILE's FM_TWIN_ROBOTS
+# entry, the robot the robot twin serves.
+robot_urdf() {
+  local list robot dir path top urdf
+  list="$(robot_list)" || return 1
+  while IFS='|' read -r robot dir path top urdf; do
+    if [ "$robot" = "$FM_TWIN_ROBOT_PROFILE" ]; then
+      svc_safe_word "$DESCRIPTION_ROOT/$dir/$urdf" || return 1
+      printf '%s\n' "$DESCRIPTION_ROOT/$dir/$urdf"
+      return 0
+    fi
+  done <<<"$list"
+  fm_err "FM_TWIN_ROBOTS has no entry for FM_TWIN_ROBOT_PROFILE '$FM_TWIN_ROBOT_PROFILE'"
+  return 1
+}
+
+# render_robot — the robot twin's template unit. Its instance is the robot's
+# fleet name, which the host agent checks before it names an instance.
+render_robot() {
+  local urdf
+  urdf="$(robot_urdf)" || return 1
+  svc_safe_word "$FM_TWIN_ROBOT_PROFILE" || return 1
+  cat <<UNIT
+# fm-twin-robot@ — the live camera twin for one robot, over Zenoh. The instance
+# is the robot's fleet name: fm-twin-robot@fm-rob-02.service serves fm-rob-02.
+#
+# Rendered by fm-setup's twin step (scripts/steps/94-twin.sh) for fm-twin
+# $TWIN_COMMIT.
+# Re-run the step rather than editing this file. Never enabled: the host agent
+# starts and stops an instance when fm-desktop asks.
+[Unit]
+Description=fm-twin: the live camera twin for robot %i
+After=network-online.target $FM_COMMS_BRIDGE_UNIT
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=$FM_TWIN_USER
+Group=$FM_TWIN_USER
+# The router endpoint (FM_ROUTER_ENDPOINT), as every other First Motive unit reads it.
+EnvironmentFile=$COMMS_ENV
+ExecStart=$ENTRYPOINT run --source robot:%i --profile $FM_TWIN_ROBOT_PROFILE --urdf $urdf
+Restart=on-failure
+RestartSec=5
+# Bounded as the sim twin is; the Axol's head adds a stereo match per frame.
+MemoryMax=8G
+TasksMax=512
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+RestrictSUIDSGID=yes
+# The router over TCP; nothing else.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+LockPersonality=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+UNIT
+}
+
 same_file() { [ -f "$1" ] && [ "$(cat "$1")" = "$2" ]; }
 venv_current() { [ "$(cat "$R$COMMIT_MARKER" 2>/dev/null)" = "$TWIN_COMMIT" ] && [ -x "$R$ENTRYPOINT" ]; }
 have_commit() { read_src_git rev-parse --verify --quiet "refs/fm/$TWIN_COMMIT^{commit}" >/dev/null 2>&1; }
@@ -308,6 +380,13 @@ do_check() {
       fm_warn "$FM_TWIN_UNIT missing or out of date — re-run: ./install.sh --${FM_ROLE:-workstation} --only twin"
     fi
   fi
+  if [ "$rc" = 0 ] && unit="$(render_robot 2>/dev/null)"; then
+    if same_file "$R$ROBOT_UNIT_PATH" "$unit"; then
+      fm_ok "$FM_TWIN_ROBOT_UNIT installed and current — serves robot:<instance> as $FM_TWIN_ROBOT_PROFILE"
+    else
+      fm_warn "$FM_TWIN_ROBOT_UNIT missing or out of date — re-run: ./install.sh --${FM_ROLE:-workstation} --only twin"
+    fi
+  fi
   if fm_has_cmd systemctl && systemctl is-active --quiet "$FM_TWIN_UNIT" 2>/dev/null; then
     fm_ok "$FM_TWIN_UNIT active"
   else
@@ -319,11 +398,12 @@ do_check() {
 # --- Install ------------------------------------------------------------------
 
 dry_run_plan() {
-  local ref name unit rc=0 list robot dir path top urdf
+  local ref name unit robot_unit rc=0 list robot dir path top urdf
   ref="$(image_ref)" || return 1
   name="$(host_name)" || return 1
   list="$(robot_list)" || return 1
   unit="$(render "$name")" || return 1
+  robot_unit="$(render_robot)" || return 1
   commit_pinned || rc=$?
   [ "$rc" = 2 ] && return 1
   fm_log "dry run — nothing on this host changes"
@@ -343,6 +423,8 @@ dry_run_plan() {
   fm_info "would create system account $FM_TWIN_USER (no home, no login, no groups)"
   fm_info "would write  $UNIT_PATH:"
   printf '%s\n' "$unit" | sed 's/^/        /'
+  fm_info "would write  $ROBOT_UNIT_PATH (not enabled):"
+  printf '%s\n' "$robot_unit" | sed 's/^/        /'
   fm_info "would enable and start $FM_TWIN_UNIT once $COMMS_ENV exists"
 }
 
@@ -539,10 +621,10 @@ tar_names_ok() {
   done <<<"$1"
 }
 
-# install_unit TEXT — prints "changed" when the unit was written.
+# install_unit PATH TEXT — prints "changed" when the unit was written.
 install_unit() {
   local rc=0
-  svc_install_file "$R" "$FM_TWIN_ROOT" "$UNIT_PATH" "$1" >&2 || rc=$?
+  svc_install_file "$R" "$FM_TWIN_ROOT" "$1" "$2" >&2 || rc=$?
   case "$rc" in
     0) svc_must "reloading systemd" sudo systemctl daemon-reload >&2 || return 1; echo changed ;;
     3) ;;
@@ -556,10 +638,11 @@ do_install() {
     return
   fi
 
-  local ref name rc=0 project description text unit uv_sha
+  local ref name rc=0 project description text robot_text unit robot_unit uv_sha
   ref="$(image_ref)" || return 1
   name="$(host_name)" || return 1
   text="$(render "$name")" || return 1
+  robot_text="$(render_robot)" || return 1
   commit_pinned || rc=$?
   [ "$rc" = 2 ] && return 1
   if [ "$rc" = 1 ]; then
@@ -584,7 +667,8 @@ do_install() {
     build_venv || return 1
   fi
   description="$(install_description "$ref")" || return 1
-  unit="$(install_unit "$text")" || return 1
+  unit="$(install_unit "$UNIT_PATH" "$text")" || return 1
+  robot_unit="$(install_unit "$ROBOT_UNIT_PATH" "$robot_text")" || return 1
 
   if [ ! -f "$R$COMMS_ENV" ]; then
     fm_skip "$COMMS_ENV missing — install fm-comms through fm_ros2, then re-run: ./install.sh --${FM_ROLE:-workstation} --only twin"
@@ -596,7 +680,13 @@ do_install() {
   else
     svc_must "starting $FM_TWIN_UNIT" sudo systemctl start "$FM_TWIN_UNIT" || return 1
   fi
+  # A robot twin the host agent started keeps running the old code until it
+  # restarts; try-restart touches only the instances that are running.
+  if [ -n "$project$description$robot_unit" ]; then
+    svc_must "restarting running $ROBOT_INSTANCES" sudo systemctl try-restart "$ROBOT_INSTANCES" || return 1
+  fi
   fm_ok "$FM_TWIN_UNIT enabled and running — the twin for sim:$name, on $(fm_machine_namespace "$name")/twin/points"
+  fm_ok "$FM_TWIN_ROBOT_UNIT installed, not enabled — the host agent starts an instance per robot"
 }
 
 # --- Uninstall ----------------------------------------------------------------
@@ -612,6 +702,12 @@ do_uninstall() {
     fm_ok "$FM_TWIN_UNIT removed"
   else
     fm_skip "$FM_TWIN_UNIT not installed"
+  fi
+  if [ -f "$R$ROBOT_UNIT_PATH" ]; then
+    svc_must "stopping $ROBOT_INSTANCES" sudo systemctl stop "$ROBOT_INSTANCES" || return 1
+    svc_must "removing $ROBOT_UNIT_PATH" sudo rm -f "$R$ROBOT_UNIT_PATH" || return 1
+    svc_must "reloading systemd" sudo systemctl daemon-reload || return 1
+    fm_ok "$FM_TWIN_ROBOT_UNIT removed"
   fi
   if getent passwd "$FM_TWIN_USER" >/dev/null 2>&1; then
     svc_must "removing account $FM_TWIN_USER" sudo userdel "$FM_TWIN_USER" || return 1

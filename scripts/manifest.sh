@@ -974,11 +974,19 @@ FM_HOST_AGENT_POLKIT_RULE=/etc/polkit-1/rules.d/50-fm-host-agent.rules
 #   git ls-remote https://github.com/first-motive/fm-twin.git refs/heads/main
 # FM_TWIN_COMMIT overrides it on the command line, to try a commit before pinning.
 FM_TWIN_REPO=first-motive/fm-twin
-FM_TWIN_COMMIT_DEFAULT=86ce6700d1663fe15af19681f250e58951a62055
+FM_TWIN_COMMIT_DEFAULT=bc5c6319f5af7084759e29450e3c7d5d4fc7cf07
 FM_TWIN_USER=fm-twin
 FM_TWIN_ROOT=/opt/fm-twin
 FM_TWIN_UV_CACHE=/var/cache/fm-twin
 FM_TWIN_UNIT=fm-twin.service
+
+# The twin for a real robot, beside the sim host's: a template whose instance is
+# the robot's fleet name (fm-twin-robot@fm-rob-02.service serves robot:fm-rob-02).
+# Installed and never enabled; the host agent starts and stops an instance when
+# fm-desktop asks. It serves the robot FM_TWIN_ROBOT_PROFILE names, which is
+# both fm-twin's --profile and the FM_TWIN_ROBOTS entry its URDF comes from.
+FM_TWIN_ROBOT_UNIT=fm-twin-robot@.service
+FM_TWIN_ROBOT_PROFILE=axol
 
 # The robots the twin can mask. It serves the robot of the sim host's active
 # run, so it needs the URDF and meshes of every robot a run may load. Each is

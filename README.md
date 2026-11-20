@@ -1070,6 +1070,16 @@ failure. Its account, `fm-twin`, is in no group, and
 the unit holds no capability, sees no devices, kernel tunables, logs or clock,
 and is capped at 8 GB and 512 tasks.
 
+Beside it the step installs `fm-twin-robot@.service`, the twin for a real
+robot. Its instance is the robot's fleet name, and it runs `fm-twin run
+--source robot:<instance> --profile axol --urdf
+/opt/fm-twin/description/axol_description/axol_ox_cart.urdf` under the same
+account, sandbox and limits, restarting on failure. The profile is
+`FM_TWIN_ROBOT_PROFILE`, and the URDF is that robot's `FM_TWIN_ROBOTS` entry.
+It is installed and never enabled: the [host agent](#host-agent) starts and
+stops `fm-twin-robot@fm-rob-02.service` when fm-desktop asks. A changed install
+restarts any instance that is running, and uninstall stops them all.
+
 Two inputs are private, and the step takes each from where the host already
 has it:
 
@@ -1096,6 +1106,7 @@ clears it. fm-twin's build backend is not pinned yet, as with fm-sim's.
 
 ```
 /etc/systemd/system/fm-twin.service                       the twin (User=fm-twin)
+/etc/systemd/system/fm-twin-robot@.service                the robot twin, one instance per robot, not enabled
 /opt/fm-twin/{src.git,project,venv,bin/uv}                fm-twin at the pin, its venv, the pinned uv (root:root)
 /opt/fm-twin/description/openarm_v2_anvil_description/    the OpenArm's URDF and meshes, from the controllers image
 /opt/fm-twin/description/axol_description/                the Axol's URDF and meshes, from the same image

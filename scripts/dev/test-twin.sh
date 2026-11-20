@@ -229,6 +229,8 @@ TWIN="$R$FM_TWIN_ROOT"
 UNIT="$R/etc/systemd/system/$FM_TWIN_UNIT"
 ROBOT_ARGS="--robot openarm=$OA_URDF --robot axol=$AX_URDF"
 EXEC="ExecStart=$FM_TWIN_ROOT/venv/bin/fm-twin run --source sim:fm-ws-01 $ROBOT_ARGS"
+ROBOT_UNIT="$R/etc/systemd/system/$FM_TWIN_ROBOT_UNIT"
+ROBOT_EXEC="ExecStart=$FM_TWIN_ROOT/venv/bin/fm-twin run --source robot:%i --profile axol --urdf $AX_URDF"
 
 # step_tree NAME [ENTRY...] — a copy of the step and the files it sources under
 # $TMP/tree-NAME, with FM_TWIN_ROBOTS replaced by the ENTRYs when any are
@@ -261,6 +263,7 @@ fm_log "dry run"
 reset_host
 out="$(step install --dry-run)"
 assert_has "the dry run prints the unit's command line" "$out" "$EXEC"
+assert_has "  and the robot twin's" "$out" "$ROBOT_EXEC"
 assert_has "  and copies each robot's description" "$out" "would copy   axol's $AX_PATH out of $IMAGE"
 assert_eq "the dry run writes nothing" "false" "$(exists "$TWIN")"
 assert_eq "the dry run calls no privileged tool" "0" "$(count '^sudo ')"
@@ -300,6 +303,20 @@ assert_has "the unit starts after the bridges" "$unit" "After=network-online.tar
 assert_lacks "the unit carries no test root" "$unit" "$TMP"
 assert_has "the twin is enabled" "$(cat "$LOG")" "systemctl enable $FM_TWIN_UNIT"
 assert_has "a changed install restarts it" "$(cat "$LOG")" "systemctl restart $FM_TWIN_UNIT"
+robot_unit="$(cat "$ROBOT_UNIT" 2>/dev/null || true)"
+assert_eq "the robot twin serves its instance as the Axol, with the Axol's URDF" "$ROBOT_EXEC" \
+  "$(grep '^ExecStart=' "$ROBOT_UNIT" 2>/dev/null || true)"
+assert_has "  as the twin's account" "$robot_unit" "User=fm-twin"
+assert_has "  reading the router from fm-comms' env" "$robot_unit" "EnvironmentFile=/etc/fm-comms.env"
+assert_has "  restarting on failure" "$robot_unit" "Restart=on-failure"
+assert_has "  hardened as the sim twin is" "$robot_unit" "CapabilityBoundingSet="
+assert_eq "  with the sim twin's sandbox, line for line" \
+  "$(grep -E '^(Protect|Private|Restrict|NoNew|Lock|Memory|Tasks)' "$UNIT")" \
+  "$(grep -E '^(Protect|Private|Restrict|NoNew|Lock|Memory|Tasks)' "$ROBOT_UNIT")"
+assert_lacks "  and no [Install] section, so it cannot be enabled" "$robot_unit" "[Install]"
+assert_lacks "the robot twin is never enabled" "$(cat "$LOG")" "systemctl enable fm-twin-robot"
+assert_has "a changed install restarts robot twins that are running" "$(cat "$LOG")" \
+  "systemctl try-restart fm-twin-robot@*.service"
 
 fm_log "a second install"
 : > "$LOG"
@@ -309,6 +326,7 @@ assert_eq "it fetches nothing" "0:0" "$(count '^curl '):$(count 'fetch ')"
 assert_eq "it builds nothing" "0" "$(count '^uv sync')"
 assert_eq "it copies nothing from the image" "0" "$(count '^docker create')"
 assert_eq "it starts rather than restarts" "1:0" "$(count "^systemctl start $FM_TWIN_UNIT"):$(count '^systemctl restart')"
+assert_eq "it restarts no robot twin" "0" "$(count '^systemctl try-restart')"
 
 fm_log "a pin the source does not hold"
 reset_host
@@ -474,6 +492,7 @@ assert_has "it reports the missing unit" "$out" "$FM_TWIN_UNIT missing or out of
 step install >/dev/null
 out="$(step check)"
 assert_has "it finds the installed unit current" "$out" "$FM_TWIN_UNIT installed and current — serves sim:fm-ws-01"
+assert_has "it finds the robot twin current" "$out" "$FM_TWIN_ROBOT_UNIT installed and current"
 assert_has "it finds the OpenArm's description current" "$out" "openarm: $OA_URDF is the description in $IMAGE"
 assert_has "it finds the Axol's description current" "$out" "axol: $AX_URDF is the description in $IMAGE"
 rm -f "$R$AX_URDF"
@@ -484,7 +503,9 @@ assert_has "  and keeps the OpenArm's current" "$out" "openarm: $OA_URDF is the 
 fm_log "uninstall"
 rc=0; out="$(step uninstall)" || rc=$?
 assert_eq "uninstall succeeds" "0" "$rc"
-assert_eq "it removes the unit and the tree" "false:false" "$(exists "$UNIT"):$(exists "$TWIN")"
+assert_eq "it removes the units and the tree" "false:false:false" \
+  "$(exists "$UNIT"):$(exists "$ROBOT_UNIT"):$(exists "$TWIN")"
+assert_has "it stops every robot twin first" "$(cat "$LOG")" "systemctl stop fm-twin-robot@*.service"
 assert_has "it removes the account" "$(cat "$LOG")" "userdel fm-twin"
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
