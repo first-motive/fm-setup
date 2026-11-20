@@ -942,8 +942,9 @@ SSH session. The agent's code is this repo's [`host-agent/`](host-agent/README.m
 fm-host-agent (fm-host)  ── every 30 s ─►  fm/host/<host>/load          fm-desktop
         │                 ◄── query ─────  fm/host/<host>/disk-users    Devices
         │                 ◄── query ─────  fm/host/<host>/sim           Simulation
+        │                 ◄── query ─────  fm/host/<host>/twin          Robots
         │ systemctl start (polkit: the scan unit)
-        │ systemctl start|stop|restart (polkit: fm-sim-agent.service)
+        │ systemctl start|stop|restart (polkit: fm-sim-agent.service, fm-twin-robot@fm-rob-<n>.service)
         ▼
 fm-host-disk-scan (root, oneshot) ──► /var/lib/fm-host-agent/disk-users.json
 ```
@@ -970,6 +971,10 @@ fm/host/<host>/disk-users   queryable, request {refresh?: bool}
 
 fm/host/<host>/sim          queryable, request {action?: "status" | "start" | "stop" | "restart"}
   {ok, unit: "fm-sim-agent.service", installed: bool, state: systemd ActiveState}
+
+fm/host/<host>/twin         queryable, request {action?: "status" | "start" | "stop" | "restart",
+                                                robot: "fm-rob-<n>"}
+  {ok, unit: "fm-twin-robot@<robot>.service", installed: bool, state: systemd ActiveState}
 ```
 
 - `users` lists login accounts (uid 1000 and up, except nobody), with CPU summed over their
@@ -987,6 +992,13 @@ fm/host/<host>/sim          queryable, request {action?: "status" | "start" | "s
   without the unit answers `installed: false` and refuses every change. Changes
   are at least 5 seconds apart; one sooner is refused `too_soon`. This is how
   fm-desktop's Simulation screen starts a stopped workstation sim agent.
+- `twin` does the same for the [robot twin](#twin) of the robot it names,
+  `fm-twin-robot@<robot>.service`, which is how fm-desktop's robot view starts
+  and stops it. `robot` is required and must be a robot's fleet name
+  (`fm-rob-<n>`); anything else is refused `invalid_request` before a unit name
+  is built. Changes to one robot's twin are at least 5 seconds apart. The
+  refusal codes are `twin_unavailable` (no unit, or unreadable) and
+  `twin_refused` (systemd or polkit said no), as `sim`'s are `sim_*`.
 - `disk-users` replies with the last report and whether a scan is running. No
   report yet, one older than 15 minutes, or `refresh: true` starts a scan, and
   only that query waits, on `systemctl start --no-block`, for at most 5 seconds.
@@ -1012,8 +1024,9 @@ identity card, `/etc/fm-comms.env`, and the scan's report.
 Counting every account's files needs root, so that one job is a root oneshot,
 `fm-host-disk-scan.service`, which the agent may start but not change:
 
-- A polkit rule (`50-fm-host-agent.rules`) lets `fm-host` start that unit and
-  nothing else. Every other systemd action it asks for falls through to
+- A polkit rule (`50-fm-host-agent.rules`) lets `fm-host` start that unit,
+  start, stop or restart `fm-sim-agent.service` and any
+  `fm-twin-robot@fm-rob-<n>.service`, and nothing else. Every other systemd action it asks for falls through to
   polkit's defaults, which refuse an account with no session.
 - The scan runs the code in `/opt/fm-host-agent`, which root copies out of this
   checkout, refusing anything but plain files and directories, and keeps
@@ -1035,7 +1048,7 @@ root runs once at install time; fm-sim's is not pinned yet.
 ```
 /etc/systemd/system/fm-host-agent.service       the agent (User=fm-host)
 /etc/systemd/system/fm-host-disk-scan.service   the root scan, started on request
-/etc/polkit-1/rules.d/50-fm-host-agent.rules    fm-host may start the scan, nothing else
+/etc/polkit-1/rules.d/50-fm-host-agent.rules    fm-host may start the scan and control the sim agent and robot twins
 /opt/fm-host-agent/{project,venv,bin/uv}        the agent, its venv, and the pinned uv (root:root)
 /var/cache/fm-host-agent/                       root's uv cache for that build
 /var/lib/fm-host-agent/disk-users.json          the scan's report (root:root, 644)

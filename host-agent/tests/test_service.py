@@ -19,8 +19,8 @@ import zenoh
 
 from fm_host_agent.diskusers import MAX_REQUEST_BYTES, DiskUsers
 from fm_host_agent.service import Fabric, key_of, main
-from fm_host_agent.simunit import SimUnit
-from tests.fakes import SimSystemd, Systemd
+from fm_host_agent.units import sim_control, twin_control
+from tests.fakes import UnitSystemd, Systemd
 
 HOST = "fm_ws_01"
 TIMEOUT_S = 5.0
@@ -92,16 +92,30 @@ def wire(tmp_path):
     readings, systemd = Readings(), Systemd()
     report = tmp_path / "disk-users.json"
     disk_users = DiskUsers(report, start=systemd.start, running=systemd.running)
-    sim_systemd = SimSystemd()
-    sim_unit = SimUnit(read=sim_systemd.read, change=sim_systemd.change)
+    sim_systemd, twin_systemd = UnitSystemd(), UnitSystemd()
+    sim_unit = sim_control(read=sim_systemd.read, change=sim_systemd.change)
+    twin_unit = twin_control(read=twin_systemd.read, change=twin_systemd.change)
     fabric = Fabric(
-        server, HOST, readings, disk_users, sim_unit, period_s=0.05, wake_floor_s=0.01, scan_poll_s=0.05
+        server,
+        HOST,
+        readings,
+        disk_users,
+        sim_unit,
+        twin_unit,
+        period_s=0.05,
+        wake_floor_s=0.01,
+        scan_poll_s=0.05,
     )
     # The two sessions find each other asynchronously; an answer is the signal the route is up.
     wait_for(lambda: bool(get_load(client)), timeout_s=10)
     try:
         yield SimpleNamespace(
-            client=client, readings=readings, systemd=systemd, report=report, sim_systemd=sim_systemd
+            client=client,
+            readings=readings,
+            systemd=systemd,
+            report=report,
+            sim_systemd=sim_systemd,
+            twin_systemd=twin_systemd,
         )
     finally:
         fabric.close()
@@ -116,10 +130,19 @@ def slow_wire(tmp_path):
     server, client = peer(listen=endpoint), peer(connect=endpoint)
     readings, systemd = Readings(), Systemd()
     disk_users = DiskUsers(tmp_path / "disk-users.json", start=systemd.start, running=systemd.running)
-    sim_systemd = SimSystemd()
-    sim_unit = SimUnit(read=sim_systemd.read, change=sim_systemd.change)
+    sim_systemd, twin_systemd = UnitSystemd(), UnitSystemd()
+    sim_unit = sim_control(read=sim_systemd.read, change=sim_systemd.change)
+    twin_unit = twin_control(read=twin_systemd.read, change=twin_systemd.change)
     fabric = Fabric(
-        server, HOST, readings, disk_users, sim_unit, period_s=600, wake_floor_s=1.0, scan_poll_s=0.05
+        server,
+        HOST,
+        readings,
+        disk_users,
+        sim_unit,
+        twin_unit,
+        period_s=600,
+        wake_floor_s=1.0,
+        scan_poll_s=0.05,
     )
     wait_for(lambda: bool(get_load(client)), timeout_s=10)
     try:
@@ -245,4 +268,14 @@ def test_sim_reads_and_starts_the_unit_and_a_refusal_is_an_error_reply(wire):
     assert ok and body["state"] == "active"
     assert wire.sim_systemd.changes == ["start"]
     [(ok, body)] = get_answers(wire.client, "sim", b'{"action": "explode"}')
+    assert not ok and body["error"]["code"] == "invalid_request"
+
+
+def test_twin_starts_the_named_robots_unit_and_refuses_another_name(wire):
+    request = json.dumps({"action": "start", "robot": "fm-rob-02"}).encode()
+    assert get_answers(wire.client, "twin", request) == [
+        (True, {"ok": True, "unit": "fm-twin-robot@fm-rob-02.service", "installed": True, "state": "active"})
+    ]
+    assert wire.twin_systemd.changes == ["start"]
+    [(ok, body)] = get_answers(wire.client, "twin", b'{"robot": "sshd"}')
     assert not ok and body["error"]["code"] == "invalid_request"

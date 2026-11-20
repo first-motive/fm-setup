@@ -1,10 +1,11 @@
 // fm-host-agent may start fm-host-disk-scan.service, and start, stop or restart
-// fm-sim-agent.service, and that is all.
+// fm-sim-agent.service and a robot's twin, fm-twin-robot@fm-rob-<n>.service, and
+// that is all.
 //
 // The agent runs unprivileged as fm-host. Every other systemd action it asks
 // for falls through to polkit's defaults, which refuse an account with no
 // session to authenticate in. Installed as is by fm-setup's 93-host-agent.sh.
-// A host without the sim agent unit has nothing for the second clause to match.
+// A host without the sim agent or twin units has nothing for those clauses to match.
 polkit.addRule(function (action, subject) {
   if (action.id !== "org.freedesktop.systemd1.manage-units" || subject.user !== "fm-host") {
     return polkit.Result.NOT_HANDLED;
@@ -14,8 +15,12 @@ polkit.addRule(function (action, subject) {
   if (unit === "fm-host-disk-scan.service" && verb === "start") {
     return polkit.Result.YES;
   }
-  if (unit === "fm-sim-agent.service" &&
-      (verb === "start" || verb === "stop" || verb === "restart")) {
+  var changes = verb === "start" || verb === "stop" || verb === "restart";
+  if (unit === "fm-sim-agent.service" && changes) {
+    return polkit.Result.YES;
+  }
+  // Anchored at both ends, so only a fleet robot's instance matches.
+  if (typeof unit === "string" && /^fm-twin-robot@fm-rob-[0-9]+\.service$/.test(unit) && changes) {
     return polkit.Result.YES;
   }
   return polkit.Result.NOT_HANDLED;

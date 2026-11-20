@@ -36,6 +36,16 @@ CASES = [
     ((MANAGE_UNITS, "fm-host-disk-scan.service", "stop", "fm-host"), "not_handled"),
     ((MANAGE_UNITS, "sshd.service", "stop", "fm-host"), "not_handled"),
     ((MANAGE_UNITS, "fm-sim-agent.service", "start", "fm"), "not_handled"),
+    ((MANAGE_UNITS, "fm-twin-robot@fm-rob-02.service", "start", "fm-host"), "yes"),
+    ((MANAGE_UNITS, "fm-twin-robot@fm-rob-02.service", "stop", "fm-host"), "yes"),
+    ((MANAGE_UNITS, "fm-twin-robot@fm-rob-02.service", "restart", "fm-host"), "yes"),
+    ((MANAGE_UNITS, "fm-twin-robot@fm-rob-02.service", "enable", "fm-host"), "not_handled"),
+    ((MANAGE_UNITS, "fm-twin-robot@fm-rob-02.service", "start", "fm"), "not_handled"),
+    ((MANAGE_UNITS, "fm-twin-robot@fm-ws-01.service", "start", "fm-host"), "not_handled"),
+    ((MANAGE_UNITS, "fm-twin-robot@.service", "start", "fm-host"), "not_handled"),
+    ((MANAGE_UNITS, "fm-twin-robot@fm-rob-02.service.d", "start", "fm-host"), "not_handled"),
+    ((MANAGE_UNITS, "xfm-twin-robot@fm-rob-02.service", "start", "fm-host"), "not_handled"),
+    ((MANAGE_UNITS, "fm-twin.service", "start", "fm-host"), "not_handled"),
     (("org.freedesktop.login1.reboot", "fm-sim-agent.service", "start", "fm-host"), "not_handled"),
 ]
 
