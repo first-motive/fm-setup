@@ -1096,6 +1096,20 @@ restarts any instance that is running, and uninstall stops them all. With no
 `FM_TWIN_ROBOTS` entry for the profile, the step warns and installs the sim
 twin alone.
 
+A robot's table is per robot, so the template cannot carry it. Each
+`FM_TWIN_ROBOT_TABLES` entry, `robot|z|centre x|centre y|size x|size y` in
+metres, becomes `/etc/fm-twin/robot-<robot>.env`, which sets
+`FM_TWIN_TABLE_ARGS` to that robot's `--table-z`, `--table-centre-xy` and
+`--table-size-xy`. The unit reads it with `EnvironmentFile=-` and appends the
+unbraced `$FM_TWIN_TABLE_ARGS` to its command line, which systemd splits on
+whitespace, so the twin finds the table top and publishes it on
+`<ns>/twin/table`. fm-rob-02's values are fm-skills' `axol_skills_config`
+`specs.yaml` (`table_z`, `table_centre_xy`, `table_size`). Every value must be a
+plain decimal, and each size unsigned; any other entry fails the step before it
+changes anything. A robot with no entry gets no file and no `--table-*` flags.
+Install removes a file no entry names, and a changed file restarts the robot
+twins that are running. The flags need fm-twin #48, which the pin includes.
+
 Two inputs are private, and the step takes each from where the host already
 has it:
 
@@ -1123,6 +1137,7 @@ clears it. fm-twin's build backend is not pinned yet, as with fm-sim's.
 ```
 /etc/systemd/system/fm-twin.service                       the twin (User=fm-twin)
 /etc/systemd/system/fm-twin-robot@.service                the robot twin, one instance per robot, not enabled
+/etc/fm-twin/robot-<robot>.env                            a robot's --table-* flags, from FM_TWIN_ROBOT_TABLES
 /opt/fm-twin/{src.git,project,venv,bin/uv}                fm-twin at the pin, its venv, the pinned uv (root:root)
 /opt/fm-twin/description/openarm_v2_anvil_description/    the OpenArm's URDF and meshes, from the controllers image
 /opt/fm-twin/description/axol_description/                the Axol's URDF and meshes, from the same image

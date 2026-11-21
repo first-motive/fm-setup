@@ -18,6 +18,8 @@
 #   the robot twin   fm-twin-robot@.service, the same account and hardening:
 #                    fm-twin run --source robot:<instance> --profile axol --urdf <axol urdf>
 #                    installed, never enabled; the host agent starts an instance
+#   the tables       /etc/fm-twin/robot-<robot>.env for each FM_TWIN_ROBOT_TABLES
+#                    entry: the --table-* flags the robot twin's instance adds
 #
 # The twin serves the robot of the host's active sim run. When a run of another
 # robot holds, it exits 75 and systemd starts it again on that robot.
@@ -98,6 +100,8 @@ UNIT_PATH="/etc/systemd/system/$FM_TWIN_UNIT"
 ROBOT_UNIT_PATH="/etc/systemd/system/$FM_TWIN_ROBOT_UNIT"
 # Every running instance of the robot template, for a restart or a stop.
 ROBOT_INSTANCES="${FM_TWIN_ROBOT_UNIT%@.service}@*.service"
+# Each robot's table file, robot-<robot>.env, which its instance reads.
+TABLE_DIR="$FM_TWIN_TABLE_DIR"
 SRC_GIT="$FM_TWIN_ROOT/src.git"
 PROJECT_DIR="$FM_TWIN_ROOT/project"
 VENV_DIR="$FM_TWIN_ROOT/venv"
@@ -263,6 +267,59 @@ no_robot_entry() {
   printf 'FM_TWIN_ROBOTS has no %s entry (FM_TWIN_ROBOT_PROFILE) — no robot twin\n' "$FM_TWIN_ROBOT_PROFILE"
 }
 
+# A number fm-twin's --table-* flags take: a plain decimal, signed or not, and a
+# size unsigned. Nothing systemd or argparse could read as anything else.
+NUMBER='^-?[0-9]+(\.[0-9]+)?$'
+SIZE='^[0-9]+(\.[0-9]+)?$'
+
+# table_list — every FM_TWIN_ROBOT_TABLES entry, validated, one per line as
+# "robot|flags", where flags is the instance's --table-* words. Refuses the
+# whole list on any malformed entry or a robot named twice.
+table_list() {
+  local entry robot z cx cy sx sy extra seen=" "
+  for entry in "${FM_TWIN_ROBOT_TABLES[@]}"; do
+    IFS='|' read -r robot z cx cy sx sy extra <<<"$entry"
+    if [[ "$entry" == *$'\n'* ]] || [ -n "$extra" ] \
+       || ! fm_machine_valid_name "$robot" robot 2>/dev/null \
+       || ! [[ "$z" =~ $NUMBER ]] || ! [[ "$cx" =~ $NUMBER ]] || ! [[ "$cy" =~ $NUMBER ]] \
+       || ! [[ "$sx" =~ $SIZE ]] || ! [[ "$sy" =~ $SIZE ]]; then
+      fm_err "FM_TWIN_ROBOT_TABLES entry is malformed: '$entry' (want robot|z|centre x|centre y|size x|size y, in metres)"
+      return 1
+    fi
+    if [[ "$seen" == *" $robot "* ]]; then
+      fm_err "FM_TWIN_ROBOT_TABLES names $robot twice"
+      return 1
+    fi
+    seen+="$robot "
+    printf '%s|--table-z %s --table-centre-xy %s %s --table-size-xy %s %s\n' "$robot" "$z" "$cx" "$cy" "$sx" "$sy"
+  done
+}
+
+table_path() { printf '%s/robot-%s.env\n' "$TABLE_DIR" "$1"; }
+
+# render_table ROBOT FLAGS — the instance's environment file. systemd splits the
+# unbraced $FM_TWIN_TABLE_ARGS of ExecStart on whitespace, one flag per word.
+render_table() {
+  cat <<ENV
+# The table of $1, for fm-twin-robot@$1.service: the --table-* flags it adds.
+# Rendered by fm-setup's twin step (scripts/steps/94-twin.sh) from
+# FM_TWIN_ROBOT_TABLES. Re-run the step rather than editing this file.
+FM_TWIN_TABLE_ARGS=$2
+ENV
+}
+
+# stale_tables LIST — the table files on the host that no entry in LIST, a
+# table_list, names, one per line.
+stale_tables() {
+  local list="$1" f robot
+  for f in "$R$TABLE_DIR"/robot-*.env; do
+    [ -f "$f" ] || continue
+    robot="${f##*/robot-}"
+    robot="${robot%.env}"
+    case $'\n'"$list" in *$'\n'"$robot|"*) ;; *) printf '%s\n' "$f" ;; esac
+  done
+}
+
 # robot_twins — the robot twin instances systemd has loaded, one per line. A
 # stop or restart names them, never a glob, so none loaded means nothing to ask.
 robot_twins() {
@@ -294,7 +351,10 @@ User=$FM_TWIN_USER
 Group=$FM_TWIN_USER
 # The router endpoint (FM_ROUTER_ENDPOINT), as every other First Motive unit reads it.
 EnvironmentFile=$COMMS_ENV
-ExecStart=$ENTRYPOINT run --source "robot:%i" --profile $FM_TWIN_ROBOT_PROFILE --urdf $urdf
+# The robot's table (FM_TWIN_TABLE_ARGS), from fm-setup's FM_TWIN_ROBOT_TABLES.
+# A robot with no file gets no --table-* flags, and its twin looks for no table.
+EnvironmentFile=-$TABLE_DIR/robot-%i.env
+ExecStart=$ENTRYPOINT run --source "robot:%i" --profile $FM_TWIN_ROBOT_PROFILE --urdf $urdf \$FM_TWIN_TABLE_ARGS
 Restart=on-failure
 RestartSec=5
 # Bounded as the sim twin is; the Axol's head adds a stereo match per frame.
@@ -401,6 +461,9 @@ do_check() {
     elif [ "$robot_rc" = 0 ]; then
       fm_warn "$FM_TWIN_ROBOT_UNIT missing or out of date — re-run: ./install.sh --${FM_ROLE:-workstation} --only twin"
     fi
+    if [ "$robot_rc" = 0 ] && list="$(table_list)"; then
+      check_tables "$list"
+    fi
   fi
   if fm_has_cmd systemctl && systemctl is-active --quiet "$FM_TWIN_UNIT" 2>/dev/null; then
     fm_ok "$FM_TWIN_UNIT active"
@@ -410,13 +473,33 @@ do_check() {
   return 0
 }
 
+# check_tables LIST — report each robot's table file, and any no entry names.
+check_tables() {
+  local robot flags path stale
+  if [ -n "$1" ]; then
+    while IFS='|' read -r robot flags; do
+      path="$(table_path "$robot")"
+      if same_file "$R$path" "$(render_table "$robot" "$flags")"; then
+        fm_ok "$robot: $path current — $flags"
+      else
+        fm_warn "$robot: $path missing or out of date — re-run: ./install.sh --${FM_ROLE:-workstation} --only twin"
+      fi
+    done <<<"$1"
+  fi
+  stale="$(stale_tables "$1")"
+  if [ -n "$stale" ]; then
+    fm_warn "table files no FM_TWIN_ROBOT_TABLES entry names: ${stale//$'\n'/ } — re-run --only twin to remove them"
+  fi
+}
+
 # --- Install ------------------------------------------------------------------
 
 dry_run_plan() {
-  local ref name unit robot_unit="" rc=0 list robot dir path top urdf
+  local ref name unit robot_unit="" rc=0 list robot dir path top urdf tables flags
   ref="$(image_ref)" || return 1
   name="$(host_name)" || return 1
   list="$(robot_list)" || return 1
+  tables="$(table_list)" || return 1
   unit="$(render "$name")" || return 1
   robot_unit="$(render_robot)" || rc=$?
   case "$rc" in 0 | 2) ;; *) return 1 ;; esac
@@ -443,6 +526,12 @@ dry_run_plan() {
   if [ -n "$robot_unit" ]; then
     fm_info "would write  $ROBOT_UNIT_PATH (not enabled):"
     printf '%s\n' "$robot_unit" | sed 's/^/        /'
+    if [ -n "$tables" ]; then
+      while IFS='|' read -r robot flags; do
+        fm_info "would write  $(table_path "$robot"):"
+        render_table "$robot" "$flags" | sed 's/^/        /'
+      done <<<"$tables"
+    fi
   else
     fm_info "would write  no $ROBOT_UNIT_PATH: $(no_robot_entry)"
   fi
@@ -642,6 +731,28 @@ tar_names_ok() {
   done <<<"$1"
 }
 
+# install_tables LIST — one table file per entry, and none that no entry names.
+# Prints "changed" when it wrote or removed one.
+install_tables() {
+  local robot flags rc changed="" stale f
+  if [ -n "$1" ]; then
+    while IFS='|' read -r -u 3 robot flags; do
+      rc=0
+      svc_install_file "$R" "$FM_TWIN_ROOT" "$(table_path "$robot")" "$(render_table "$robot" "$flags")" >&2 || rc=$?
+      case "$rc" in 0) changed=1 ;; 3) ;; *) return 1 ;; esac
+    done 3<<<"$1"
+  fi
+  stale="$(stale_tables "$1")"
+  if [ -n "$stale" ]; then
+    while IFS= read -r f; do
+      svc_must "removing ${f#"$R"}" sudo rm -f "$f" >&2 || return 1
+      fm_ok "removed ${f#"$R"} — no FM_TWIN_ROBOT_TABLES entry names it" >&2
+    done <<<"$stale"
+    changed=1
+  fi
+  if [ -n "$changed" ]; then echo changed; fi
+}
+
 # install_unit PATH TEXT — prints "changed" when the unit was written.
 install_unit() {
   local rc=0
@@ -660,8 +771,10 @@ do_install() {
   fi
 
   local ref name rc=0 project description text robot_text="" unit robot_unit="" uv_sha twins
+  local tables table_files=""
   ref="$(image_ref)" || return 1
   name="$(host_name)" || return 1
+  tables="$(table_list)" || return 1
   text="$(render "$name")" || return 1
   robot_text="$(render_robot)" || rc=$?
   case "$rc" in
@@ -697,6 +810,7 @@ do_install() {
   unit="$(install_unit "$UNIT_PATH" "$text")" || return 1
   if [ -n "$robot_text" ]; then
     robot_unit="$(install_unit "$ROBOT_UNIT_PATH" "$robot_text")" || return 1
+    table_files="$(install_tables "$tables")" || return 1
   fi
 
   if [ ! -f "$R$COMMS_ENV" ]; then
@@ -711,7 +825,7 @@ do_install() {
   fi
   # A robot twin the host agent started keeps running the old code until it
   # restarts; try-restart touches only the instances that are running.
-  if [ -n "$robot_text" ] && [ -n "$project$description$robot_unit" ]; then
+  if [ -n "$robot_text" ] && [ -n "$project$description$robot_unit$table_files" ]; then
     twins="$(robot_twins)"
     if [ -n "$twins" ]; then
       # shellcheck disable=SC2086  # one unit name per word
@@ -749,6 +863,7 @@ do_uninstall() {
     svc_must "reloading systemd" sudo systemctl daemon-reload || return 1
     fm_ok "$FM_TWIN_ROBOT_UNIT removed"
   fi
+  svc_remove_tree "$R" twin "$TABLE_DIR" /etc/fm-twin || return 1
   if getent passwd "$FM_TWIN_USER" >/dev/null 2>&1; then
     svc_must "removing account $FM_TWIN_USER" sudo userdel "$FM_TWIN_USER" || return 1
     fm_ok "account $FM_TWIN_USER removed"
