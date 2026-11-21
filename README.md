@@ -1107,8 +1107,10 @@ whitespace, so the twin finds the table top and publishes it on
 `specs.yaml` (`table_z`, `table_centre_xy`, `table_size`). Every value must be a
 plain decimal, and each size unsigned; any other entry fails the step before it
 changes anything. A robot with no entry gets no file and no `--table-*` flags.
-Install removes a file no entry names, and a changed file restarts the robot
-twins that are running. The flags need fm-twin #48, which the pin includes.
+Install removes a file no entry names, or every file when there is no robot
+twin, and a written or removed file restarts that robot's twin if it is
+running, and no other. Uninstall removes the `robot-*.env` files and the
+directory only if nothing else is in it. The flags need fm-twin #48, which the pin includes.
 
 Two inputs are private, and the step takes each from where the host already
 has it:

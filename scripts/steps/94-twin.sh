@@ -461,7 +461,10 @@ do_check() {
     elif [ "$robot_rc" = 0 ]; then
       fm_warn "$FM_TWIN_ROBOT_UNIT missing or out of date — re-run: ./install.sh --${FM_ROLE:-workstation} --only twin"
     fi
-    if [ "$robot_rc" = 0 ] && list="$(table_list)"; then
+    # With no robot twin, every table file is one no instance reads.
+    if [ "$robot_rc" != 0 ]; then
+      check_tables ""
+    elif list="$(table_list)"; then
       check_tables "$list"
     fi
   fi
@@ -732,14 +735,15 @@ tar_names_ok() {
 }
 
 # install_tables LIST — one table file per entry, and none that no entry names.
-# Prints "changed" when it wrote or removed one.
+# Prints, one per line, each robot whose file it wrote or removed: the
+# instances that must restart to read it.
 install_tables() {
-  local robot flags rc changed="" stale f
+  local robot flags rc stale f
   if [ -n "$1" ]; then
     while IFS='|' read -r -u 3 robot flags; do
       rc=0
       svc_install_file "$R" "$FM_TWIN_ROOT" "$(table_path "$robot")" "$(render_table "$robot" "$flags")" >&2 || rc=$?
-      case "$rc" in 0) changed=1 ;; 3) ;; *) return 1 ;; esac
+      case "$rc" in 0) printf '%s\n' "$robot" ;; 3) ;; *) return 1 ;; esac
     done 3<<<"$1"
   fi
   stale="$(stale_tables "$1")"
@@ -747,10 +751,27 @@ install_tables() {
     while IFS= read -r f; do
       svc_must "removing ${f#"$R"}" sudo rm -f "$f" >&2 || return 1
       fm_ok "removed ${f#"$R"} — no FM_TWIN_ROBOT_TABLES entry names it" >&2
+      robot="${f##*/robot-}"
+      printf '%s\n' "${robot%.env}"
     done <<<"$stale"
-    changed=1
   fi
-  if [ -n "$changed" ]; then echo changed; fi
+}
+
+# twins_to_restart ALL CHANGED — the loaded robot twins to try-restart, one per
+# line: every one when ALL is set (the code, the descriptions or the unit
+# changed), else those whose robot is in CHANGED, the robots whose table moved.
+twins_to_restart() {
+  local all="$1" changed="$2" twin robot
+  while IFS= read -r twin; do
+    [ -n "$twin" ] || continue
+    robot="${twin#"${FM_TWIN_ROBOT_UNIT%@.service}@"}"
+    robot="${robot%.service}"
+    if [ -n "$all" ]; then
+      printf '%s\n' "$twin"
+    else
+      case $'\n'"$changed"$'\n' in *$'\n'"$robot"$'\n'*) printf '%s\n' "$twin" ;; esac
+    fi
+  done <<<"$(robot_twins)"
 }
 
 # install_unit PATH TEXT — prints "changed" when the unit was written.
@@ -811,6 +832,9 @@ do_install() {
   if [ -n "$robot_text" ]; then
     robot_unit="$(install_unit "$ROBOT_UNIT_PATH" "$robot_text")" || return 1
     table_files="$(install_tables "$tables")" || return 1
+  else
+    # No robot twin reads a table, so every table file is stale.
+    install_tables "" >/dev/null || return 1
   fi
 
   if [ ! -f "$R$COMMS_ENV" ]; then
@@ -823,10 +847,10 @@ do_install() {
   else
     svc_must "starting $FM_TWIN_UNIT" sudo systemctl start "$FM_TWIN_UNIT" || return 1
   fi
-  # A robot twin the host agent started keeps running the old code until it
-  # restarts; try-restart touches only the instances that are running.
+  # A robot twin the host agent started keeps running the old code, or the old
+  # table, until it restarts; try-restart touches only the instances running.
   if [ -n "$robot_text" ] && [ -n "$project$description$robot_unit$table_files" ]; then
-    twins="$(robot_twins)"
+    twins="$(twins_to_restart "$project$description$robot_unit" "$table_files")"
     if [ -n "$twins" ]; then
       # shellcheck disable=SC2086  # one unit name per word
       svc_must "restarting running robot twins" sudo systemctl try-restart $twins || return 1
@@ -842,6 +866,24 @@ do_install() {
 
 # remove_tree PATH — rm -rf one of the step's own trees, named exactly.
 remove_tree() { svc_remove_tree "$R" twin "$1" /opt/fm-twin /var/cache/fm-twin; }
+
+# remove_tables — every robot-*.env the step wrote, then $TABLE_DIR if that
+# leaves it empty. A file the step did not write is left, and named.
+remove_tables() {
+  local f left
+  [ -d "$R$TABLE_DIR" ] || return 0
+  for f in "$R$TABLE_DIR"/robot-*.env; do
+    [ -f "$f" ] || continue
+    svc_must "removing ${f#"$R"}" sudo rm -f "$f" || return 1
+  done
+  left="$(find "$R$TABLE_DIR" -mindepth 1 -maxdepth 1 -printf '%f ' 2>/dev/null)"
+  if [ -n "$left" ]; then
+    fm_warn "$TABLE_DIR holds files the twin step did not write: ${left% } — left in place"
+    return 0
+  fi
+  svc_must "removing $TABLE_DIR" sudo rmdir "$R$TABLE_DIR" || return 1
+  fm_ok "$TABLE_DIR removed"
+}
 
 do_uninstall() {
   if [ -f "$R$UNIT_PATH" ]; then
@@ -863,7 +905,7 @@ do_uninstall() {
     svc_must "reloading systemd" sudo systemctl daemon-reload || return 1
     fm_ok "$FM_TWIN_ROBOT_UNIT removed"
   fi
-  svc_remove_tree "$R" twin "$TABLE_DIR" /etc/fm-twin || return 1
+  remove_tables || return 1
   if getent passwd "$FM_TWIN_USER" >/dev/null 2>&1; then
     svc_must "removing account $FM_TWIN_USER" sudo userdel "$FM_TWIN_USER" || return 1
     fm_ok "account $FM_TWIN_USER removed"

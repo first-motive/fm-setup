@@ -24,6 +24,13 @@
 # local fm-twin repository and a stand-in uv tarball. No root, daemon, or
 # network is needed.
 #
+# The robot twin's table rides on systemd splitting an unbraced $VAR in
+# ExecStart on whitespace into zero or more words. That is checked here only as
+# the text the step renders; systemd's side was verified on fm-ws-01 with
+# transient units reading a rendered robot-<robot>.env: with the file present the
+# command got exactly the 8 --table-* words as rendered, and with it missing
+# (EnvironmentFile=-) it got none.
+#
 # No test framework, for the reason test-machine.sh gives.
 
 # The stand-ins' bodies are single-quoted so they expand when they run.
@@ -355,17 +362,31 @@ assert_eq "it restarts no robot twin" "0" "$(count '^systemctl try-restart')"
 assert_has "it finds the table current" "$out" "/etc/fm-twin/robot-fm-rob-02.env current"
 
 fm_log "a robot's table that changes"
-moved_step="$(tables_tree moved "fm-rob-02|-0.55|0.1|-0.3|1.0|0.5")"
+moved_step="$(tables_tree moved "fm-rob-02|-0.55|0.1|-0.3|1.0|0.5" "fm-rob-03|-0.607|0.0|-0.32|1.2|0.4")"
+: > "$R/etc/fm-twin/robot-fm-rob-03.env"
+cp "$TABLE" "$TMP/rob-02.env"
 : > "$LOG"
-rc=0; out="$(env PATH="$BIN:$SYS_PATH" bash "$moved_step" install 2>&1)" || rc=$?
+rc=0; out="$(env FAKE_ROBOT_TWINS="fm-twin-robot@fm-rob-02.service fm-twin-robot@fm-rob-04.service" \
+  PATH="$BIN:$SYS_PATH" bash "$moved_step" install 2>&1)" || rc=$?
 assert_eq "install succeeds" "0" "$rc"
 assert_eq "the table file carries the new flags" \
   "FM_TWIN_TABLE_ARGS=--table-z -0.55 --table-centre-xy 0.1 -0.3 --table-size-xy 1.0 0.5" \
   "$(grep -v '^#' "$TABLE" 2>/dev/null || true)"
 assert_eq "the robot twin unit is left as it was" "0" "$(count "^sudo install .*$FM_TWIN_ROBOT_UNIT")"
-assert_has "the running robot twins restart to read it" "$(cat "$LOG")" \
-  "systemctl try-restart fm-twin-robot@fm-rob-02.service"
+assert_eq "only the loaded twins whose table changed restart, by name" \
+  "systemctl try-restart fm-twin-robot@fm-rob-02.service" "$(grep '^systemctl try-restart' "$LOG")"
 assert_eq "  and the sim twin does not" "0" "$(count "^systemctl restart $FM_TWIN_UNIT")"
+
+fm_log "a change to the code restarts every loaded robot twin"
+cp "$TMP/rob-02.env" "$TABLE"
+rm -f "$TWIN/.fm-commit"
+: > "$LOG"
+rc=0; out="$(env FAKE_ROBOT_TWINS="fm-twin-robot@fm-rob-02.service fm-twin-robot@fm-rob-04.service" \
+  PATH="$BIN:$SYS_PATH" bash "$STEP" install 2>&1)" || rc=$?
+assert_eq "install succeeds" "0" "$rc"
+assert_eq "  and try-restarts them all" \
+  "systemctl try-restart fm-twin-robot@fm-rob-02.service fm-twin-robot@fm-rob-04.service" \
+  "$(grep '^systemctl try-restart' "$LOG")"
 
 fm_log "a robot whose entry goes"
 none_step="$(tables_tree none)"
@@ -487,9 +508,13 @@ reset_host
 rc=0; out="$(env PATH="$BIN:$SYS_PATH" bash "$sim_only_step" install --dry-run 2>&1)" || rc=$?
 assert_eq "the dry run succeeds" "0" "$rc"
 assert_has "  and says there is no robot twin" "$out" "FM_TWIN_ROBOTS has no axol entry"
+mkdir -p "$R/etc/fm-twin"
+: > "$R/etc/fm-twin/robot-fm-rob-02.env"
 rc=0; out="$(env PATH="$BIN:$SYS_PATH" bash "$sim_only_step" install 2>&1)" || rc=$?
 assert_eq "install succeeds" "0" "$rc"
 assert_has "  and says why the robot twin is skipped" "$out" "installing the sim twin alone"
+assert_eq "  and removes a table file no robot twin reads" "false" \
+  "$(exists "$R/etc/fm-twin/robot-fm-rob-02.env")"
 assert_eq "the sim twin is installed and the robot twin is not" "true:false" \
   "$(exists "$UNIT"):$(exists "$ROBOT_UNIT")"
 assert_has "the sim twin is enabled" "$(cat "$LOG")" "systemctl enable $FM_TWIN_UNIT"
@@ -497,6 +522,9 @@ assert_eq "no robot twin is restarted" "0" "$(count '^systemctl try-restart')"
 rc=0; out="$(env PATH="$BIN:$SYS_PATH" bash "$sim_only_step" check 2>&1)" || rc=$?
 assert_eq "check exits 0" "0" "$rc"
 assert_has "  and warns there is no robot twin" "$out" "FM_TWIN_ROBOTS has no axol entry"
+: > "$R/etc/fm-twin/robot-fm-rob-02.env"
+out="$(env PATH="$BIN:$SYS_PATH" bash "$sim_only_step" check 2>&1)"
+assert_has "  and names a table file no robot twin reads" "$out" "no FM_TWIN_ROBOT_TABLES entry names"
 
 fm_log "a malformed robot entry"
 n=0
@@ -608,6 +636,16 @@ assert_eq "it removes the units, the tables and the tree" "false:false:false:fal
   "$(exists "$UNIT"):$(exists "$ROBOT_UNIT"):$(exists "$R/etc/fm-twin"):$(exists "$TWIN")"
 assert_has "it stops every robot twin first" "$(cat "$LOG")" "systemctl stop fm-twin-robot@fm-rob-02.service"
 assert_has "it removes the account" "$(cat "$LOG")" "userdel fm-twin"
+
+fm_log "uninstall with a file in /etc/fm-twin it did not write"
+reset_host
+step install >/dev/null
+: > "$R/etc/fm-twin/notes"
+rc=0; out="$(step uninstall)" || rc=$?
+assert_eq "uninstall succeeds" "0" "$rc"
+assert_eq "it removes the table and keeps the other file" "false:true" \
+  "$(exists "$TABLE"):$(exists "$R/etc/fm-twin/notes")"
+assert_has "  and names it" "$out" "did not write: notes"
 
 fm_log "uninstall with no robot twin loaded"
 reset_host
