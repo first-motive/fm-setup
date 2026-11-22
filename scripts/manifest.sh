@@ -970,11 +970,13 @@ FM_HOST_AGENT_POLKIT_RULE=/etc/polkit-1/rules.d/50-fm-host-agent.rules
 # fm-twin is private, so the workspace's owner, who holds the GitHub
 # credential, fetches the commit and writes it out as a git bundle; root
 # verifies the bundle and fetches it, never running git in the owner's repo.
+# Pinned past fm-twin #48, which adds the --table-* flags FM_TWIN_ROBOT_TABLES
+# renders; at its squash-merge commit on main.
 # Re-read the pin after a merge to main with:
 #   git ls-remote https://github.com/first-motive/fm-twin.git refs/heads/main
 # FM_TWIN_COMMIT overrides it on the command line, to try a commit before pinning.
 FM_TWIN_REPO=first-motive/fm-twin
-FM_TWIN_COMMIT_DEFAULT=bc5c6319f5af7084759e29450e3c7d5d4fc7cf07
+FM_TWIN_COMMIT_DEFAULT=ed2f0c301e672e28981129ce24d117581dcfa644
 FM_TWIN_USER=fm-twin
 FM_TWIN_ROOT=/opt/fm-twin
 FM_TWIN_UV_CACHE=/var/cache/fm-twin
@@ -987,6 +989,22 @@ FM_TWIN_UNIT=fm-twin.service
 # both fm-twin's --profile and the FM_TWIN_ROBOTS entry its URDF comes from.
 FM_TWIN_ROBOT_UNIT=fm-twin-robot@.service
 FM_TWIN_ROBOT_PROFILE=axol
+
+# Where each robot's table is, so its twin can find the table top and publish it
+# on <ns>/twin/table. The values are the robot's, not the template's, so the
+# step writes one $FM_TWIN_TABLE_DIR/robot-<robot>.env per entry and the unit
+# reads the instance's file. A robot with no entry gets no file, and its twin
+# looks for no table. Entries are "robot|z|centre x|centre y|size x|size y", in
+# metres in the robot's base frame: robot is its fleet name, the instance the
+# host agent starts; the rest are fm-twin's --table-z, --table-centre-xy and
+# --table-size-xy, which take them from the robot's specs.yaml in fm-skills
+# (table_z, table_centre_xy, table_size). --table-z-tolerance keeps fm-twin's
+# default.
+#   fm-rob-02  The Axol on its Ox cart: fm-skills' axol_skills_config specs.yaml.
+FM_TWIN_TABLE_DIR=/etc/fm-twin
+FM_TWIN_ROBOT_TABLES=(
+  "fm-rob-02|-0.607|0.0|-0.32|1.2|0.4"
+)
 
 # The robots the twin can mask. It serves the robot of the sim host's active
 # run, so it needs the URDF and meshes of every robot a run may load. Each is
