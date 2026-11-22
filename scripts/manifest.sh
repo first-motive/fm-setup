@@ -971,12 +971,12 @@ FM_HOST_AGENT_POLKIT_RULE=/etc/polkit-1/rules.d/50-fm-host-agent.rules
 # credential, fetches the commit and writes it out as a git bundle; root
 # verifies the bundle and fetches it, never running git in the owner's repo.
 # Pinned past fm-twin #48, which adds the --table-* flags FM_TWIN_ROBOT_TABLES
-# renders; at its branch head until it merges, then at the squash-merge commit.
+# renders; at its squash-merge commit on main.
 # Re-read the pin after a merge to main with:
 #   git ls-remote https://github.com/first-motive/fm-twin.git refs/heads/main
 # FM_TWIN_COMMIT overrides it on the command line, to try a commit before pinning.
 FM_TWIN_REPO=first-motive/fm-twin
-FM_TWIN_COMMIT_DEFAULT=bc8c950dbd2daf35844c1755eab71795399256b0
+FM_TWIN_COMMIT_DEFAULT=ed2f0c301e672e28981129ce24d117581dcfa644
 FM_TWIN_USER=fm-twin
 FM_TWIN_ROOT=/opt/fm-twin
 FM_TWIN_UV_CACHE=/var/cache/fm-twin
